@@ -1,0 +1,23 @@
+from fastapi import FastAPI
+
+from app.api.v1.router import api_router
+from app.core.config import settings
+from app.core.exceptions import register_exception_handlers
+from app.core.middleware import AuthMiddleware
+from app.schemas.response import ApiResponse, success
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(title=settings.app_name, debug=settings.debug)
+    register_exception_handlers(app)
+    app.add_middleware(AuthMiddleware)
+    app.include_router(api_router, prefix=settings.api_v1_prefix)
+
+    @app.get("/health", response_model=ApiResponse[dict[str, str]])
+    def health() -> ApiResponse[dict[str, str]]:
+        return success({"status": "ok", "service": settings.app_name})
+
+    return app
+
+
+app = create_app()
