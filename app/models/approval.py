@@ -9,6 +9,10 @@ from app.db.base import Base, TimestampMixin
 
 
 class ApprovalAction(str, enum.Enum):
+    CREATE = "CREATE"
+    UPDATE = "UPDATE"
+    DELETE = "DELETE"
+    VOID = "VOID"
     SUBMIT = "SUBMIT"
     APPROVE = "APPROVE"
     REJECT = "REJECT"

@@ -1,4 +1,5 @@
 from app.models.approval import ApprovalLog
+from app.models.dictionary import DataDictionary
 from app.models.engineering import EngineeringDesignDoc
 from app.models.rbac import Permission, Role, User, role_permissions, user_roles
 from app.models.workover import ContractorCapacity, WorkoverOperationSheet, WorkoverProjectPool
@@ -6,6 +7,7 @@ from app.models.workover import ContractorCapacity, WorkoverOperationSheet, Work
 __all__ = [
     "ApprovalLog",
     "ContractorCapacity",
+    "DataDictionary",
     "EngineeringDesignDoc",
     "Permission",
     "Role",

@@ -2,7 +2,7 @@ import enum
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Date, DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -16,6 +16,7 @@ class ProjectPoolStatus(str, enum.Enum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
     DISPATCHED = "DISPATCHED"
+    VOIDED = "VOIDED"
 
 
 class OperationStatus(str, enum.Enum):
@@ -36,30 +37,38 @@ class WorkoverProjectPool(TimestampMixin, Base):
     __tablename__ = "workover_project_pool"
     __table_args__ = (
         Index("ix_workover_project_pool_well_no", "well_no"),
-        Index("ix_workover_project_pool_measures_gin", "workover_measures", postgresql_using="gin"),
-        {"comment": "上修项目池表"},
+        Index("ix_workover_project_pool_status", "status"),
+        Index("ix_workover_project_pool_block_name", "block_name"),
+        Index("ix_workover_project_pool_measures_gin", "measures_jsonb", postgresql_using="gin"),
+        {"comment": "Workover project pool table"},
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="项目池ID")
-    well_no: Mapped[str] = mapped_column(String(64), nullable=False, comment="井号")
-    block_name: Mapped[str | None] = mapped_column(String(128), comment="区块")
-    report_unit: Mapped[str] = mapped_column(String(128), nullable=False, comment="提报单位")
-    production_priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="产量优先级")
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="Project pool ID")
+    well_no: Mapped[str] = mapped_column(String(64), nullable=False, comment="Well number")
+    well_name: Mapped[str | None] = mapped_column(String(128), comment="Well name")
+    layer: Mapped[str | None] = mapped_column(String(128), comment="Layer")
+    fault_description: Mapped[str | None] = mapped_column(Text, comment="Fault description")
+    territory_unit: Mapped[str | None] = mapped_column(String(128), comment="Territory unit")
+    block_name: Mapped[str | None] = mapped_column(String(128), comment="Block")
+    report_unit: Mapped[str] = mapped_column(String(128), nullable=False, comment="Grass-roots reporting unit")
+    production_priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="Production priority")
     status: Mapped[ProjectPoolStatus] = mapped_column(
         SQLEnum(ProjectPoolStatus, native_enum=False, length=64),
         default=ProjectPoolStatus.DRAFT,
         nullable=False,
-        comment="项目状态",
+        comment="Business status",
     )
-    reason: Mapped[str | None] = mapped_column(Text, comment="上修原因")
-    workover_measures: Mapped[dict[str, Any]] = mapped_column(
+    reason: Mapped[str | None] = mapped_column(Text, comment="Workover reason")
+    measures_jsonb: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         nullable=False,
         default=dict,
-        comment="修井措施JSONB",
+        comment="JSONB measures payload; indexed by GIN for PostgreSQL JSON search",
     )
-    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="审批通过时间")
-    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("sys_users.id"), comment="创建人ID")
+    remark: Mapped[str | None] = mapped_column(Text, comment="Remark")
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="Approved time")
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("sys_users.id"), comment="Creator ID")
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="Logical delete flag")
 
     operations: Mapped[list["WorkoverOperationSheet"]] = relationship(
         back_populates="project",
@@ -71,25 +80,25 @@ class ContractorCapacity(TimestampMixin, Base):
     __tablename__ = "contractor_capacity"
     __table_args__ = (
         Index("ix_contractor_capacity_report_date", "report_date"),
-        {"comment": "承包商运力表"},
+        {"comment": "Contractor capacity table"},
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="运力ID")
-    contractor_name: Mapped[str] = mapped_column(String(128), nullable=False, comment="承包商名称")
-    team_name: Mapped[str] = mapped_column(String(128), nullable=False, comment="队伍名称")
-    report_date: Mapped[date] = mapped_column(Date, nullable=False, comment="日报日期")
-    available_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="可用队伍数")
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="Capacity ID")
+    contractor_name: Mapped[str] = mapped_column(String(128), nullable=False, comment="Contractor name")
+    team_name: Mapped[str] = mapped_column(String(128), nullable=False, comment="Team name")
+    report_date: Mapped[date] = mapped_column(Date, nullable=False, comment="Report date")
+    available_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="Available team count")
     status: Mapped[ContractorCapacityStatus] = mapped_column(
         SQLEnum(ContractorCapacityStatus, native_enum=False, length=32),
         default=ContractorCapacityStatus.AVAILABLE,
         nullable=False,
-        comment="队伍状态",
+        comment="Capacity status",
     )
     capability_tags: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         nullable=False,
         default=dict,
-        comment="特定施工能力标签JSONB",
+        comment="JSONB capability tags",
     )
 
     operations: Mapped[list["WorkoverOperationSheet"]] = relationship(back_populates="contractor_capacity")
@@ -99,36 +108,36 @@ class WorkoverOperationSheet(TimestampMixin, Base):
     __tablename__ = "workover_operation_sheet"
     __table_args__ = (
         Index("ix_workover_operation_sheet_status", "status"),
-        {"comment": "修井运行表"},
+        {"comment": "Workover operation sheet"},
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="运行表ID")
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="Operation sheet ID")
     project_id: Mapped[int] = mapped_column(
         ForeignKey("workover_project_pool.id", ondelete="RESTRICT"),
         nullable=False,
-        comment="项目池ID",
+        comment="Project pool ID",
     )
     contractor_capacity_id: Mapped[int | None] = mapped_column(
         ForeignKey("contractor_capacity.id", ondelete="SET NULL"),
-        comment="承包商运力ID",
+        comment="Contractor capacity ID",
     )
-    operation_no: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, comment="作业编号")
+    operation_no: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, comment="Operation number")
     status: Mapped[OperationStatus] = mapped_column(
         SQLEnum(OperationStatus, native_enum=False, length=64),
         default=OperationStatus.WAITING_DISPATCH,
         nullable=False,
-        comment="作业状态",
+        comment="Operation status",
     )
-    planned_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="计划开始时间")
-    planned_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="计划结束时间")
-    actual_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="实际开始时间")
-    actual_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="实际结束时间")
-    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="施工进度百分比")
+    planned_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="Planned start time")
+    planned_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="Planned end time")
+    actual_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="Actual start time")
+    actual_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="Actual end time")
+    progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="Progress percentage")
     progress_detail: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         default=dict,
         nullable=False,
-        comment="施工进度明细JSONB",
+        comment="JSONB progress detail",
     )
 
     project: Mapped[WorkoverProjectPool] = relationship(back_populates="operations")
