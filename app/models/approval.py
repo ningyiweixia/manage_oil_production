@@ -36,7 +36,7 @@ class ApprovalLog(TimestampMixin, Base):
         comment="审批动作",
     )
     comment: Mapped[str | None] = mapped_column(Text, comment="审批意见")
-    operator_id: Mapped[int] = mapped_column(ForeignKey("sys_users.id"), nullable=False, comment="操作人ID")
+    operator_id: Mapped[int] = mapped_column(ForeignKey("sys_user.id"), nullable=False, comment="操作人ID")
     operator_ip: Mapped[str | None] = mapped_column(String(64), comment="操作人IP")
     before_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB, comment="变更前数据快照")
     after_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB, comment="变更后数据快照")

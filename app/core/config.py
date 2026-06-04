@@ -24,7 +24,10 @@ class Settings(BaseSettings):
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 120
-    auth_whitelist: str = "/docs,/docs/oauth2-redirect,/redoc,/openapi.json,/health,/api/v1/auth/login"
+    refresh_token_expire_minutes: int = 10080
+    redis_url: str = "redis://127.0.0.1:6379/0"
+    cors_allow_origins: str = "http://127.0.0.1:8000,http://localhost:8000"
+    auth_whitelist: str = "/docs,/docs/oauth2-redirect,/redoc,/openapi.json,/health,/api/v1/auth/login,/api/v1/auth/refresh,/api/v1/auth/logout"
 
     @computed_field
     @property
@@ -37,6 +40,10 @@ class Settings(BaseSettings):
     @property
     def auth_whitelist_paths(self) -> set[str]:
         return {item.strip() for item in self.auth_whitelist.split(",") if item.strip()}
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [item.strip() for item in self.cors_allow_origins.split(",") if item.strip()]
 
 
 @lru_cache
