@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -44,8 +44,9 @@ def refresh(payload: RefreshTokenRequest, db: Session = Depends(get_db)) -> ApiR
 
 
 @router.post("/logout", response_model=ApiResponse[None])
-def logout(payload: RefreshTokenRequest) -> ApiResponse[None]:
-    logout_token(payload.refresh_token)
+def logout(payload: RefreshTokenRequest, request: Request) -> ApiResponse[None]:
+    scheme, _, access_token = request.headers.get("Authorization", "").partition(" ")
+    logout_token(payload.refresh_token, access_token if scheme.lower() == "bearer" else None)
     return success(msg="登出成功")
 
 

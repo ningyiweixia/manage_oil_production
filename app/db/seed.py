@@ -2,6 +2,7 @@ from sqlalchemy import select
 
 from app.core.security import get_password_hash
 from app.db.session import SessionLocal
+from app.models.dictionary import DataDictionary
 from app.models.rbac import Menu, Permission, Role, User
 
 
@@ -11,7 +12,8 @@ MENU_DEFINITIONS = [
     ("system_roles", "system", "角色管理", "system_roles", "/system/roles", "system/roles/index", "shield", 12),
     ("system_menus", "system", "菜单管理", "system_menus", "/system/menus", "system/menus/index", "menu", 13),
     ("system_permissions", "system", "权限管理", "system_permissions", "/system/permissions", "system/permissions/index", "key", 14),
-    ("system_logs", "system", "操作日志", "system_logs", "/system/operation-logs", "system/logs/index", "file-text", 15),
+    ("system_dictionaries", "system", "数据字典", "system_dictionaries", "/system/dictionaries", "system/dictionaries/index", "list", 15),
+    ("system_logs", "system", "操作日志", "system_logs", "/system/operation-logs", "system/logs/index", "file-text", 16),
     ("workover", None, "上修项目池", "workover", "/workover", "Layout", "database", 20),
     ("workover_project_pool", "workover", "项目池台账", "workover_project_pool", "/workover/project-pools", "workover/project-pools/index", "table", 21),
 ]
@@ -37,6 +39,8 @@ PERMISSION_DEFINITIONS = [
     ("system:permission:update", "编辑接口权限", "/api/v1/permissions/{permission_id}", "PUT"),
     ("system:permission:delete", "删除接口权限", "/api/v1/permissions/{permission_id}", "DELETE"),
     ("system:operation_log:read", "查看操作日志", "/api/v1/operation-logs", "GET"),
+    ("system:dictionary:read", "查看数据字典", "/api/v1/dictionaries", "GET"),
+    ("system:dictionary:manage", "维护数据字典", "/api/v1/dictionaries", "POST"),
     ("workover_project_pool:read", "查看上修项目池", "/api/v1/workover-project-pools", "GET"),
     ("workover_project_pool:create", "新增上修项目池", "/api/v1/workover-project-pools", "POST"),
     ("workover_project_pool:update", "修改上修项目池", "/api/v1/workover-project-pools/{project_id}", "PUT"),
@@ -62,6 +66,7 @@ ROLE_PERMISSION_CODES = {
     "super_admin": {code for code, *_ in PERMISSION_DEFINITIONS},
     "ops_admin": {code for code, *_ in PERMISSION_DEFINITIONS},
     "project_pool_admin": {
+        "system:dictionary:read",
         "workover_project_pool:read",
         "workover_project_pool:create",
         "workover_project_pool:update",
@@ -72,18 +77,34 @@ ROLE_PERMISSION_CODES = {
         "approval_log:read",
     },
     "base_entry_clerk": {
+        "system:dictionary:read",
         "workover_project_pool:read",
         "workover_project_pool:create",
         "workover_project_pool:update",
         "workover_project_pool:import",
     },
     "business_reviewer": {
+        "system:dictionary:read",
         "workover_project_pool:read",
         "workover_project_pool:approve",
         "approval_log:read",
     },
-    "contractor_operator": set(),
+    "contractor_operator": {
+        "system:dictionary:read",
+    },
 }
+
+
+DICTIONARY_DEFINITIONS = [
+    ("measure_type", "常规检泵", "pump_repair"),
+    ("measure_type", "冲砂洗井", "sand_washing"),
+    ("measure_type", "酸化解堵", "acidizing"),
+    ("measure_type", "管柱更换", "tubing_replacement"),
+    ("measure_type", "大修作业", "major_workover"),
+    ("process_standard", "常规修井工序", "standard_workover"),
+    ("well_area", "第一采油作业区", "area_1"),
+    ("well_area", "第二采油作业区", "area_2"),
+]
 
 
 def seed() -> None:
@@ -115,6 +136,19 @@ def seed() -> None:
             permission.method = method
             permission.is_active = True
             permissions_by_code[code] = permission
+
+        for dict_type, item_label, item_value in DICTIONARY_DEFINITIONS:
+            item = db.scalar(
+                select(DataDictionary).where(
+                    DataDictionary.dict_type == dict_type,
+                    DataDictionary.item_value == item_value,
+                )
+            )
+            if item is None:
+                item = DataDictionary(dict_type=dict_type, item_value=item_value, item_label=item_label)
+                db.add(item)
+            item.item_label = item_label
+            item.is_active = True
 
         roles_by_code: dict[str, Role] = {}
         for code, name, description in ROLE_DEFINITIONS:

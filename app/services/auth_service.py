@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,10 @@ from app.crud.rbac import get_user, get_user_by_username
 from app.models.rbac import Menu, Permission, Role, User
 from app.schemas.auth import CurrentUserOut, LoginResponse, TokenResponse
 from app.schemas.rbac import MenuOut, PermissionOut, RoleOut
+
+
+ACCESS_REVOKE_PREFIX = "auth:access:revoked:"
+REFRESH_TOKEN_PREFIX = "auth:refresh:"
 
 
 def _role_out(role: Role) -> RoleOut:
@@ -106,7 +110,7 @@ def issue_login_response(user: User) -> LoginResponse:
         timedelta(minutes=settings.refresh_token_expire_minutes),
     )
     cache_client.set_json(
-        f"auth:refresh:{refresh_jti}",
+        f"{REFRESH_TOKEN_PREFIX}{refresh_jti}",
         {"user_id": user.id},
         expire_seconds=settings.refresh_token_expire_minutes * 60,
     )
@@ -133,7 +137,7 @@ def refresh_access_token(db: Session, refresh_token: str) -> TokenResponse:
     if payload.get("typ") != "refresh":
         raise BusinessException(UNAUTHORIZED, "刷新令牌无效")
     jti = payload.get("jti")
-    if not jti or cache_client.get_json(f"auth:refresh:{jti}") is None:
+    if not jti or cache_client.get_json(f"{REFRESH_TOKEN_PREFIX}{jti}") is None:
         raise BusinessException(UNAUTHORIZED, "刷新令牌已失效")
     user = get_user(db, int(payload["sub"]))
     if user is None or not user.is_active:
@@ -146,7 +150,37 @@ def refresh_access_token(db: Session, refresh_token: str) -> TokenResponse:
     return TokenResponse(access_token=access_token, refresh_token=refresh_token)
 
 
-def logout_token(refresh_token: str | None) -> None:
+def _seconds_until_exp(payload: dict) -> int:
+    exp = payload.get("exp")
+    if not exp:
+        return settings.access_token_expire_minutes * 60
+    return max(int(exp - datetime.now(timezone.utc).timestamp()), 1)
+
+
+def is_access_token_revoked(jti: str | None) -> bool:
+    return bool(jti and cache_client.get_json(f"{ACCESS_REVOKE_PREFIX}{jti}") is not None)
+
+
+def revoke_access_token(access_token: str | None) -> None:
+    if not access_token:
+        return
+    try:
+        payload = decode_token_payload(access_token)
+    except BusinessException:
+        return
+    if payload.get("typ") != "access":
+        return
+    jti = payload.get("jti")
+    if jti:
+        cache_client.set_json(
+            f"{ACCESS_REVOKE_PREFIX}{jti}",
+            {"sub": payload.get("sub")},
+            expire_seconds=_seconds_until_exp(payload),
+        )
+
+
+def logout_token(refresh_token: str | None, access_token: str | None = None) -> None:
+    revoke_access_token(access_token)
     if not refresh_token:
         return
     try:
@@ -155,7 +189,7 @@ def logout_token(refresh_token: str | None) -> None:
         return
     jti = payload.get("jti")
     if jti:
-        cache_client.delete(f"auth:refresh:{jti}")
+        cache_client.delete(f"{REFRESH_TOKEN_PREFIX}{jti}")
 
 
 def get_user_permissions(user: User) -> set[str]:

@@ -12,7 +12,7 @@ user_roles = Table(
     Base.metadata,
     Column("user_id", Integer, ForeignKey("sys_user.id", ondelete="CASCADE"), primary_key=True),
     Column("role_id", Integer, ForeignKey("sys_role.id", ondelete="CASCADE"), primary_key=True),
-    comment="User-role association table",
+    comment="用户角色关联表",
 )
 
 
@@ -30,26 +30,25 @@ role_permissions = Table(
     Base.metadata,
     Column("role_id", Integer, ForeignKey("sys_role.id", ondelete="CASCADE"), primary_key=True),
     Column("permission_id", Integer, ForeignKey("sys_permission.id", ondelete="CASCADE"), primary_key=True),
-    comment="Role-permission association table",
+    comment="角色权限关联表",
 )
 
 
 class User(TimestampMixin, Base):
     __tablename__ = "sys_user"
     __table_args__ = (
-        UniqueConstraint("username", name="uq_sys_user_username"),
-        Index("ix_sys_user_username", "username"),
-        {"comment": "System user table"},
+        UniqueConstraint("username", name="uq_sys_users_username"),
+        {"comment": "系统用户表"},
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="User ID")
-    username: Mapped[str] = mapped_column(String(64), nullable=False, comment="Login username")
-    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False, comment="Password hash")
-    full_name: Mapped[str] = mapped_column(String(64), nullable=False, comment="Full name")
-    department: Mapped[str | None] = mapped_column(String(128), comment="Department")
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="用户ID")
+    username: Mapped[str] = mapped_column(String(64), nullable=False, comment="登录账号")
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False, comment="密码哈希")
+    full_name: Mapped[str] = mapped_column(String(64), nullable=False, comment="用户姓名")
+    department: Mapped[str | None] = mapped_column(String(128), comment="所属部门")
     mobile: Mapped[str | None] = mapped_column(String(32), comment="Mobile phone")
     email: Mapped[str | None] = mapped_column(String(128), comment="Email")
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, comment="Enabled flag")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, comment="是否启用")
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="Superuser flag")
     extra_config: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False, comment="JSONB extension config")
 
@@ -61,14 +60,14 @@ class User(TimestampMixin, Base):
 class Role(TimestampMixin, Base):
     __tablename__ = "sys_role"
     __table_args__ = (
-        UniqueConstraint("code", name="uq_sys_role_code"),
-        {"comment": "RBAC role table"},
+        UniqueConstraint("code", name="uq_sys_roles_code"),
+        {"comment": "RBAC角色表"},
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="Role ID")
-    name: Mapped[str] = mapped_column(String(64), nullable=False, comment="Role name")
-    code: Mapped[str] = mapped_column(String(64), nullable=False, comment="Role code")
-    description: Mapped[str | None] = mapped_column(String(255), comment="Description")
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="角色ID")
+    name: Mapped[str] = mapped_column(String(64), nullable=False, comment="角色名称")
+    code: Mapped[str] = mapped_column(String(64), nullable=False, comment="角色编码")
+    description: Mapped[str | None] = mapped_column(String(255), comment="角色说明")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, comment="Enabled flag")
     extra_config: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False, comment="JSONB extension config")
 
@@ -105,16 +104,16 @@ class Menu(TimestampMixin, Base):
 class Permission(TimestampMixin, Base):
     __tablename__ = "sys_permission"
     __table_args__ = (
-        UniqueConstraint("code", name="uq_sys_permission_code"),
+        UniqueConstraint("code", name="uq_sys_permissions_code"),
         Index("ix_sys_permission_method_path", "method", "path"),
-        {"comment": "API permission table"},
+        {"comment": "RBAC权限表"},
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="Permission ID")
-    name: Mapped[str] = mapped_column(String(64), nullable=False, comment="Permission name")
-    code: Mapped[str] = mapped_column(String(128), nullable=False, comment="Permission code")
-    path: Mapped[str] = mapped_column(String(255), nullable=False, comment="API path pattern")
-    method: Mapped[str] = mapped_column(String(16), nullable=False, comment="HTTP method")
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="权限ID")
+    name: Mapped[str] = mapped_column(String(64), nullable=False, comment="权限名称")
+    code: Mapped[str] = mapped_column(String(128), nullable=False, comment="权限编码")
+    path: Mapped[str] = mapped_column(String(255), nullable=False, comment="资源路径或菜单标识")
+    method: Mapped[str] = mapped_column(String(16), nullable=False, comment="动作")
     description: Mapped[str | None] = mapped_column(String(255), comment="Description")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, comment="Enabled flag")
     extra_config: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False, comment="JSONB extension config")

@@ -11,6 +11,7 @@ from app.core.status_codes import UNAUTHORIZED
 from app.db.session import SessionLocal
 from app.models.rbac import OperationLog
 from app.schemas.response import ApiResponse
+from app.services.auth_service import is_access_token_revoked
 
 
 def _unauthorized_response() -> JSONResponse:
@@ -36,6 +37,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         try:
             payload = decode_token_payload(token)
             if payload.get("typ") != "access":
+                return _unauthorized_response()
+            if is_access_token_revoked(payload.get("jti")):
                 return _unauthorized_response()
             request.state.user_id = int(payload["sub"])
             request.state.token_jti = payload.get("jti")
