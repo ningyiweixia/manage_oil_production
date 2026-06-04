@@ -1,0 +1,38 @@
+groups:
+  - name: manage_factory.rules
+    rules:
+      - alert: BackendServiceDown
+        expr: up{job="fastapi-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "FastAPI backend is down"
+          description: "APP zone backend metrics endpoint has been unavailable for more than 2 minutes."
+
+      - alert: HighApiLatency
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job="fastapi-backend"}[5m])) by (le)) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API p95 latency is high"
+          description: "FastAPI p95 latency is above 1 second for 5 minutes."
+
+      - alert: HostDiskSpaceLow
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) < 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Host disk space is below 15%"
+          description: "Check DB, MinIO, log, and Prometheus persistent volumes."
+
+      - alert: ContainerCpuHigh
+        expr: sum(rate(container_cpu_usage_seconds_total{name=~"manage_factory_.*"}[5m])) by (name) > 1.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container CPU usage is high"
+          description: "Container {{ $labels.name }} has sustained high CPU usage."

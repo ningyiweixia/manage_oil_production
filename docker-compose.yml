@@ -1,20 +1,270 @@
+name: manage_factory
+
+x-common-security: &common-security
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "100m"
+      max-file: "5"
+
 services:
-  postgres:
-    image: postgres:15
-    container_name: manage_factory_postgres
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: manage_factory
+  nginx:
+    <<: *common-security
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+    build:
+      context: .
+      dockerfile: deploy/docker/nginx.Dockerfile
+      args:
+        NGINX_BASE_IMAGE: ${NGINX_BASE_IMAGE:-nginx:1.27-alpine}
+    container_name: manage_factory_nginx_dmz
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+      grafana:
+        condition: service_healthy
     ports:
-      - "5432:5432"
+      - "${DMZ_HTTP_PORT:-80}:80"
+      - "${DMZ_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/nginx/ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    tmpfs:
+      - /var/cache/nginx:uid=0,gid=0,mode=755
+      - /var/run:uid=0,gid=0,mode=755
+    networks:
+      dmz_net:
+      app_net:
+        aliases:
+          - dmz_gateway
+
+  frontend:
+    <<: *common-security
+    build:
+      context: .
+      dockerfile: deploy/docker/frontend.Dockerfile
+      args:
+        NGINX_BASE_IMAGE: ${NGINX_BASE_IMAGE:-nginx:1.27-alpine}
+    container_name: manage_factory_frontend_app
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:uid=10002,gid=10002,mode=755
+      - /var/run:uid=10002,gid=10002,mode=755
+    networks:
+      - app_net
+
+  backend:
+    <<: *common-security
+    build:
+      context: .
+      dockerfile: deploy/docker/backend.Dockerfile
+      args:
+        PYTHON_BASE_IMAGE: ${PYTHON_BASE_IMAGE:-python:3.12-slim}
+    container_name: manage_factory_backend_app
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: prod
+      DEBUG: "false"
+      POSTGRES_SERVER: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-manage_factory}
+      REDIS_URL: redis://redis:6379/0
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-https://manage-factory.internal,http://localhost}
+      AUTH_WHITELIST: /docs,/docs/oauth2-redirect,/redoc,/openapi.json,/health,/metrics,/api/v1/auth/login,/api/v1/auth/refresh,/api/v1/auth/logout
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./logs/backend:/var/log/manage_factory
+    networks:
+      - app_net
+      - db_net
+
+  postgres:
+    <<: *common-security
+    image: ${POSTGRES_IMAGE:-postgres:15}
+    container_name: manage_factory_postgres_db
+    user: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-manage_factory}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./logs/postgres:/var/log/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d manage_factory"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
+      retries: 10
+    networks:
+      - db_net
+
+  redis:
+    <<: *common-security
+    image: ${REDIS_IMAGE:-redis:7.4-alpine}
+    container_name: manage_factory_redis_db
+    user: "999:999"
+    command: ["redis-server", "--appendonly", "yes", "--save", "900", "1", "--save", "300", "10", "--save", "60", "10000"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - db_net
+
+  minio-init:
+    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-04-22T22-12-26Z}
+    container_name: manage_factory_minio_init
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c", "chown -R 1000:1000 /data"]
+    volumes:
+      - minio_data:/data
+    restart: "no"
+    networks:
+      - db_net
+
+  minio:
+    <<: *common-security
+    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-04-22T22-12-26Z}
+    container_name: manage_factory_minio_db
+    user: "1000:1000"
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-ChangeMe_MinIO_123456}
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 30s
+      timeout: 5s
       retries: 5
+    networks:
+      - db_net
+
+  prometheus:
+    <<: *common-security
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.3.0}
+    container_name: manage_factory_prometheus_app
+    user: "65534:65534"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
+      - --web.enable-lifecycle
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      backend:
+        condition: service_healthy
+      cadvisor:
+        condition: service_started
+      node-exporter:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app_net
+      - monitor_net
+
+  grafana:
+    <<: *common-security
+    image: ${GRAFANA_IMAGE:-grafana/grafana:12.0.0}
+    container_name: manage_factory_grafana_app
+    user: "472:472"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-ChangeMe_Grafana_123456}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-https://localhost/grafana/}
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health | grep -q ok"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app_net
+
+  cadvisor:
+    <<: *common-security
+    image: ${CADVISOR_IMAGE:-gcr.io/cadvisor/cadvisor:v0.52.1}
+    container_name: manage_factory_cadvisor_monitor
+    privileged: false
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    networks:
+      - monitor_net
+
+  node-exporter:
+    <<: *common-security
+    image: ${NODE_EXPORTER_IMAGE:-prom/node-exporter:v1.9.1}
+    container_name: manage_factory_node_exporter_monitor
+    command:
+      - --path.rootfs=/host
+    pid: host
+    volumes:
+      - /:/host:ro
+    networks:
+      - monitor_net
+
+networks:
+  dmz_net:
+    name: manage_factory_dmz_net
+  app_net:
+    name: manage_factory_app_net
+    internal: true
+  db_net:
+    name: manage_factory_db_net
+    internal: true
+  monitor_net:
+    name: manage_factory_monitor_net
+    internal: true
 
 volumes:
   postgres_data:
+  redis_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:

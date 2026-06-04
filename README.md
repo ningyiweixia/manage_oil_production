@@ -262,3 +262,51 @@ alembic revision --autogenerate -m "message"
 - 禁止爬虫对接外部系统。
 - 高危编辑/删除/提报写入审计日志。
 - 生产部署建议通过 Nginx 暴露 DMZ 入口，FastAPI 运行于 APP 区，PostgreSQL/Redis 运行于 DB 区。
+
+## Container Deployment
+
+服务器容器化部署与监控体系已在 `deploy/` 下提供，包含 Docker Compose、DMZ Nginx、FastAPI/前端容器、PostgreSQL、Redis、MinIO、Prometheus、Grafana、Cadvisor、Node Exporter、一键启动脚本和部署说明。
+
+```powershell
+.\deploy\scripts\deploy.ps1
+```
+
+详细步骤、端口、三区域网络、安全规范与离线镜像准备见 `deploy/README.md`。
+
+## Containerized Deployment and Monitoring
+
+The server containerization and monitoring module is provided under `deploy/`.
+It includes production Docker Compose orchestration, DMZ Nginx reverse proxy,
+FastAPI backend image, Vue3 frontend image, PostgreSQL, Redis, MinIO,
+Prometheus, Grafana, Cadvisor, Node Exporter, persistent volumes, health checks,
+and one-click deployment scripts for enterprise intranet environments.
+
+Start the complete stack:
+
+```powershell
+.\deploy\scripts\deploy.ps1
+```
+
+Main access points:
+
+- Application entry: `https://localhost/`
+- Backend health check: `https://localhost/health`
+- Grafana monitoring: `https://localhost/grafana/`
+
+Network zoning:
+
+- DMZ zone: Nginx reverse proxy, HTTPS termination, security headers, request filtering.
+- APP zone: FastAPI backend, Vue3 frontend runtime, Prometheus, Grafana.
+- DB zone: PostgreSQL, Redis, MinIO data services.
+
+Operational checks:
+
+```powershell
+docker compose -f docker-compose.yml config --quiet
+docker compose -f docker-compose.yml ps
+curl.exe -k --ipv4 https://localhost/health
+```
+
+See `deploy/README.md` for deployment steps, port mapping, offline image
+preparation, security requirements, logging, data volumes, monitoring dashboards,
+and three-zone server deployment guidance.
