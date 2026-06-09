@@ -5,6 +5,7 @@
 - 模块 1：系统总体底层搭建
 - 模块 2：上修项目池管理
 - 模块 3：系统基础支撑与管理模块（RBAC + 统一身份认证）
+- 模块 4：前端交互与可视化大屏（Vue3 + Element Plus + ECharts）
 
 ## 项目结构
 
@@ -59,6 +60,18 @@ manage_factory/
       20260531_0001_init_core_tables.py
       20260602_0002_workover_project_pool_module.py
       20260604_0003_system_support_rbac.py
+  frontend/
+    src/
+      api/                 # Axios 接口封装
+      composables/         # WebSocket 待办提醒等组合式逻辑
+      router/              # 前端路由
+      styles/              # 全局样式
+      types/               # 业务类型定义
+      views/               # 登录、审批工作台、统计分析大屏
+    package.json
+    vite.config.ts
+  deploy/
+    frontend-dist/         # Vue3 构建后的静态发布产物
   main.py
   requirements.txt
 ```
@@ -86,6 +99,29 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```json
 {"username": "admin", "password": "ChangeMe_123!"}
 ```
+
+前端本地运行：
+
+```powershell
+cd frontend
+npm install
+npm run dev -- --port 5173
+```
+
+访问入口：
+
+- 前端开发服务：`http://127.0.0.1:5173`
+- 默认代理后端：`http://127.0.0.1:8000/api/v1`
+- WebSocket 代理：`ws://127.0.0.1:8000/ws`
+
+前端生产构建：
+
+```powershell
+cd frontend
+npm run build
+```
+
+构建产物会输出到 `deploy/frontend-dist/`，与现有 `deploy/docker/frontend.Dockerfile` 和 Nginx 静态发布方式保持一致。
 
 ## 环境配置
 
@@ -228,6 +264,65 @@ USING gin (measures_jsonb);
 
 措施类型、井区等业务选项不得硬编码，应由 `data_dictionary` 维表维护。
 
+## 前端交互与可视化大屏模块
+
+模块范围：基于 `Vue.js 3 + Element Plus + ECharts 5` 的前台业务界面、审核审批工作流交互、WebSocket 待办提醒、统计分析数据看板。
+
+前端目录：
+
+```text
+frontend/
+  src/
+    api/
+      auth.ts              # 登录接口
+      http.ts              # 统一响应解包、JWT 请求头
+      workover.ts          # 项目池与审批接口
+    composables/
+      useApprovalSocket.ts # 审批待办 WebSocket 弹窗提醒
+    views/
+      LoginView.vue
+      MainLayout.vue
+      ApprovalWorkbench.vue
+      AnalyticsDashboard.vue
+```
+
+已实现能力：
+
+- 登录页对接 `POST /api/v1/auth/login`，成功后保存 Access Token 并进入系统。
+- 后端未启动时提供演示模式，便于前端页面展示、答辩演示和早期联调。
+- 审核审批工作台：项目池列表、多条件筛选、批量勾选、提交流转、审批通过、审批驳回。
+- 复杂表单：井号、井名、层位、属地单位、区块、故障描述、上修原因、优先级与多条措施 JSONB 动态编辑。
+- 可视化状态流转：按 `DRAFT -> PENDING_GEOLOGY_VERIFY -> PENDING_PROCESS_VERIFY -> APPROVED` 渲染多级步骤条。
+- WebSocket 待办提醒：连接 `/ws/approval`，接收到审批到达、驳回、派工变更等消息时触发 Element Plus 弹窗；断线后自动重连。
+- 统计分析大屏：基于项目池数据动态聚合，生成审批状态柱状图、措施类别饼图、区块优先级热力图、提报趋势与预计费用组合图。
+- 图表导出：ECharts 图表支持一键导出 PNG，统计摘要支持文本导出。
+- 前端权限边界：前端仅做展示和交互拦截，最终权限仍由后端 RBAC 接口二次校验。
+
+前端对接接口：
+
+```text
+POST  /api/v1/auth/login
+GET   /api/v1/workover-project-pools/
+POST  /api/v1/workover-project-pools/
+PUT   /api/v1/workover-project-pools/{id}
+PATCH /api/v1/workover-project-pools/submit
+PATCH /api/v1/workover-project-pools/{id}/status
+WS    /ws/approval
+```
+
+WebSocket 消息建议结构：
+
+```json
+{
+  "title": "审批待办提醒",
+  "message": "CY2-136 已提交至地质核实",
+  "node_code": "PENDING_GEOLOGY_VERIFY",
+  "type": "info"
+}
+```
+
+当前前端不会修改已有后端模块；若后续补齐真实 WebSocket 连接管理器和统计聚合 API，可继续复用现有页面和 API 封装。
+
 ## Alembic
 
 ```powershell
@@ -254,6 +349,9 @@ alembic revision --autogenerate -m "message"
 - 用户列表、菜单树、项目池列表均返回 `20000`
 - 操作日志已写入 `sys_operation_log`
 - 当前 Alembic 版本：`20260604_0003`
+- `npm install`
+- `npm run build`
+- Vue3 前端构建产物已输出到 `deploy/frontend-dist/`
 
 ## 安全说明
 

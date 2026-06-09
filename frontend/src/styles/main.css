@@ -1,0 +1,275 @@
+:root {
+  color: #1f2937;
+  background: #eef3f8;
+  font-family: "Microsoft YaHei", Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background:
+    linear-gradient(rgba(238, 243, 248, 0.88), rgba(238, 243, 248, 0.88)),
+    url("https://images.unsplash.com/photo-1518709414768-a88981a4515d?auto=format&fit=crop&w=1800&q=80") center/cover;
+}
+
+.login-panel {
+  width: min(460px, 100%);
+  background: #ffffff;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+  padding: 32px;
+  box-shadow: 0 20px 60px rgba(31, 41, 55, 0.16);
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: #2f7de1;
+  font-weight: 700;
+}
+
+.login-panel h1 {
+  margin: 0;
+  font-size: 28px;
+}
+
+.login-copy {
+  margin: 12px 0 28px;
+  color: #667085;
+}
+
+.full-button {
+  width: 100%;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.sidebar {
+  background: #172033;
+  color: #ffffff;
+}
+
+.brand {
+  height: 72px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.brand strong {
+  font-size: 18px;
+}
+
+.brand span {
+  color: #aeb8c8;
+  font-size: 13px;
+}
+
+.nav-menu {
+  border-right: 0;
+  background: transparent;
+}
+
+.nav-menu .el-menu-item {
+  color: #d8e0eb;
+}
+
+.nav-menu .el-menu-item.is-active,
+.nav-menu .el-menu-item:hover {
+  background: #22314d;
+  color: #ffffff;
+}
+
+.topbar {
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #ffffff;
+  border-bottom: 1px solid #d8e0eb;
+}
+
+.topbar p {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.topbar small {
+  color: #667085;
+}
+
+.topbar-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.content {
+  background: #eef3f8;
+  padding: 20px;
+}
+
+.toolbar,
+.dashboard-filters,
+.table-panel,
+.chart-panel {
+  background: #ffffff;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.toolbar {
+  margin-bottom: 16px;
+}
+
+.workflow-strip,
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.workflow-node,
+.kpi-card {
+  min-height: 104px;
+  background: #ffffff;
+  border: 1px solid #d8e0eb;
+  border-left: 4px solid #2f7de1;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.workflow-node span,
+.kpi-card strong {
+  display: block;
+  font-size: 28px;
+  font-weight: 800;
+  color: #172033;
+}
+
+.workflow-node strong,
+.kpi-card span {
+  display: block;
+  margin-top: 6px;
+  font-weight: 700;
+}
+
+.workflow-node small,
+.kpi-card small {
+  display: block;
+  margin-top: 6px;
+  color: #667085;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.panel-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.panel-head p {
+  margin: 4px 0 0;
+  color: #667085;
+}
+
+.compact {
+  margin-bottom: 8px;
+}
+
+.tag-gap {
+  margin: 0 6px 6px 0;
+}
+
+.mini-steps {
+  --el-fill-color-light: #f5f8fc;
+}
+
+.pager {
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.measure-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 4px 0 10px;
+}
+
+.measure-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 140px 140px 40px;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.dashboard-filters {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.chart-panel.wide {
+  grid-column: span 2;
+}
+
+.chart {
+  width: 100%;
+  height: 340px;
+}
+
+@media (max-width: 980px) {
+  .sidebar {
+    width: 76px !important;
+  }
+
+  .brand span,
+  .nav-menu span {
+    display: none;
+  }
+
+  .workflow-strip,
+  .kpi-grid,
+  .chart-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chart-panel.wide {
+    grid-column: span 1;
+  }
+
+  .measure-row {
+    grid-template-columns: 1fr;
+  }
+}
