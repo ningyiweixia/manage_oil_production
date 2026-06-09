@@ -24,7 +24,9 @@
           <small>Vue 3 + Element Plus + ECharts</small>
         </div>
         <div class="topbar-actions">
-          <el-tag type="success" effect="plain">WebSocket 待办监听</el-tag>
+          <el-badge :value="notificationCount" :hidden="notificationCount === 0">
+            <el-tag type="success" effect="plain">WebSocket 待办监听</el-tag>
+          </el-badge>
           <el-dropdown>
             <el-button :icon="User" circle />
             <template #dropdown>
@@ -44,14 +46,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Tickets, TrendCharts, User } from '@element-plus/icons-vue'
 import { useApprovalSocket } from '../composables/useApprovalSocket'
+import { PROJECT_NOTIFICATION } from '../composables/useProjectSync'
 
 const route = useRoute()
 const router = useRouter()
 const { connect } = useApprovalSocket()
+const notificationCount = ref(0)
 const user = computed(() => JSON.parse(localStorage.getItem('current_user') || '{}'))
 
 function logout() {
@@ -60,5 +64,22 @@ function logout() {
   router.push('/login')
 }
 
-onMounted(connect)
+function handleAuthExpired() {
+  router.push('/login')
+}
+
+function handleProjectNotification() {
+  notificationCount.value += 1
+}
+
+onMounted(() => {
+  connect()
+  window.addEventListener('auth-expired', handleAuthExpired)
+  window.addEventListener(PROJECT_NOTIFICATION, handleProjectNotification)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('auth-expired', handleAuthExpired)
+  window.removeEventListener(PROJECT_NOTIFICATION, handleProjectNotification)
+})
 </script>

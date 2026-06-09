@@ -1,7 +1,10 @@
 import { http, unwrap } from './http'
 import type { PageResult, ProjectPoolStatus, ProjectQuery, WorkoverProject } from '../types/workover'
+import { nextApprovedStatus } from '../utils/status'
 
-const demoProjects: WorkoverProject[] = [
+const DEMO_PROJECTS_KEY = 'demo_workover_projects'
+
+const initialDemoProjects: WorkoverProject[] = [
   {
     id: 1001,
     well_no: 'CY2-136',
@@ -69,10 +72,32 @@ const demoProjects: WorkoverProject[] = [
   }
 ]
 
+function demoProjects(): WorkoverProject[] {
+  const cached = localStorage.getItem(DEMO_PROJECTS_KEY)
+  if (!cached) {
+    localStorage.setItem(DEMO_PROJECTS_KEY, JSON.stringify(initialDemoProjects))
+    return initialDemoProjects
+  }
+  try {
+    return JSON.parse(cached) as WorkoverProject[]
+  } catch {
+    localStorage.setItem(DEMO_PROJECTS_KEY, JSON.stringify(initialDemoProjects))
+    return initialDemoProjects
+  }
+}
+
+function saveDemoProjects(projects: WorkoverProject[]) {
+  localStorage.setItem(DEMO_PROJECTS_KEY, JSON.stringify(projects))
+}
+
+function shouldUseDemoFallback(error: unknown) {
+  return typeof error === 'object' && error !== null && (!('response' in error) || !error.response)
+}
+
 function filterDemo(query: ProjectQuery): PageResult<WorkoverProject> {
   const page = query.page || 1
   const pageSize = query.page_size || 20
-  const items = demoProjects.filter((item) => {
+  const items = demoProjects().filter((item) => {
     const matchesStatus = !query.status || item.status === query.status
     const matchesWell = !query.well_no || item.well_no.includes(query.well_no)
     const matchesBlock = !query.block_name || item.block_name?.includes(query.block_name)
@@ -85,27 +110,71 @@ function filterDemo(query: ProjectQuery): PageResult<WorkoverProject> {
 export async function listProjects(query: ProjectQuery): Promise<PageResult<WorkoverProject>> {
   try {
     return await unwrap<PageResult<WorkoverProject>>(http.get('/workover-project-pools/', { params: query }))
-  } catch {
+  } catch (error) {
+    if (!shouldUseDemoFallback(error)) throw error
     return filterDemo(query)
   }
 }
 
 export async function createProject(payload: Omit<WorkoverProject, 'id' | 'created_at' | 'updated_at'>): Promise<WorkoverProject> {
-  return unwrap<WorkoverProject>(http.post('/workover-project-pools/', payload))
+  try {
+    return await unwrap<WorkoverProject>(http.post('/workover-project-pools/', payload))
+  } catch (error) {
+    if (!shouldUseDemoFallback(error)) throw error
+    const projects = demoProjects()
+    const now = new Date().toISOString()
+    const project = { ...payload, id: Math.max(0, ...projects.map((item) => item.id)) + 1, created_at: now, updated_at: now }
+    saveDemoProjects([project, ...projects])
+    return project
+  }
 }
 
 export async function updateProject(id: number, payload: Omit<WorkoverProject, 'id' | 'created_at' | 'updated_at'>): Promise<WorkoverProject> {
-  return unwrap<WorkoverProject>(http.put(`/workover-project-pools/${id}`, payload))
+  try {
+    return await unwrap<WorkoverProject>(http.put(`/workover-project-pools/${id}`, payload))
+  } catch (error) {
+    if (!shouldUseDemoFallback(error)) throw error
+    const projects = demoProjects()
+    const index = projects.findIndex((item) => item.id === id)
+    if (index < 0) throw error
+    const project = { ...projects[index], ...payload, id, updated_at: new Date().toISOString() }
+    projects.splice(index, 1, project)
+    saveDemoProjects(projects)
+    return project
+  }
 }
 
 export async function submitProjects(projectIds: number[], comment: string): Promise<WorkoverProject[]> {
-  return unwrap<WorkoverProject[]>(http.patch('/workover-project-pools/submit', { project_ids: projectIds, comment }))
+  try {
+    return await unwrap<WorkoverProject[]>(http.patch('/workover-project-pools/submit', { project_ids: projectIds, comment }))
+  } catch (error) {
+    if (!shouldUseDemoFallback(error)) throw error
+    const projects = demoProjects()
+    const submitted = projects
+      .filter((project) => projectIds.includes(project.id))
+      .map((project) => ({ ...project, status: 'PENDING_GEOLOGY_VERIFY' as ProjectPoolStatus, remark: comment || project.remark, updated_at: new Date().toISOString() }))
+    const nextProjects = projects.map((project) => submitted.find((item) => item.id === project.id) || project)
+    saveDemoProjects(nextProjects)
+    return submitted
+  }
 }
 
 export async function patchProjectStatus(id: number, status: ProjectPoolStatus, comment: string): Promise<WorkoverProject> {
-  return unwrap<WorkoverProject>(http.patch(`/workover-project-pools/${id}/status`, { status, comment }))
+  try {
+    return await unwrap<WorkoverProject>(http.patch(`/workover-project-pools/${id}/status`, { status, comment }))
+  } catch (error) {
+    if (!shouldUseDemoFallback(error)) throw error
+    const projects = demoProjects()
+    const index = projects.findIndex((project) => project.id === id)
+    if (index < 0) throw error
+    const targetStatus = status === 'APPROVED' ? nextApprovedStatus(projects[index].status) : status
+    const project = { ...projects[index], status: targetStatus, remark: comment || projects[index].remark, updated_at: new Date().toISOString() }
+    projects.splice(index, 1, project)
+    saveDemoProjects(projects)
+    return project
+  }
 }
 
 export function demoProjectDataset(): WorkoverProject[] {
-  return demoProjects
+  return demoProjects()
 }

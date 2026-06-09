@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { ElMessage } from 'element-plus'
 import type { ApiResponse } from '../types/workover'
 
 export const http = axios.create({
@@ -13,6 +14,19 @@ http.interceptors.request.use((config) => {
   }
   return config
 })
+
+http.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('access_token')
+      localStorage.removeItem('refresh_token')
+      window.dispatchEvent(new CustomEvent('auth-expired'))
+      ElMessage.error('登录已失效，请重新登录')
+    }
+    return Promise.reject(error)
+  }
+)
 
 export async function unwrap<T>(request: Promise<{ data: ApiResponse<T> }>): Promise<T> {
   const response = await request

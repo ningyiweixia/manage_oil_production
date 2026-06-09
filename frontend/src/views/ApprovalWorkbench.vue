@@ -18,12 +18,13 @@
       <el-form-item>
         <el-button type="primary" :icon="Search" @click="loadProjects">查询</el-button>
         <el-button :icon="Plus" @click="openCreate">新增提报</el-button>
+        <el-button :icon="TrendCharts" @click="openDashboard">查看大屏</el-button>
       </el-form-item>
     </el-form>
   </section>
 
   <section class="workflow-strip">
-    <div v-for="node in workflowNodes" :key="node.code" class="workflow-node">
+    <div v-for="node in workflowNodes" :key="node.code" class="workflow-node clickable" @click="filterByStatus(node.code)">
       <span>{{ node.count }}</span>
       <strong>{{ node.label }}</strong>
       <small>{{ node.desc }}</small>
@@ -139,23 +140,28 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElNotification } from 'element-plus'
-import { Delete, Plus, Promotion, Search } from '@element-plus/icons-vue'
+import { Delete, Plus, Promotion, Search, TrendCharts } from '@element-plus/icons-vue'
 import { createProject, listProjects, patchProjectStatus, submitProjects, updateProject } from '../api/workover'
+import { canApprove, nextApprovedStatus, statusLabels, statusStep } from '../utils/status'
+import { emitProjectDataChanged } from '../composables/useProjectSync'
 import type { ProjectPoolStatus, ProjectQuery, WorkoverProject } from '../types/workover'
 
 const statusOptions = [
-  { label: '草稿', value: 'DRAFT' },
-  { label: '待地质核实', value: 'PENDING_GEOLOGY_VERIFY' },
-  { label: '待工艺核实', value: 'PENDING_PROCESS_VERIFY' },
-  { label: '已通过', value: 'APPROVED' },
-  { label: '已驳回', value: 'REJECTED' },
-  { label: '已派工', value: 'DISPATCHED' },
-  { label: '已作废', value: 'VOIDED' }
-] as const
+  'DRAFT',
+  'PENDING_GEOLOGY_VERIFY',
+  'PENDING_PROCESS_VERIFY',
+  'APPROVED',
+  'REJECTED',
+  'DISPATCHED',
+  'VOIDED'
+].map((value) => ({ label: statusLabels[value as ProjectPoolStatus], value }))
 
+const route = useRoute()
+const router = useRouter()
 const query = reactive<ProjectQuery>({ page: 1, page_size: 10, status: '' })
 const projects = ref<WorkoverProject[]>([])
 const total = ref(0)
@@ -202,23 +208,6 @@ function countStatus(status: ProjectPoolStatus) {
   return projects.value.filter((item) => item.status === status).length
 }
 
-function statusStep(status: ProjectPoolStatus) {
-  const map: Record<ProjectPoolStatus, number> = {
-    DRAFT: 0,
-    PENDING_GEOLOGY_VERIFY: 1,
-    PENDING_PROCESS_VERIFY: 2,
-    APPROVED: 4,
-    REJECTED: 1,
-    DISPATCHED: 4,
-    VOIDED: 0
-  }
-  return map[status]
-}
-
-function canApprove(status: ProjectPoolStatus) {
-  return status === 'PENDING_GEOLOGY_VERIFY' || status === 'PENDING_PROCESS_VERIFY'
-}
-
 async function loadProjects() {
   loading.value = true
   try {
@@ -228,6 +217,24 @@ async function loadProjects() {
   } finally {
     loading.value = false
   }
+}
+
+function filterByStatus(status: string) {
+  query.status = status as ProjectPoolStatus
+  query.page = 1
+  router.replace({ path: '/approval', query: { status } })
+  loadProjects()
+}
+
+function openDashboard() {
+  router.push({
+    path: '/dashboard',
+    query: {
+      status: query.status || undefined,
+      measure_type: query.measure_type || undefined,
+      block_name: query.block_name || undefined
+    }
+  })
 }
 
 function resetForm() {
@@ -279,6 +286,7 @@ async function saveProject() {
     }
     ElMessage.success('保存成功')
     formVisible.value = false
+    emitProjectDataChanged()
     await loadProjects()
   } finally {
     saving.value = false
@@ -295,6 +303,7 @@ async function confirmSubmit() {
     await submitProjects(selectedIds.value, submitComment.value)
     ElNotification.success({ title: '待办已推送', message: '已提交至地质核实节点' })
     submitDialogVisible.value = false
+    emitProjectDataChanged()
     await loadProjects()
   } finally {
     saving.value = false
@@ -302,8 +311,11 @@ async function confirmSubmit() {
 }
 
 function openApproval(row: WorkoverProject, status: ProjectPoolStatus) {
-  pendingApproval.value = { id: row.id, status }
-  approvalComment.value = status === 'APPROVED' ? '核实通过，同意流转至下一节点。' : '资料需补充，退回修改。'
+  const nextStatus = status === 'APPROVED' ? nextApprovedStatus(row.status) : status
+  pendingApproval.value = { id: row.id, status: nextStatus }
+  approvalComment.value = status === 'APPROVED'
+    ? `核实通过，同意流转至「${statusLabels[nextStatus]}」。`
+    : '资料需补充，退回修改。'
   approvalDialogVisible.value = true
 }
 
@@ -314,11 +326,28 @@ async function confirmApproval() {
     await patchProjectStatus(pendingApproval.value.id, pendingApproval.value.status, approvalComment.value)
     ElMessage.success('审批状态已更新')
     approvalDialogVisible.value = false
+    emitProjectDataChanged()
     await loadProjects()
   } finally {
     saving.value = false
   }
 }
 
-onMounted(loadProjects)
+watch(
+  () => route.query.status,
+  (status) => {
+    if (typeof status === 'string' && status !== query.status) {
+      query.status = status as ProjectPoolStatus
+      query.page = 1
+      loadProjects()
+    }
+  }
+)
+
+onMounted(() => {
+  if (typeof route.query.status === 'string') {
+    query.status = route.query.status as ProjectPoolStatus
+  }
+  loadProjects()
+})
 </script>

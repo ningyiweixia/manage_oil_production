@@ -4,6 +4,10 @@
     <el-select v-model="measureFilter" clearable placeholder="措施类别" style="width: 180px">
       <el-option v-for="item in measureTypes" :key="item" :label="item" :value="item" />
     </el-select>
+    <el-select v-model="statusFilter" clearable placeholder="审批状态" style="width: 180px">
+      <el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" />
+    </el-select>
+    <el-input v-model="blockFilter" clearable placeholder="区块" style="width: 160px" />
     <el-button type="primary" :icon="Refresh" @click="loadDashboard">刷新</el-button>
     <el-button :icon="Download" @click="exportSummary">导出摘要</el-button>
   </section>
@@ -52,17 +56,24 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Download, Refresh } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import type { ECharts, EChartsOption } from 'echarts'
 import { demoProjectDataset, listProjects } from '../api/workover'
+import { useProjectDataChanged } from '../composables/useProjectSync'
+import { statusLabels } from '../utils/status'
 import type { ProjectPoolStatus, WorkoverProject } from '../types/workover'
 
+const route = useRoute()
+const router = useRouter()
 const projects = ref<WorkoverProject[]>([])
 const dateRange = ref<[Date, Date] | null>(null)
 const measureFilter = ref('')
+const statusFilter = ref('')
+const blockFilter = ref('')
 const statusChartRef = ref<HTMLDivElement>()
 const measureChartRef = ref<HTMLDivElement>()
 const heatmapChartRef = ref<HTMLDivElement>()
@@ -72,22 +83,16 @@ let measureChart: ECharts | null = null
 let heatmapChart: ECharts | null = null
 let trendChart: ECharts | null = null
 
-const statusLabels: Record<ProjectPoolStatus, string> = {
-  DRAFT: '草稿',
-  PENDING_GEOLOGY_VERIFY: '待地质',
-  PENDING_PROCESS_VERIFY: '待工艺',
-  APPROVED: '已通过',
-  REJECTED: '已驳回',
-  DISPATCHED: '已派工',
-  VOIDED: '已作废'
-}
+const statusOptions = Object.entries(statusLabels).map(([value, label]) => ({ value, label }))
 
 const filteredProjects = computed(() => {
   return projects.value.filter((project) => {
     const matchesMeasure = !measureFilter.value || project.measures_jsonb.measures?.some((item) => item.measure_type === measureFilter.value)
+    const matchesStatus = !statusFilter.value || project.status === statusFilter.value
+    const matchesBlock = !blockFilter.value || project.block_name?.includes(blockFilter.value)
     const createdAt = new Date(project.created_at)
     const matchesDate = !dateRange.value || (createdAt >= dateRange.value[0] && createdAt <= dateRange.value[1])
-    return matchesMeasure && matchesDate
+    return matchesMeasure && matchesStatus && matchesBlock && matchesDate
   })
 })
 
@@ -198,6 +203,18 @@ async function loadDashboard() {
   renderCharts()
 }
 
+function syncQuery() {
+  router.replace({
+    path: '/dashboard',
+    query: {
+      status: statusFilter.value || undefined,
+      measure_type: measureFilter.value || undefined,
+      block_name: blockFilter.value || undefined
+    }
+  })
+  renderCharts()
+}
+
 function saveChart(chart: ECharts | null, name: string) {
   if (!chart) return
   const link = document.createElement('a')
@@ -224,7 +241,13 @@ function resizeCharts() {
   trendChart?.resize()
 }
 
+watch([measureFilter, statusFilter, blockFilter], syncQuery)
+useProjectDataChanged(loadDashboard)
+
 onMounted(async () => {
+  statusFilter.value = typeof route.query.status === 'string' ? route.query.status : ''
+  measureFilter.value = typeof route.query.measure_type === 'string' ? route.query.measure_type : ''
+  blockFilter.value = typeof route.query.block_name === 'string' ? route.query.block_name : ''
   statusChart = echarts.init(statusChartRef.value!)
   measureChart = echarts.init(measureChartRef.value!)
   heatmapChart = echarts.init(heatmapChartRef.value!)
