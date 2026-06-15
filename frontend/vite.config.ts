@@ -6,10 +6,12 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          vue: ['vue', 'vue-router'],
-          element: ['element-plus', '@element-plus/icons-vue'],
-          charts: ['echarts']
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          if (id.includes('/vue/') || id.includes('/vue-router/')) return 'vue'
+          if (id.includes('/element-plus/') || id.includes('/@element-plus/icons-vue/')) return 'element'
+          if (id.includes('/echarts/')) return 'charts'
+          return undefined
         }
       }
     }

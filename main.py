@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.v1.router import api_router
+from app.api.ws import router as ws_router
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.middleware import AuthMiddleware, OperationLogMiddleware
@@ -22,6 +23,7 @@ def create_app() -> FastAPI:
     app.add_middleware(OperationLogMiddleware)
     app.add_middleware(AuthMiddleware)
     app.include_router(api_router, prefix=settings.api_v1_prefix)
+    app.include_router(ws_router)
     Instrumentator(
         should_group_status_codes=False,
         should_ignore_untemplated=True,

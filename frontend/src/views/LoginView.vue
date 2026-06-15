@@ -25,6 +25,7 @@ import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
+import axios from 'axios'
 import { login } from '../api/auth'
 
 const router = useRouter()
@@ -47,11 +48,15 @@ async function handleLogin() {
     localStorage.setItem('current_user', JSON.stringify(result.user))
     ElMessage.success('登录成功')
     router.push('/approval')
-  } catch {
-    localStorage.setItem('access_token', 'demo-token')
-    localStorage.setItem('current_user', JSON.stringify({ full_name: '演示用户', department: '前端联调环境' }))
-    ElMessage.warning('后端未连接，已进入演示模式')
-    router.push('/approval')
+  } catch (error) {
+    if (axios.isAxiosError(error) && !error.response) {
+      localStorage.setItem('access_token', 'demo-token')
+      localStorage.setItem('current_user', JSON.stringify({ full_name: '演示用户', department: '前端联调环境' }))
+      ElMessage.warning('后端未连接，已进入演示模式')
+      router.push('/approval')
+      return
+    }
+    ElMessage.error('登录失败，请检查账号密码或后端接口返回')
   } finally {
     loading.value = false
   }

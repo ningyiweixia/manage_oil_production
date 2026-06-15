@@ -1,3 +1,4 @@
+import axios from 'axios'
 import { http, unwrap } from './http'
 import type { PageResult, ProjectPoolStatus, ProjectQuery, WorkoverProject } from '../types/workover'
 import { nextApprovedStatus } from '../utils/status'
@@ -91,7 +92,7 @@ function saveDemoProjects(projects: WorkoverProject[]) {
 }
 
 function shouldUseDemoFallback(error: unknown) {
-  return typeof error === 'object' && error !== null && (!('response' in error) || !error.response)
+  return axios.isAxiosError(error) && !error.response
 }
 
 function filterDemo(query: ProjectQuery): PageResult<WorkoverProject> {
@@ -107,9 +108,15 @@ function filterDemo(query: ProjectQuery): PageResult<WorkoverProject> {
   return { items: items.slice((page - 1) * pageSize, page * pageSize), total: items.length, page, page_size: pageSize }
 }
 
+function compactQuery(query: ProjectQuery) {
+  return Object.fromEntries(
+    Object.entries(query).filter(([, value]) => value !== '' && value !== undefined && value !== null)
+  )
+}
+
 export async function listProjects(query: ProjectQuery): Promise<PageResult<WorkoverProject>> {
   try {
-    return await unwrap<PageResult<WorkoverProject>>(http.get('/workover-project-pools/', { params: query }))
+    return await unwrap<PageResult<WorkoverProject>>(http.get('/workover-project-pools/', { params: compactQuery(query) }))
   } catch (error) {
     if (!shouldUseDemoFallback(error)) throw error
     return filterDemo(query)

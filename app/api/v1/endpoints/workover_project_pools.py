@@ -27,7 +27,7 @@ from app.schemas.workover_project_pool import (
     WorkoverProjectPoolSubmit,
     WorkoverProjectPoolUpdate,
 )
-from app.services.notification_service import push_geology_todo
+from app.services.notification_service import push_geology_todo, push_status_changed
 from app.services.workover_project_pool_excel import (
     enqueue_import_workover_project_pool,
     export_project_pool_excel,
@@ -164,7 +164,7 @@ async def submit_items(
 
 
 @router.patch("/{project_id}/status", response_model=ApiResponse[WorkoverProjectPoolOut])
-def patch_status(
+async def patch_status(
     project_id: int,
     payload: WorkoverProjectPoolStatusPatch,
     request: Request,
@@ -178,6 +178,13 @@ def patch_status(
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
         comment=payload.comment,
+    )
+    await push_status_changed(
+        {
+            "node_code": project.status.value,
+            "project_id": project.id,
+            "well_no": project.well_no,
+        }
     )
     return success(WorkoverProjectPoolOut.model_validate(project), msg="状态已更新")
 

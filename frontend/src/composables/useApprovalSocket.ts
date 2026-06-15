@@ -10,6 +10,7 @@ export function useApprovalSocket() {
 
   function connect() {
     const token = localStorage.getItem('access_token')
+    if (!token) return
     const base = import.meta.env.VITE_WS_BASE_URL || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/approval`
 
     try {
