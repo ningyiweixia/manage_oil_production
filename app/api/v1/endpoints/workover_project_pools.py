@@ -5,6 +5,7 @@ from app.api.deps import get_current_user, require_permission
 from app.core.exceptions import BusinessException
 from app.core.status_codes import BAD_REQUEST
 from app.crud.workover_project_pool import (
+    _find_pre_rejection_status,
     create_project_pool,
     delete_project_pool,
     get_project_pool,
@@ -16,10 +17,13 @@ from app.crud.workover_project_pool import (
 )
 from app.db.session import get_db
 from app.models.rbac import User
+from app.models.workover import ProjectPoolStatus
 from app.schemas.pagination import PageResult
 from app.schemas.response import ApiResponse, success
 from app.schemas.workover_project_pool import (
     ImportTaskOut,
+    WorkoverAnalyticsOut,
+    WorkoverAnalyticsQuery,
     WorkoverProjectPoolCreate,
     WorkoverProjectPoolOut,
     WorkoverProjectPoolQuery,
@@ -28,6 +32,7 @@ from app.schemas.workover_project_pool import (
     WorkoverProjectPoolUpdate,
 )
 from app.services.notification_service import push_geology_todo, push_status_changed
+from app.services.workover_analytics_service import build_workover_analytics
 from app.services.workover_project_pool_excel import (
     enqueue_import_workover_project_pool,
     export_project_pool_excel,
@@ -48,9 +53,15 @@ def list_items(
     _: User = Depends(require_permission("workover_project_pool:read")),
 ) -> ApiResponse[PageResult[WorkoverProjectPoolOut]]:
     rows, total = list_project_pools(db, query)
+    items: list[WorkoverProjectPoolOut] = []
+    for row in rows:
+        out = WorkoverProjectPoolOut.model_validate(row)
+        if row.status == ProjectPoolStatus.REJECTED:
+            out.rejected_from_status = _find_pre_rejection_status(db, row.id)
+        items.append(out)
     return success(
         PageResult(
-            items=[WorkoverProjectPoolOut.model_validate(row) for row in rows],
+            items=items,
             total=total,
             page=query.page,
             page_size=query.page_size,
@@ -100,6 +111,15 @@ def export_all(
         for row in list_all_project_pools(db)
     ]
     return success(export_project_pool_excel(payload), msg="导出成功")
+
+
+@router.get("/analytics/summary", response_model=ApiResponse[WorkoverAnalyticsOut])
+def analytics_summary(
+    query: WorkoverAnalyticsQuery = Depends(),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("workover_project_pool:read")),
+) -> ApiResponse[WorkoverAnalyticsOut]:
+    return success(build_workover_analytics(db, query))
 
 
 @router.get("/{project_id}", response_model=ApiResponse[WorkoverProjectPoolOut])

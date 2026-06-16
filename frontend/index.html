@@ -3,10 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss: http://127.0.0.1:8000 http://localhost:8000; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-    />
+    <!-- CSP: 开发模式下放宽以便 Vite HMR 正常工作；生产环境由 nginx 注入严格策略 -->
     <title>Manage Factory</title>
   </head>
   <body>

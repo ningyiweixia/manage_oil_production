@@ -1,10 +1,43 @@
 import { onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElNotification } from 'element-plus'
-import { emitProjectNotification } from './useProjectSync'
+import { emitProjectDataChanged, emitProjectNotification } from './useProjectSync'
+import { statusLabels } from '../utils/status'
+import type { ProjectPoolStatus } from '../types/workover'
 
 const MAX_RECONNECT_ATTEMPTS = 6
 const BASE_RECONNECT_DELAY_MS = 1000
+const notificationNodeLabels: Partial<Record<ProjectPoolStatus, string>> = {
+  APPROVED: '入运行库'
+}
+const notificationMessages: Partial<Record<ProjectPoolStatus, string>> = {
+  DRAFT: '项目已退回草稿',
+  PENDING_GEOLOGY_VERIFY: '项目已提交至地质核实',
+  PENDING_PROCESS_VERIFY: '项目已流转至工艺核实',
+  APPROVED: '项目已通过审批，进入运行库',
+  REJECTED: '项目已驳回，待补充修改',
+  DISPATCHED: '项目已派工',
+  VOIDED: '项目已作废'
+}
+
+function nodeLabel(payload: Record<string, any>) {
+  const code = payload.node_code as ProjectPoolStatus | undefined
+  return payload.node_label || (code && (notificationNodeLabels[code] || statusLabels[code])) || '待处理'
+}
+
+function normalizeMessage(payload: Record<string, any>) {
+  const code = payload.node_code as ProjectPoolStatus | undefined
+  let message = payload.message || (code && notificationMessages[code]) || `收到新的审批消息：${nodeLabel(payload)}`
+  Object.entries(statusLabels).forEach(([code, name]) => {
+    message = String(message).replaceAll(code, name)
+  })
+  message = String(message)
+    .replaceAll('已流转至 已通过', '已通过审批，进入运行库')
+    .replaceAll('已流转至已通过', '已通过审批，进入运行库')
+    .replaceAll('流转至 已通过', '通过审批，进入运行库')
+    .replaceAll('流转至已通过', '通过审批，进入运行库')
+  return message
+}
 
 export function useApprovalSocket() {
   const router = useRouter()
@@ -40,10 +73,14 @@ export function useApprovalSocket() {
         } catch {
           return
         }
-        emitProjectNotification(payload)
+        const message = normalizeMessage(payload)
+        emitProjectNotification({ ...payload, message, node_label: nodeLabel(payload) })
+        if (payload.node_code || payload.status || payload.project_ids?.length) {
+          emitProjectDataChanged()
+        }
         ElNotification({
-          title: payload.title || 'Approval reminder',
-          message: payload.message || `New approval item: ${payload.node_code || 'pending'}`,
+          title: payload.title || '审批待办提醒',
+          message,
           type: payload.type || 'info',
           duration: 5000,
           onClick: () => {

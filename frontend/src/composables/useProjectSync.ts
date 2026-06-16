@@ -7,6 +7,7 @@ export interface ProjectNotification {
   title?: string
   message?: string
   node_code?: string
+  node_label?: string
   status?: string
   project_ids?: number[]
 }

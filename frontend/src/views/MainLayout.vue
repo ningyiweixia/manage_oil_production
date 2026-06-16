@@ -21,12 +21,35 @@
       <el-header class="topbar">
         <div>
           <p>{{ route.meta.title }}</p>
-          <small>Vue 3 + Element Plus + ECharts</small>
         </div>
         <div class="topbar-actions">
-          <el-badge :value="notificationCount" :hidden="notificationCount === 0">
-            <el-tag type="success" effect="plain">WebSocket 待办监听</el-tag>
-          </el-badge>
+          <el-popover placement="bottom-end" width="360" trigger="click" @show="notificationCount = 0">
+            <template #reference>
+              <el-badge :value="notificationCount" :hidden="notificationCount === 0">
+                <el-button :icon="Bell" plain>待办通知</el-button>
+              </el-badge>
+            </template>
+            <div class="notification-panel">
+              <div class="notification-panel-head">
+                <strong>通知记录</strong>
+                <el-button text size="small" :disabled="!notifications.length" @click="clearNotifications">清空</el-button>
+              </div>
+              <el-empty v-if="!notifications.length" description="暂无通知" :image-size="72" />
+              <div v-else class="notification-list">
+                <button
+                  v-for="item in notifications"
+                  :key="item.id"
+                  class="notification-item"
+                  type="button"
+                  @click="openNotification(item)"
+                >
+                  <strong>{{ item.title }}</strong>
+                  <span>{{ item.message }}</span>
+                  <small>{{ item.time }}</small>
+                </button>
+              </div>
+            </div>
+          </el-popover>
           <el-dropdown>
             <el-button :icon="User" circle />
             <template #dropdown>
@@ -48,14 +71,30 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Tickets, TrendCharts, User } from '@element-plus/icons-vue'
+import { Bell, Tickets, TrendCharts, User } from '@element-plus/icons-vue'
 import { useApprovalSocket } from '../composables/useApprovalSocket'
-import { PROJECT_NOTIFICATION } from '../composables/useProjectSync'
+import { PROJECT_NOTIFICATION, type ProjectNotification } from '../composables/useProjectSync'
+import { statusLabels } from '../utils/status'
+import type { ProjectPoolStatus } from '../types/workover'
+
+const notificationNodeLabels: Partial<Record<ProjectPoolStatus, string>> = {
+  APPROVED: '入运行库'
+}
+const notificationMessages: Partial<Record<ProjectPoolStatus, string>> = {
+  DRAFT: '项目已退回草稿',
+  PENDING_GEOLOGY_VERIFY: '项目已提交至地质核实',
+  PENDING_PROCESS_VERIFY: '项目已流转至工艺核实',
+  APPROVED: '项目已通过审批，进入运行库',
+  REJECTED: '项目已驳回，待补充修改',
+  DISPATCHED: '项目已派工',
+  VOIDED: '项目已作废'
+}
 
 const route = useRoute()
 const router = useRouter()
 const { connect } = useApprovalSocket()
 const notificationCount = ref(0)
+const notifications = ref<Array<ProjectNotification & { id: number; title: string; message: string; time: string }>>([])
 const user = computed(() => JSON.parse(localStorage.getItem('current_user') || '{}'))
 
 function logout() {
@@ -68,8 +107,44 @@ function handleAuthExpired() {
   router.push('/login')
 }
 
-function handleProjectNotification() {
+function clearNotifications() {
+  notifications.value = []
+  notificationCount.value = 0
+}
+
+function openNotification(item: ProjectNotification) {
+  router.push({
+    path: '/approval',
+    query: item.node_code ? { status: item.node_code } : undefined
+  })
+}
+
+function notificationNodeLabel(payload: ProjectNotification) {
+  const code = payload.node_code as ProjectPoolStatus | undefined
+  return payload.node_label || (code ? notificationNodeLabels[code] || statusLabels[code] : '') || '待处理'
+}
+
+function notificationMessage(payload: ProjectNotification) {
+  const code = payload.node_code as ProjectPoolStatus | undefined
+  const message = payload.message || (code && notificationMessages[code]) || `收到新的审批消息：${notificationNodeLabel(payload)}`
+  return String(message)
+    .replaceAll('已流转至 已通过', '已通过审批，进入运行库')
+    .replaceAll('已流转至已通过', '已通过审批，进入运行库')
+    .replaceAll('流转至 已通过', '通过审批，进入运行库')
+    .replaceAll('流转至已通过', '通过审批，进入运行库')
+}
+
+function handleProjectNotification(event: Event) {
+  const payload = (event as CustomEvent<ProjectNotification>).detail || {}
   notificationCount.value += 1
+  notifications.value.unshift({
+    ...payload,
+    id: Date.now() + Math.random(),
+    title: payload.title || '审批待办提醒',
+    message: notificationMessage(payload),
+    time: new Date().toLocaleString('zh-CN', { hour12: false })
+  })
+  notifications.value = notifications.value.slice(0, 20)
 }
 
 onMounted(() => {

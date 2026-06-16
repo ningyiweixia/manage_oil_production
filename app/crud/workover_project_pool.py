@@ -1,11 +1,12 @@
+from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BusinessException
 from app.core.status_codes import BAD_REQUEST, CONFLICT
-from app.models.approval import ApprovalAction
+from app.models.approval import ApprovalAction, ApprovalLog
 from app.models.workover import ProjectPoolStatus, WorkoverProjectPool
 from app.schemas.workover_project_pool import (
     WorkoverProjectPoolCreate,
@@ -23,7 +24,7 @@ ALLOWED_STATUS_TRANSITIONS: dict[ProjectPoolStatus, set[ProjectPoolStatus]] = {
     ProjectPoolStatus.PENDING_GEOLOGY_VERIFY: {ProjectPoolStatus.PENDING_PROCESS_VERIFY, ProjectPoolStatus.REJECTED},
     ProjectPoolStatus.PENDING_PROCESS_VERIFY: {ProjectPoolStatus.APPROVED, ProjectPoolStatus.REJECTED},
     ProjectPoolStatus.APPROVED: {ProjectPoolStatus.DISPATCHED, ProjectPoolStatus.VOIDED},
-    ProjectPoolStatus.REJECTED: {ProjectPoolStatus.DRAFT, ProjectPoolStatus.VOIDED},
+    ProjectPoolStatus.REJECTED: {ProjectPoolStatus.DRAFT, ProjectPoolStatus.PENDING_GEOLOGY_VERIFY, ProjectPoolStatus.PENDING_PROCESS_VERIFY, ProjectPoolStatus.VOIDED},
     ProjectPoolStatus.DISPATCHED: set(),
     ProjectPoolStatus.VOIDED: set(),
 }
@@ -55,6 +56,13 @@ def _measure_types(payload: dict[str, Any]) -> set[str]:
         for item in payload.get("measures", [])
         if isinstance(item, dict) and item.get("measure_type")
     }
+
+
+def _ensure_status_transition(current: ProjectPoolStatus, target: ProjectPoolStatus) -> None:
+    if target == current:
+        return
+    if target not in ALLOWED_STATUS_TRANSITIONS[current]:
+        raise BusinessException(CONFLICT, f"Status transition {current.value} -> {target.value} is not allowed")
 
 
 def _apply_filters(stmt: Select[tuple[WorkoverProjectPool]], query: WorkoverProjectPoolQuery) -> Select[tuple[WorkoverProjectPool]]:
@@ -136,10 +144,14 @@ def update_project_pool(
     operator_ip: str | None,
 ) -> WorkoverProjectPool:
     project = get_project_pool(db, project_id)
-    if status not in ALLOWED_STATUS_TRANSITIONS[project.status]:
-        raise BusinessException(CONFLICT, f"Status transition {project.status.value} -> {status.value} is not allowed")
     before = _project_snapshot(project)
     data = payload.model_dump(mode="json")
+    target_status = ProjectPoolStatus(data["status"])
+    _ensure_status_transition(project.status, target_status)
+    if target_status == ProjectPoolStatus.APPROVED and project.approved_at is None:
+        project.approved_at = datetime.now(timezone.utc)
+    elif target_status != ProjectPoolStatus.APPROVED:
+        project.approved_at = None
     ensure_dictionary_values(db, "measure_type", _measure_types(data["measures_jsonb"]))
     for key, value in data.items():
         setattr(project, key, value)
@@ -206,6 +218,29 @@ def submit_project_pools(
     return projects
 
 
+def _find_pre_rejection_status(db: Session, project_id: int) -> ProjectPoolStatus | None:
+    """从审批日志中查找驳回前的状态，用于重新提报时自动路由到正确的审批节点。"""
+    last_reject = db.scalar(
+        select(ApprovalLog)
+        .where(
+            ApprovalLog.business_type == BUSINESS_TYPE,
+            ApprovalLog.business_id == project_id,
+            ApprovalLog.action == ApprovalAction.REJECT,
+        )
+        .order_by(desc(ApprovalLog.created_at))
+        .limit(1)
+    )
+    if last_reject is None or last_reject.before_snapshot is None:
+        return None
+    raw = last_reject.before_snapshot.get("status")
+    if raw is None:
+        return None
+    try:
+        return ProjectPoolStatus(raw)
+    except ValueError:
+        return None
+
+
 def patch_project_status(
     db: Session,
     project_id: int,
@@ -216,15 +251,29 @@ def patch_project_status(
     comment: str | None,
 ) -> WorkoverProjectPool:
     project = get_project_pool(db, project_id)
+    # 从驳回状态重新提报时，自动路由到驳回前的审批节点
+    if project.status == ProjectPoolStatus.REJECTED and status in {
+        ProjectPoolStatus.PENDING_GEOLOGY_VERIFY,
+        ProjectPoolStatus.PENDING_PROCESS_VERIFY,
+    }:
+        previous = _find_pre_rejection_status(db, project_id)
+        if previous is not None and previous != status:
+            status = previous
+    _ensure_status_transition(project.status, status)
     before = _project_snapshot(project)
     project.status = status
+    if status == ProjectPoolStatus.APPROVED:
+        project.approved_at = datetime.now(timezone.utc)
+    elif status in {ProjectPoolStatus.REJECTED, ProjectPoolStatus.VOIDED}:
+        project.approved_at = None
     db.flush()
+    action = ApprovalAction.REJECT if status == ProjectPoolStatus.REJECTED else ApprovalAction.APPROVE
     write_approval_log(
         db,
         business_type=BUSINESS_TYPE,
         business_id=project.id,
         node_code=status.value,
-        action=ApprovalAction.UPDATE,
+        action=action,
         operator_id=operator_id,
         operator_ip=operator_ip,
         comment=comment,

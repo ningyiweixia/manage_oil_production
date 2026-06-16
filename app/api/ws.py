@@ -43,8 +43,8 @@ async def approval_socket(websocket: WebSocket) -> None:
 
         await websocket.send_json(
             {
-                "title": "Approval socket connected",
-                "message": "Realtime approval notifications are enabled.",
+                "title": "待办通知已连接",
+                "message": "实时审批提醒已启用。",
                 "type": "success",
             }
         )

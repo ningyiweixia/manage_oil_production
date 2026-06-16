@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -68,6 +68,54 @@ class WorkoverProjectPoolQuery(BaseModel):
     measure_type: str | None = None
 
 
+class WorkoverAnalyticsQuery(BaseModel):
+    start_date: date | None = None
+    end_date: date | None = None
+    block_name: str | None = None
+    status: ProjectPoolStatus | None = None
+    measure_type: str | None = None
+
+
+class AnalyticsKpiOut(BaseModel):
+    total_projects: int = 0
+    pending_approvals: int = 0
+    approval_rate: float = 0
+    estimated_cost: float = 0
+    average_priority: float = 0
+
+
+class NameValueOut(BaseModel):
+    name: str
+    value: float
+
+
+class StatusCountOut(BaseModel):
+    status: ProjectPoolStatus
+    label: str
+    count: int
+
+
+class HeatmapOut(BaseModel):
+    blocks: list[str]
+    statuses: list[ProjectPoolStatus]
+    data: list[tuple[int, int, float]]
+
+
+class TrendOut(BaseModel):
+    days: list[str]
+    counts: list[int]
+    costs: list[float]
+
+
+class WorkoverAnalyticsOut(BaseModel):
+    kpis: AnalyticsKpiOut
+    status_counts: list[StatusCountOut]
+    measure_distribution: list[NameValueOut]
+    heatmap: HeatmapOut
+    trend: TrendOut
+    measure_types: list[str]
+
+
 class WorkoverProjectPoolOut(BaseModel):
     id: int
     well_no: str
@@ -85,6 +133,7 @@ class WorkoverProjectPoolOut(BaseModel):
     created_by_id: int | None = None
     created_at: datetime
     updated_at: datetime
+    rejected_from_status: ProjectPoolStatus | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

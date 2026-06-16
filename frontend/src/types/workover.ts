@@ -32,6 +32,7 @@ export interface WorkoverProject {
   created_by_id?: number
   created_at: string
   updated_at: string
+  rejected_from_status?: ProjectPoolStatus | null
 }
 
 export interface PageResult<T> {
@@ -54,4 +55,52 @@ export interface ProjectQuery {
   well_no?: string
   status?: ProjectPoolStatus | ''
   measure_type?: string
+}
+
+export interface AnalyticsQuery {
+  start_date?: string
+  end_date?: string
+  block_name?: string
+  status?: ProjectPoolStatus | ''
+  measure_type?: string
+}
+
+export interface AnalyticsKpis {
+  total_projects: number
+  pending_approvals: number
+  approval_rate: number
+  estimated_cost: number
+  average_priority: number
+}
+
+export interface StatusCount {
+  status: ProjectPoolStatus
+  label: string
+  count: number
+}
+
+export interface NameValue {
+  name: string
+  value: number
+}
+
+export interface HeatmapSummary {
+  blocks: string[]
+  statuses: ProjectPoolStatus[]
+  data: [number, number, number][]
+}
+
+export interface TrendSummary {
+  days: string[]
+  counts: number[]
+  costs: number[]
+}
+
+export interface WorkoverAnalytics {
+  kpis: AnalyticsKpis
+  status_counts: StatusCount[]
+  measure_distribution: NameValue[]
+  heatmap: HeatmapSummary
+  trend: TrendSummary
+  measure_types: string[]
 }
