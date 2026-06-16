@@ -25,6 +25,7 @@ def upgrade() -> None:
 
     op.alter_column("sys_permission", "resource", new_column_name="path", existing_type=sa.String(length=128), existing_nullable=False)
     op.alter_column("sys_permission", "action", new_column_name="method", existing_type=sa.String(length=32), existing_nullable=False)
+    op.execute("UPDATE sys_permission SET method = upper(method)")
     op.alter_column("sys_permission", "path", type_=sa.String(length=255), existing_type=sa.String(length=128), existing_nullable=False)
     op.alter_column("sys_permission", "method", type_=sa.String(length=16), existing_type=sa.String(length=32), existing_nullable=False)
 
@@ -94,7 +95,6 @@ def upgrade() -> None:
     op.create_index("ix_sys_operation_log_path", "sys_operation_log", ["path"], unique=False)
     op.create_index("ix_sys_permission_method_path", "sys_permission", ["method", "path"], unique=False)
 
-    op.execute("UPDATE sys_permission SET method = upper(method)")
     op.execute("UPDATE sys_user SET is_superuser = true WHERE username = 'admin'")
 
 

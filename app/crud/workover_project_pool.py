@@ -18,6 +18,16 @@ from app.utils.jsonb import measure_type_filter
 
 BUSINESS_TYPE = "workover_project_pool"
 
+ALLOWED_STATUS_TRANSITIONS: dict[ProjectPoolStatus, set[ProjectPoolStatus]] = {
+    ProjectPoolStatus.DRAFT: {ProjectPoolStatus.PENDING_GEOLOGY_VERIFY, ProjectPoolStatus.VOIDED},
+    ProjectPoolStatus.PENDING_GEOLOGY_VERIFY: {ProjectPoolStatus.PENDING_PROCESS_VERIFY, ProjectPoolStatus.REJECTED},
+    ProjectPoolStatus.PENDING_PROCESS_VERIFY: {ProjectPoolStatus.APPROVED, ProjectPoolStatus.REJECTED},
+    ProjectPoolStatus.APPROVED: {ProjectPoolStatus.DISPATCHED, ProjectPoolStatus.VOIDED},
+    ProjectPoolStatus.REJECTED: {ProjectPoolStatus.DRAFT, ProjectPoolStatus.VOIDED},
+    ProjectPoolStatus.DISPATCHED: set(),
+    ProjectPoolStatus.VOIDED: set(),
+}
+
 
 def _project_snapshot(project: WorkoverProjectPool) -> dict[str, Any]:
     return {
@@ -94,6 +104,7 @@ def create_project_pool(
     *,
     operator_id: int,
     operator_ip: str | None,
+    commit: bool = True,
 ) -> WorkoverProjectPool:
     data = payload.model_dump(mode="json")
     ensure_dictionary_values(db, "measure_type", _measure_types(data["measures_jsonb"]))
@@ -110,8 +121,9 @@ def create_project_pool(
         operator_ip=operator_ip,
         after_snapshot=_project_snapshot(project),
     )
-    db.commit()
-    db.refresh(project)
+    if commit:
+        db.commit()
+        db.refresh(project)
     return project
 
 
@@ -124,6 +136,8 @@ def update_project_pool(
     operator_ip: str | None,
 ) -> WorkoverProjectPool:
     project = get_project_pool(db, project_id)
+    if status not in ALLOWED_STATUS_TRANSITIONS[project.status]:
+        raise BusinessException(CONFLICT, f"Status transition {project.status.value} -> {status.value} is not allowed")
     before = _project_snapshot(project)
     data = payload.model_dump(mode="json")
     ensure_dictionary_values(db, "measure_type", _measure_types(data["measures_jsonb"]))

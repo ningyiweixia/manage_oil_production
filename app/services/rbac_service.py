@@ -49,6 +49,12 @@ def _role_out(role: Role) -> RoleOut:
     )
 
 
+def _ensure_all_ids_exist(requested_ids: list[int], found_ids: list[int], label: str) -> None:
+    missing_ids = sorted(set(requested_ids) - set(found_ids))
+    if missing_ids:
+        raise BusinessException(BAD_REQUEST, f"Invalid {label} ids: {missing_ids}")
+
+
 def create_user(db: Session, payload: UserCreate) -> UserOut:
     if crud.get_user_by_username(db, payload.username):
         raise BusinessException(CONFLICT, "用户名已存在")
@@ -62,7 +68,9 @@ def create_user(db: Session, payload: UserCreate) -> UserOut:
         is_active=payload.is_active,
         extra_config=payload.extra_config,
     )
-    user.roles = crud.list_roles_by_ids(db, payload.role_ids)
+    roles = crud.list_roles_by_ids(db, payload.role_ids)
+    _ensure_all_ids_exist(payload.role_ids, [role.id for role in roles], "role")
+    user.roles = roles
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -96,7 +104,9 @@ def assign_user_roles(db: Session, user_id: int, role_ids: list[int]) -> UserOut
     user = crud.get_user(db, user_id)
     if user is None:
         raise BusinessException(BAD_REQUEST, "用户不存在")
-    user.roles = crud.list_roles_by_ids(db, role_ids)
+    roles = crud.list_roles_by_ids(db, role_ids)
+    _ensure_all_ids_exist(role_ids, [role.id for role in roles], "role")
+    user.roles = roles
     db.commit()
     db.refresh(user)
     invalidate_user_permission_cache([user.id])
@@ -140,7 +150,9 @@ def assign_role_menus(db: Session, role_id: int, menu_ids: list[int]) -> RoleOut
     role = db.get(Role, role_id)
     if role is None:
         raise BusinessException(BAD_REQUEST, "角色不存在")
-    role.menus = crud.list_menus_by_ids(db, menu_ids)
+    menus = crud.list_menus_by_ids(db, menu_ids)
+    _ensure_all_ids_exist(menu_ids, [menu.id for menu in menus], "menu")
+    role.menus = menus
     db.commit()
     db.refresh(role)
     invalidate_user_permission_cache([user.id for user in role.users])
@@ -151,7 +163,9 @@ def assign_role_permissions(db: Session, role_id: int, permission_ids: list[int]
     role = db.get(Role, role_id)
     if role is None:
         raise BusinessException(BAD_REQUEST, "角色不存在")
-    role.permissions = crud.list_permissions_by_ids(db, permission_ids)
+    permissions = crud.list_permissions_by_ids(db, permission_ids)
+    _ensure_all_ids_exist(permission_ids, [permission.id for permission in permissions], "permission")
+    role.permissions = permissions
     db.commit()
     db.refresh(role)
     invalidate_user_permission_cache([user.id for user in role.users])

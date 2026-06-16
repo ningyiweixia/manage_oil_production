@@ -217,10 +217,15 @@ function syncQuery() {
 
 function saveChart(chart: ECharts | null, name: string) {
   if (!chart) return
-  const link = document.createElement('a')
-  link.href = chart.getDataURL({ pixelRatio: 2, backgroundColor: '#ffffff' })
-  link.download = `${name}.png`
-  link.click()
+  const canvas = chart.getRenderedCanvas({ pixelRatio: 2, backgroundColor: '#ffffff' })
+  canvas.toBlob((blob) => {
+    if (!blob) return
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    link.download = `${name}.png`
+    link.click()
+    window.setTimeout(() => URL.revokeObjectURL(link.href), 0)
+  }, 'image/png')
 }
 
 function exportSummary() {
@@ -230,7 +235,7 @@ function exportSummary() {
   link.href = URL.createObjectURL(blob)
   link.download = '统计摘要.txt'
   link.click()
-  URL.revokeObjectURL(link.href)
+  window.setTimeout(() => URL.revokeObjectURL(link.href), 0)
   ElMessage.success('摘要已导出')
 }
 

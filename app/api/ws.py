@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
@@ -19,25 +21,36 @@ def _validate_access_token(token: str | None) -> bool:
     return payload.get("typ") == "access" and not is_access_token_revoked(payload.get("jti"))
 
 
+async def _receive_auth_token(websocket: WebSocket) -> str | None:
+    try:
+        payload = await asyncio.wait_for(websocket.receive_json(), timeout=10)
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or payload.get("type") != "auth":
+        return None
+    token = payload.get("token")
+    return token if isinstance(token, str) else None
+
+
 @router.websocket("/ws/approval")
 async def approval_socket(websocket: WebSocket) -> None:
-    token = websocket.query_params.get("token")
-    if not _validate_access_token(token):
-        await websocket.close(code=1008)
-        return
-
     await approval_connection_manager.connect(websocket)
     try:
+        token = await _receive_auth_token(websocket)
+        if not _validate_access_token(token):
+            await websocket.close(code=1008)
+            return
+
         await websocket.send_json(
             {
-                "title": "审批待办监听已连接",
-                "message": "实时待办提醒已开启",
+                "title": "Approval socket connected",
+                "message": "Realtime approval notifications are enabled.",
                 "type": "success",
             }
         )
         while websocket.application_state == WebSocketState.CONNECTED:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        approval_connection_manager.disconnect(websocket)
-    except Exception:
+        pass
+    finally:
         approval_connection_manager.disconnect(websocket)

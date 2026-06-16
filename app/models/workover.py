@@ -2,7 +2,7 @@ import enum
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Boolean, Date, DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -108,6 +108,7 @@ class WorkoverOperationSheet(TimestampMixin, Base):
     __tablename__ = "workover_operation_sheet"
     __table_args__ = (
         Index("ix_workover_operation_sheet_status", "status"),
+        CheckConstraint("progress >= 0 AND progress <= 100", name="ck_workover_operation_sheet_progress_range"),
         {"comment": "修井运行表"},
     )
 

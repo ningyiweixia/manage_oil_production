@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class IdsPayload(BaseModel):
@@ -18,6 +18,19 @@ class UserCreate(BaseModel):
     is_active: bool = True
     role_ids: list[int] = Field(default_factory=list)
     extra_config: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_complexity(cls, value: str) -> str:
+        checks = (
+            any(char.islower() for char in value),
+            any(char.isupper() for char in value),
+            any(char.isdigit() for char in value),
+            any(not char.isalnum() for char in value),
+        )
+        if not all(checks):
+            raise ValueError("Password must include uppercase, lowercase, number, and special character")
+        return value
 
 
 class UserUpdate(BaseModel):

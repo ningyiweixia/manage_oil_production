@@ -23,6 +23,7 @@ class ApprovalLog(TimestampMixin, Base):
     __tablename__ = "approval_log"
     __table_args__ = (
         Index("ix_approval_log_business", "business_type", "business_id"),
+        Index("ix_approval_log_operator_id", "operator_id"),
         {"comment": "审批日志表"},
     )
 

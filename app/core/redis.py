@@ -19,7 +19,7 @@ class CacheClient:
     def __init__(self) -> None:
         self._memory: dict[str, str] = {}
         self._redis: Redis | None = None
-        if Redis is not None:
+        if Redis is not None and settings.redis_url:
             try:
                 client = Redis.from_url(settings.redis_url, decode_responses=True, socket_connect_timeout=0.2)
                 client.ping()

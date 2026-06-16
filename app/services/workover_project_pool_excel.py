@@ -12,8 +12,19 @@ REQUIRED_COLUMNS = {
     "report_unit",
 }
 
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+FORMULA_PREFIXES = ("=", "+", "-", "@")
+
+
+def _sanitize_cell(value):
+    if isinstance(value, str) and value.startswith(FORMULA_PREFIXES):
+        return f"'{value}"
+    return value
+
 
 def parse_project_pool_excel(content: bytes) -> list[WorkoverProjectPoolCreate]:
+    if len(content) > MAX_UPLOAD_SIZE:
+        raise ValueError("Excel file is too large; max size is 10MB")
     frame = pd.read_excel(BytesIO(content), engine="openpyxl")
     missing = REQUIRED_COLUMNS - set(frame.columns)
     if missing:
@@ -25,7 +36,8 @@ def parse_project_pool_excel(content: bytes) -> list[WorkoverProjectPoolCreate]:
 
 def export_project_pool_excel(rows: list[dict]) -> dict[str, str]:
     output = BytesIO()
-    pd.DataFrame(rows).to_excel(output, index=False, engine="openpyxl")
+    frame = pd.DataFrame(rows).map(_sanitize_cell)
+    frame.to_excel(output, index=False, engine="openpyxl")
     output.seek(0)
     return {
         "filename": "workover_project_pool.xlsx",

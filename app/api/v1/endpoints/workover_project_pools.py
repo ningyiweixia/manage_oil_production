@@ -72,14 +72,20 @@ def import_excel(
     except ValueError as exc:
         raise BusinessException(BAD_REQUEST, str(exc)) from exc
     imported_count = 0
-    for row in rows:
-        create_project_pool(
-            db,
-            row,
-            operator_id=current_user.id,
-            operator_ip=_client_ip(request),
-        )
-        imported_count += 1
+    try:
+        for row in rows:
+            create_project_pool(
+                db,
+                row,
+                operator_id=current_user.id,
+                operator_ip=_client_ip(request),
+                commit=False,
+            )
+            imported_count += 1
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     task.imported_count = imported_count
     return success(task, msg="导入成功")
 

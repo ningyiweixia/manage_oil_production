@@ -1,5 +1,6 @@
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.core.security import get_password_hash
 from app.db.session import SessionLocal
 from app.models.dictionary import DataDictionary
@@ -170,9 +171,11 @@ def seed() -> None:
 
         admin = db.scalar(select(User).where(User.username == "admin"))
         if admin is None:
+            if not settings.admin_initial_password:
+                raise RuntimeError("ADMIN_INITIAL_PASSWORD must be set before creating the initial admin user")
             admin = User(
                 username="admin",
-                hashed_password=get_password_hash("ChangeMe_123!"),
+                hashed_password=get_password_hash(settings.admin_initial_password),
                 full_name="系统管理员",
                 department="运维中心",
                 is_active=True,
