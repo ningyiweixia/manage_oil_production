@@ -18,3 +18,12 @@ logs/
 deploy/nginx/ssl/*.crt
 deploy/nginx/ssl/*.key
 deploy/nginx/ssl/*.csr
+
+# SSH keys & credentials
+*.key
+*.pem
+id_rsa
+id_ed25519
+id_ecdsa
+*.pub
+!deploy/**/*.pub
