@@ -28,13 +28,9 @@ def generate_sso_token(well_no: str, redirect_path: str = "/workorder") -> A5Tok
     expire_at = datetime.now(timezone.utc) + timedelta(minutes=5)
 
     # 使用 JWT 签发临时令牌
-    token = create_token(
-        data={
-            "sub": f"sso:{well_no}",
-            "well_no": well_no,
-            "redirect_path": redirect_path,
-            "type": "a5_sso",
-        },
+    token, _ = create_token(
+        subject=f"sso:{well_no}",
+        token_type="a5_sso",
         expires_delta=timedelta(minutes=5),
     )
 

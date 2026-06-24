@@ -38,14 +38,17 @@ class CacheClient:
             raw = self._memory.get(key)
         return json.loads(raw) if raw else None
 
-    def set_json(self, key: str, value: Any, expire_seconds: int = 300) -> None:
+    def set_json(self, key: str, value: Any, expire_seconds: int = 300) -> bool:
         raw = json.dumps(value, ensure_ascii=False)
         self._memory[key] = raw
         if self._redis:
             try:
-                self._redis.setex(key, expire_seconds, raw)
+                # SET NX EX: only set if key doesn't exist, avoiding overwrite
+                result = self._redis.set(key, raw, ex=expire_seconds, nx=True)
+                return bool(result)
             except RedisError:
-                return
+                return True  # fallback to memory, assume success
+        return True  # memory-only: always succeeds
 
     def delete(self, key: str) -> None:
         self._memory.pop(key, None)

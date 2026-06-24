@@ -118,6 +118,7 @@ ROLE_PERMISSION_CODES = {
         "a5:read",
         "engineering:read",
         "engineering:generate",
+    },
     "contractor_operator": {
         "system:dictionary:read",
         "contractor:read",
