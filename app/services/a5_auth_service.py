@@ -4,11 +4,16 @@
 令牌包含 well_no 和 redirect_path，有效期 5 分钟。
 """
 
+import hashlib
+import hmac
+import logging
 from datetime import datetime, timedelta, timezone
 
 from app.core.config import settings
 from app.core.security import create_token
 from app.schemas.a5_integration import A5TokenResponse
+
+logger = logging.getLogger(__name__)
 
 
 def generate_sso_token(well_no: str, redirect_path: str = "/workorder") -> A5TokenResponse:
@@ -47,27 +52,54 @@ def generate_sso_token(well_no: str, redirect_path: str = "/workorder") -> A5Tok
 
 def verify_a5_callback_signature(
     request_headers: dict[str, str],
+    request_body: str = "",
+    *,
     expected_token: str | None = None,
 ) -> bool:
     """验证 A5 回调请求签名。
 
+    方案要求：
+    - A5 系统回调使用 HMAC-SHA256 对请求体签名
+    - 签名置于 X-A5-Signature 请求头
+    - 使用 A5_API_SECRET 作为 HMAC 密钥
+
     Args:
         request_headers: 请求头字典
-        expected_token: 期望的令牌值（可选）
+        request_body: 请求体原始字符串（JSON）
+        expected_token: 不用于签名验证，保留兼容旧调用方
 
     Returns:
-        True 表示验证通过
+        True 表示签名验证通过
     """
-    # 验证 IP 白名单
-    # TODO: 集成 IP 白名单校验
-    # client_ip = request.client.host
-    # if client_ip not in A5_IP_WHITELIST:
+    # 1. 验证 IP 白名单（如果配置了的话）
+    # client_ip = request_headers.get("x-forwarded-for", "").split(",")[0].strip()
+    # a5_ip_whitelist = getattr(settings, "a5_ip_whitelist", "")
+    # if a5_ip_whitelist and client_ip not in a5_ip_whitelist.split(","):
+    #     logger.warning(f"A5 回调 IP 不在白名单: {client_ip}")
     #     return False
 
-    # 验证 X-A5-Signature 签名
+    # 2. 获取请求签名
     signature = request_headers.get("X-A5-Signature", "")
     if not signature:
+        logger.warning("A5 回调缺少 X-A5-Signature 请求头")
         return False
 
-    # TODO: 实现 HMAC 签名验证
+    # 3. HMAC-SHA256 验证请求体签名
+    secret = settings.a5_api_secret
+    if not secret:
+        # 未配置 secret 时，回退为宽松模式（开发环境）
+        logger.warning("A5_API_SECRET 未配置，签名验证降级为仅检查签名头存在性")
+        return True
+
+    expected = hmac.new(
+        secret.encode("utf-8"),
+        request_body.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+    # 4. 常数时间比对，防止时序攻击
+    if not hmac.compare_digest(expected, signature):
+        logger.warning(f"A5 回调签名不匹配: expected={expected[:8]}..., got={signature[:8]}...")
+        return False
+
     return True

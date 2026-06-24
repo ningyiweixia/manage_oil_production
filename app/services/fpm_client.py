@@ -10,7 +10,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.exceptions import BusinessException
-from app.core.status_codes import A5_LINK_FAILED
+from app.core.status_codes import FPM_LINK_FAILED
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class FpmClient:
                 return response.json()
             except httpx.RequestError as exc:
                 logger.error(f"防偏磨系统请求失败: {url} -> {exc}")
-                raise BusinessException(A5_LINK_FAILED, f"防偏磨系统连接失败: {path}")
+                raise BusinessException(FPM_LINK_FAILED, f"防偏磨系统连接失败: {path}")
 
     async def fetch_parameters(self, well_no: str) -> dict[str, Any]:
         """获取指定井号的偏磨参数。

@@ -57,7 +57,6 @@ PERMISSION_DEFINITIONS = [
     ("workover_project_pool:import", "导入上修项目池", "/api/v1/workover-project-pools/import", "POST"),
     ("workover_project_pool:export", "导出上修项目池", "/api/v1/workover-project-pools/export/all", "GET"),
     ("approval_log:read", "查看审批日志", "/api/v1/approval-logs", "GET"),
-    ("rbac:manage", "管理RBAC权限", "/api/v1/rbac", "POST"),
     # 承包商管理权限
     ("contractor:read", "查看承包商运力", "/api/v1/contractors", "GET"),
     ("contractor:create", "报承包商运力", "/api/v1/contractors", "POST"),

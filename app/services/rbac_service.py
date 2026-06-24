@@ -81,7 +81,7 @@ def update_user(db: Session, user_id: int, payload: UserUpdate) -> UserOut:
     user = crud.get_user(db, user_id)
     if user is None:
         raise BusinessException(BAD_REQUEST, "用户不存在")
-    for key, value in payload.model_dump().items():
+    for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(user, key, value)
     db.commit()
     db.refresh(user)

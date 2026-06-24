@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_permission
 from app.core.exceptions import BusinessException
 from app.core.status_codes import A5_LINK_FAILED, BAD_REQUEST
-from app.crud.contractor import get_operation_sheet
 from app.db.session import get_db
 from app.models.rbac import User
 from app.models.workover import OperationStatus, WorkoverOperationSheet
@@ -51,9 +50,11 @@ async def a5_callback(
 
     此接口加入 AUTH_WHITELIST_PATHS 免鉴权，由签名验证安全。
     """
-    # 验证回调签名
+    # 验证回调签名（传递请求体用于 HMAC 校验）
     headers = dict(request.headers)
-    if not verify_a5_callback_signature(headers, x_a5_signature):
+    body = await request.body()
+    body_str = body.decode("utf-8") if body else ""
+    if not verify_a5_callback_signature(headers, body_str):
         raise BusinessException(BAD_REQUEST, "A5 回调签名验证失败")
 
     # 查找对应工单

@@ -5,7 +5,7 @@ from app.api.deps import get_current_user, require_permission
 from app.core.exceptions import BusinessException
 from app.core.status_codes import BAD_REQUEST
 from app.crud.workover_project_pool import (
-    _find_pre_rejection_status,
+    _batch_find_pre_rejection_status,
     create_project_pool,
     delete_project_pool,
     get_project_pool,
@@ -34,6 +34,7 @@ from app.schemas.workover_project_pool import (
 from app.services.notification_service import push_geology_todo, push_status_changed
 from app.services.workover_analytics_service import build_workover_analytics
 from app.services.workover_project_pool_excel import (
+    MAX_UPLOAD_SIZE,
     enqueue_import_workover_project_pool,
     export_project_pool_excel,
     parse_project_pool_excel,
@@ -53,12 +54,20 @@ def list_items(
     _: User = Depends(require_permission("workover_project_pool:read")),
 ) -> ApiResponse[PageResult[WorkoverProjectPoolOut]]:
     rows, total = list_project_pools(db, query)
+
+    # 批量查询所有 REJECTED 项目的前一个状态，避免 N+1 查询
+    rejected_ids = [row.id for row in rows if row.status == ProjectPoolStatus.REJECTED]
+    rejected_status_map: dict[int, ProjectPoolStatus | None] = {}
+    if rejected_ids:
+        rejected_status_map = _batch_find_pre_rejection_status(db, rejected_ids)
+
     items: list[WorkoverProjectPoolOut] = []
     for row in rows:
         out = WorkoverProjectPoolOut.model_validate(row)
         if row.status == ProjectPoolStatus.REJECTED:
-            out.rejected_from_status = _find_pre_rejection_status(db, row.id)
+            out.rejected_from_status = rejected_status_map.get(row.id)
         items.append(out)
+
     return success(
         PageResult(
             items=items,
@@ -76,6 +85,9 @@ def import_excel(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("workover_project_pool:import")),
 ) -> ApiResponse[ImportTaskOut]:
+    # 先检查文件大小，防止大文件 OOM
+    if file.size and file.size > MAX_UPLOAD_SIZE:
+        raise BusinessException(BAD_REQUEST, f"文件过大，最大允许 {MAX_UPLOAD_SIZE // 1024 // 1024}MB")
     content = file.file.read()
     task = enqueue_import_workover_project_pool(content)
     try:

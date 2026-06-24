@@ -218,6 +218,61 @@ def submit_project_pools(
     return projects
 
 
+def _batch_find_pre_rejection_status(db: Session, project_ids: list[int]) -> dict[int, ProjectPoolStatus | None]:
+    """批量查询多个项目驳回前的状态，避免 N+1 查询。
+
+    使用 DISTINCT ON + 子查询获取每个项目最后一次 REJECT 操作的 before_snapshot。
+    """
+    if not project_ids:
+        return {}
+
+    from sqlalchemy import distinct
+
+    sub = (
+        select(
+            ApprovalLog.business_id,
+            ApprovalLog.before_snapshot,
+            func.row_number()
+            .over(
+                partition_by=ApprovalLog.business_id,
+                order_by=desc(ApprovalLog.created_at),
+            )
+            .label("rn"),
+        )
+        .where(
+            ApprovalLog.business_type == BUSINESS_TYPE,
+            ApprovalLog.business_id.in_(project_ids),
+            ApprovalLog.action == ApprovalAction.REJECT,
+        )
+        .subquery()
+    )
+
+    rows = db.execute(
+        select(sub.c.business_id, sub.c.before_snapshot).where(sub.c.rn == 1)
+    ).all()
+
+    result: dict[int, ProjectPoolStatus | None] = {}
+    for business_id, before_snapshot in rows:
+        if before_snapshot is None:
+            result[business_id] = None
+            continue
+        raw = before_snapshot.get("status")
+        if raw is None:
+            result[business_id] = None
+            continue
+        try:
+            result[business_id] = ProjectPoolStatus(raw)
+        except ValueError:
+            result[business_id] = None
+
+    # 补齐未找到 rejection 记录的项目
+    for pid in project_ids:
+        if pid not in result:
+            result[pid] = None
+
+    return result
+
+
 def _find_pre_rejection_status(db: Session, project_id: int) -> ProjectPoolStatus | None:
     """从审批日志中查找驳回前的状态，用于重新提报时自动路由到正确的审批节点。"""
     last_reject = db.scalar(

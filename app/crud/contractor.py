@@ -287,11 +287,11 @@ def update_sheet_progress(
     sheet.progress = payload.progress
     sheet.progress_detail = payload.progress_detail
 
-    # 自动推进状态
+    # 自动推进状态（两个独立 if，允许 DISPATCHED→WORKING→FINISHED 连续推进）
     if payload.progress == 100 and sheet.status == OperationStatus.DISPATCHED:
         sheet.status = OperationStatus.WORKING
         sheet.actual_start_at = datetime.now(timezone.utc)
-    elif payload.progress == 100 and sheet.status in {OperationStatus.DISPATCHED, OperationStatus.WORKING}:
+    if payload.progress == 100 and sheet.status == OperationStatus.WORKING:
         sheet.status = OperationStatus.FINISHED
         sheet.actual_end_at = datetime.now(timezone.utc)
 

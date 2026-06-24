@@ -56,6 +56,7 @@ async def sync_daily_operations(db: Session, sync_date: str | None = None) -> di
                 stats["updated"] += 1
         except Exception as exc:
             logger.exception(f"日报同步更新失败: {exc}")
+            db.rollback()
             stats["failed"] += 1
 
     if stats["updated"] > 0 or stats["total"] > 0:

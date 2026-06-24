@@ -228,15 +228,16 @@ class TemplateRenderer:
             cell.font = Font(bold=True)
             cell.alignment = Alignment(horizontal="center")
 
-        # 写入数据行
+        # 写入数据行（列序：井号/作业编号/状态/进度/计划开始/计划结束/实际开始/实际结束）
         for i, record in enumerate(operation_data, 2):
-            ws.cell(row=i, column=1, value=record.get("operation_no", ""))
-            ws.cell(row=i, column=2, value=record.get("status", ""))
-            ws.cell(row=i, column=3, value=record.get("progress", 0))
-            ws.cell(row=i, column=4, value=str(record.get("planned_start_at", "")))
-            ws.cell(row=i, column=5, value=str(record.get("planned_end_at", "")))
-            ws.cell(row=i, column=6, value=str(record.get("actual_start_at", "")))
-            ws.cell(row=i, column=7, value=str(record.get("actual_end_at", "")))
+            ws.cell(row=i, column=1, value=record.get("well_no", ""))
+            ws.cell(row=i, column=2, value=record.get("operation_no", ""))
+            ws.cell(row=i, column=3, value=record.get("status", ""))
+            ws.cell(row=i, column=4, value=record.get("progress", 0))
+            ws.cell(row=i, column=5, value=str(record.get("planned_start_at", "")))
+            ws.cell(row=i, column=6, value=str(record.get("planned_end_at", "")))
+            ws.cell(row=i, column=7, value=str(record.get("actual_start_at", "")))
+            ws.cell(row=i, column=8, value=str(record.get("actual_end_at", "")))
 
         buffer = io.BytesIO()
         wb.save(buffer)
