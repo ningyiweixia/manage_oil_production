@@ -1,11 +1,12 @@
 # 采油二厂井下作业管理系统
 
-后端采用 `FastAPI + SQLAlchemy 2.0 + Pydantic v2 + PostgreSQL 15(JSONB) + Redis + JWT + Alembic`。前端采用 `Vue3 + Element Plus + ECharts 5 + TypeScript`。当前已完成全部 4 个模块。
+后端采用 `FastAPI + SQLAlchemy 2.0 + Pydantic v2 + PostgreSQL 15(JSONB) + Redis + Celery + JWT + Alembic`。前端采用 `Vue3 + Element Plus + ECharts 5 + TypeScript`。当前已完成全部 5 个模块。
 
 - 模块 1：系统总体底层搭建
 - 模块 2：上修项目池管理
 - 模块 3：系统基础支撑与管理模块（RBAC + 统一身份认证）
 - 模块 4：前端交互与可视化大屏（Vue3 + Element Plus + ECharts）
+- 模块 5：跨系统协同与异步引擎（承包商管理 + A5 集成 + 工程设计）
 
 ## 项目结构
 
@@ -63,8 +64,23 @@ manage_factory/
       rbac_service.py           # RBAC 业务逻辑
       workover_analytics_service.py  # 统计分析聚合
       workover_project_pool_excel.py # Excel 导入导出
+      # ——— 模块五：跨系统协同与异步引擎 ———
+      a5_client.py              # A5 系统 HTTP 客户端（httpx）
+      a5_auth_service.py        # A5 SSO 单点登录令牌生成
+      a5_data_cleaner.py        # A5 数据清洗引擎（Pandas）
+      a5_sync_service.py        # A5 数据同步服务（日报/异常/工序）
+      contractor_service.py     # 承包商状态管理
+      design_rule_engine.py     # 工程设计规则引擎
+      dispatch_service.py       # Redis 分布式派工锁
+      engineering_design_service.py  # 工程设计文档生成服务
+      fpm_client.py             # 防偏磨设计系统 HTTP 客户端
+      template_renderer.py      # 模板渲染 + MinIO 存储
+    tasks/
+      __init__.py
+      a5_tasks.py               # Celery 定时任务（每30分钟同步A5数据）
     utils/
       jsonb.py                  # JSONB 查询辅助
+  celery_app.py                 # Celery 分布式任务队列配置
   frontend/
     src/
       api/
@@ -183,6 +199,41 @@ CORS_ALLOW_ORIGINS=http://127.0.0.1:5173,http://localhost:5173
 | `40300` | 越权访问 | 403 |
 | `40900` | 业务冲突 | 409 |
 | `42900` | 请求过频 | 429 |
+| `60001` | A5 系统联动失败 | 502 |
+
+## 环境变量（A5 系统集成 & MinIO 对象存储）
+
+```env
+# A5 系统集成配置
+A5_BASE_URL=http://a5-internal:8080
+A5_API_KEY=your-api-key
+A5_API_SECRET=your-api-secret
+
+# MinIO 对象存储配置
+MINIO_ENDPOINT=127.0.0.1:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET_ENGINEERING=engineering-designs
+MINIO_BUCKET_TEMPLATES=design-templates
+
+# 防偏磨设计系统配置
+FPM_BASE_URL=http://fpm-system:9090
+```
+
+> A5 系统的 `AUTH_WHITELIST` 已包含 `/api/v1/a5/callback` 免鉴权路径，供 A5 系统回调。
+
+## Celery 异步任务
+
+```powershell
+# 启动 Celery Worker + Beat（定时任务）
+celery -A celery_app worker --loglevel=info --beat
+```
+
+Celery 配置：
+- 后端/结果存储：`Redis`
+- 定时任务：`sync-a5-data-every-30min`（每 30 分钟拉取 A5 日报/异常/工序数据，方案强制要求）
+- 失败重试：最多 3 次，间隔 60 秒
+- 连续失败 3 次触发企业微信告警
 
 ## 系统基础支撑与管理模块（RBAC）
 
@@ -290,6 +341,134 @@ GET    /api/v1/workover-project-pools/analytics/summary  统计分析
 ### 返回字段
 
 项目列表返回 `rejected_from_status` 字段，标明驳回项目在被驳回前所处的审批节点，前端据此区分「地质驳回」与「工艺驳回」。
+
+## 跨系统协同与异步引擎（模块五）
+
+### 承包商队伍管理与调度模块
+
+#### 智能派工排序
+
+派工接口严格按以下规则排序（方案强制要求）：
+- 审批通过时间升序（先审批的优先派工）
+- 产量优先级降序（高优先级优先）
+
+#### Redis 分布式锁防重机制
+
+```
+PATCH /api/v1/contractors/dispatch
+```
+
+为防止多个调度员同时将两口井派给同一支队伍，派工接口强制引入 Redis 分布式排他锁：
+- 锁 KEY 格式：`dispatch:lock:{contractor_capacity_id}`
+- 锁过期时间：30 秒（防死锁）
+- 加锁失败返回 `40900` 并发冲突提示
+
+#### 施工进度状态机
+
+```
+WAITING_DISPATCH → DISPATCHED → WORKING → FINISHED
+                         ↓                  ↓
+                      CANCELED           CANCELED
+```
+
+进度到达 100% 时自动推进状态：
+- DISPATCHED → WORKING（actual_start_at 自动填入）
+- WORKING → FINISHED（actual_end_at 自动填入）
+
+#### 主要接口
+
+```text
+GET    /api/v1/contractors/                              承包商运力列表（分页）
+POST   /api/v1/contractors/                              新增承包商运力报备
+GET    /api/v1/contractors/{id}                           运力详情
+PUT    /api/v1/contractors/{id}                           更新运力报备
+
+GET    /api/v1/contractors/priority-sheets                待派工优先顺序列表
+GET    /api/v1/contractors/operation-sheets/              修井运行表列表（分页）
+POST   /api/v1/contractors/operation-sheets/              创建修井运行表
+GET    /api/v1/contractors/operation-sheets/{id}          运行表详情
+PATCH  /api/v1/contractors/dispatch                       派工分配队伍（Redis 分布式锁）
+PATCH  /api/v1/contractors/operation-sheets/{id}/progress 更新施工进度
+```
+
+### A5 系统集成与互操作模块
+
+#### 集成架构
+
+```
+SSO 跳转（主动）      → 前端携带令牌直接跳转 A5 系统工单页面
+状态回调（被动）      → A5 工单审核/办结时 RESTful 回调本系统
+定时同步（主动）      → Celery 每 30 分钟拉取 A5 日报/异常/工序数据
+```
+
+#### API 约束
+
+- 所有集成接口使用 HTTPS + Token 身份双重鉴权
+- 回调接口 `/api/v1/a5/callback` 加入 `AUTH_WHITELIST` 免鉴权，由签名验证保障安全
+- 配置 IP 白名单访问限制
+- 全量接口调用自动落地日志
+
+#### 主要接口
+
+```text
+POST  /api/v1/a5/callback                 接收 A5 系统工单状态回调
+POST  /api/v1/a5/sso-token                生成 SSO 跳转令牌（5 分钟有效）
+GET   /api/v1/a5/sync/status              查看最近一次同步状态
+POST  /api/v1/a5/sync/trigger             手动触发一次全量数据同步
+```
+
+#### Celery 定时任务
+
+- `sync-a5-data-every-30min`：每 30 分钟自动轮询拉取 A5 系统数据
+- 拉取内容：作业日报、施工异常、工序进度
+- 失败机制：最多重试 3 次，连续失败 3 次触发企业微信告警
+- 数据清洗：基于 Pandas 进行去重、日期格式化、缺失值填充
+
+#### SSO 跳转流程
+
+```text
+前端点击"跳转A5" → 请求 /api/v1/a5/sso-token → 后端签发 JWT 临时令牌
+→ 返回 redirect_url（含 token + well_no） → 前端跳转 A5 系统
+→ A5 验证令牌后展示工单操作页面
+```
+
+### 工程设计管理模块
+
+#### 生成流程
+
+```
+获取项目信息 → 调防偏磨系统获取偏磨参数 → 规则引擎校验
+→ 生成版本号 → 模板渲染（python-docx/openpyxl） → MinIO 归档 → 写审计日志
+```
+
+#### 规则引擎
+
+内置规则库，校验不通过直接阻断生成：
+
+| 规则 | 说明 |
+|------|------|
+| 抽油机型号匹配 | 井深 > 3000m 必须使用特定型号抽油机 |
+| 措施冲突检测 | 酸化和冲砂洗井不能同工序进行 |
+| 施工参数范围 | 压力 0-100MPa，温度 -50~500°C |
+| 防偏磨参数完整性 | 必须包含 casing_diameter, tubing_size, wear_level |
+| 防偏磨严重程度 | wear_level=SEVERE 时阻断生成 |
+
+#### 文档版本管理
+
+- 版本号格式：`v1`, `v2`, `v3`...
+- 同一井号自动递增版本号
+- 数据库 UniqueConstraint(`well_no`, `version`) 保证版本唯一
+
+#### 主要接口
+
+```text
+GET    /api/v1/engineering-designs/                 工程设计文档列表（分页）
+POST   /api/v1/engineering-designs/generate         一键生成工程设计文档
+GET    /api/v1/engineering-designs/{id}             文档详情
+GET    /api/v1/engineering-designs/{id}/download    获取 MinIO 临时下载链接
+DELETE /api/v1/engineering-designs/{id}             删除文档
+POST   /api/v1/engineering-designs/check-rules      手动触发规则校验
+```
 
 ## 前端交互与可视化大屏
 
@@ -417,3 +596,17 @@ alembic revision --autogenerate -m "描述"
 - ✅ Vue3 前端构建产物输出到 `deploy/frontend-dist/`
 - ✅ RBAC 菜单动态渲染 + 权限按钮守卫
 - ✅ 驳回重提智能路由（前端使用 `rejected_from_status`）
+- ✅ 承包商运力报备 CRUD（创建/更新/查询）
+- ✅ 修井运行表 CRUD + 待派工优先排序
+- ✅ Redis 分布式锁防重复派工（TTL 30s + 自动释放）
+- ✅ 施工进度更新 + 状态自动推进（DISPATCHED→WORKING→FINISHED）
+- ✅ A5 SSO 单点登录令牌生成（JWT + 5 分钟有效期）
+- ✅ A5 RESTful 回调接收 + 工单状态实时同步
+- ✅ A5 数据清洗引擎（Pandas 去重/日期格式化/缺失值填充）
+- ✅ Celery 定时任务每 30 分钟同步 A5 数据（含 3 次重试 + 告警）
+- ✅ 防偏磨系统 HTTP 客户端（含本地模拟模式）
+- ✅ 工程设计规则引擎（5 项校验规则）
+- ✅ python-docx Word 文档模板渲染
+- ✅ openpyxl Excel 报表渲染
+- ✅ MinIO 对象存储归档（自动版本号 v1/v2/v3...）
+- ✅ 工程设计文档 CRUD + 临时下载链接
