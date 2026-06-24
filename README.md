@@ -68,15 +68,15 @@ manage_factory/
   frontend/
     src/
       api/
-        auth.ts                 # 登录接口
+        auth.ts                 # 登录接口（含 RBAC 菜单/权限类型）
         dictionary.ts           # 数据字典接口
         http.ts                 # Axios 封装 + JWT 请求头 + 统一解包
-        workover.ts             # 项目池/审批接口
+        workover.ts             # 项目池/审批接口（含演示模式降级）
       composables/
         useApprovalSocket.ts    # WebSocket 待办弹窗提醒
-        useProjectSync.ts       # 项目数据变更事件
+        useProjectSync.ts       # 项目数据同步 + 通知消息格式化
       router/
-        index.ts                # 前端路由（登录/工作台/大屏）
+        index.ts                # 前端路由（登录/工作台/大屏）+ JWT 守卫
       styles/
         main.css                # 全局样式
       types/
@@ -85,8 +85,8 @@ manage_factory/
         status.ts               # 审批状态/流转/标签工具函数
       views/
         LoginView.vue           # 登录页
-        MainLayout.vue          # 主布局（侧边栏+顶栏）
-        ApprovalWorkbench.vue   # 审批工作台
+        MainLayout.vue          # 主布局（动态 RBAC 侧边栏+顶栏+通知）
+        ApprovalWorkbench.vue   # 审批工作台（权限按钮守卫）
         AnalyticsDashboard.vue  # 统计分析大屏
     index.html                  # HTML 入口
     vite.config.ts              # Vite 构建配置
@@ -298,7 +298,7 @@ GET    /api/v1/workover-project-pools/analytics/summary  统计分析
 - 项目池列表：多条件筛选、分页、优先级进度条、措施标签、审批流步骤条
 - 批量提交：勾选草稿项目，一键提交至地质核实
 - 审批操作：通过（流转到下一节点）、驳回（退回修改）
-- 重新提报：已驳回项目直接重新提交，自动路由到正确节点
+- 重新提报：已驳回项目重新提交，根据 `rejected_from_status` 智能路由到地质核实或工艺核实
 - 删除项目：确认对话框，软删除标记作废
 - 措施 JSONB 表单：动态增删措施行，措施类型下拉从字典 API 加载
 - WebSocket 待办：页面加载后自动连接 `/ws/approval`，收到推送时弹窗提醒
@@ -311,6 +311,23 @@ GET    /api/v1/workover-project-pools/analytics/summary  统计分析
 - 区块 × 状态热力图
 - 日提报趋势折线图
 - 图表一键导出 PNG
+
+### RBAC 菜单集成（与模块三联动）
+
+- 登录时从后端获取用户菜单树（`menus`）和权限列表（`permissions`）
+- 侧边栏菜单由后端 RBAC 数据动态驱动，支持父子嵌套、图标映射、不可见菜单过滤
+- 操作按钮（新增/编辑/提交/审批/删除）根据用户权限自动显示/隐藏
+- 当后端 RBAC 数据不可用时，自动回退为静态菜单
+
+### 权限按钮映射
+
+| 按钮 | 所需权限 |
+|------|----------|
+| 新增提报 | `workover_project_pool:create` |
+| 编辑项目 | `workover_project_pool:update` |
+| 批量提交 | `workover_project_pool:submit` |
+| 通过 / 驳回 | `workover_project_pool:approve` |
+| 删除项目 | `workover_project_pool:delete` |
 
 ### 演示模式
 
@@ -342,6 +359,7 @@ alembic revision --autogenerate -m "描述"
 | `20260531_0001` | 核心底层表 |
 | `20260602_0002` | 上修项目池管理模块 |
 | `20260604_0003` | 系统基础支撑与 RBAC 模块 |
+| `20260616_0004` | 安全与数据完整性修复 |
 
 ## 容器化部署
 
@@ -395,4 +413,7 @@ alembic revision --autogenerate -m "描述"
 - ✅ Excel 导入导出
 - ✅ 统计分析 API
 - ✅ `npm install && npm run build`
+- ✅ `vue-tsc --noEmit` TypeScript 类型检查零错误
 - ✅ Vue3 前端构建产物输出到 `deploy/frontend-dist/`
+- ✅ RBAC 菜单动态渲染 + 权限按钮守卫
+- ✅ 驳回重提智能路由（前端使用 `rejected_from_status`）
