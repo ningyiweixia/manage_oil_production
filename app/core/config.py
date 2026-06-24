@@ -27,8 +27,20 @@ class Settings(BaseSettings):
     refresh_token_expire_minutes: int = 10080
     redis_url: str | None = None
     cors_allow_origins: str = "http://127.0.0.1:8000,http://localhost:8000"
-    auth_whitelist: str = "/docs,/docs/oauth2-redirect,/redoc,/openapi.json,/health,/api/v1/auth/login,/api/v1/auth/refresh,/api/v1/auth/logout"
+    auth_whitelist: str = "/docs,/docs/oauth2-redirect,/redoc,/openapi.json,/health,/api/v1/auth/login,/api/v1/auth/refresh,/api/v1/auth/logout,/api/v1/a5/callback"
     admin_initial_password: str | None = None
+    # A5 系统集成配置
+    a5_base_url: str = ""
+    a5_api_key: str = ""
+    a5_api_secret: str = ""
+    # MinIO 对象存储配置
+    minio_endpoint: str = "127.0.0.1:9000"
+    minio_access_key: str = "minioadmin"
+    minio_secret_key: str = "minioadmin"
+    minio_bucket_engineering: str = "engineering-designs"
+    minio_bucket_templates: str = "design-templates"
+    # 防偏磨系统配置
+    fpm_base_url: str = ""
 
     @computed_field
     @property

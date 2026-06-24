@@ -17,6 +17,12 @@ MENU_DEFINITIONS = [
     ("system_logs", "system", "操作日志", "system_logs", "/system/operation-logs", "system/logs/index", "file-text", 16),
     ("workover", None, "上修项目池", "workover", "/workover", "Layout", "database", 20),
     ("workover_project_pool", "workover", "项目池台账", "workover_project_pool", "/workover/project-pools", "workover/project-pools/index", "table", 21),
+    ("contractor", None, "承包商管理", "contractor", "/contractor", "Layout", "team", 30),
+    ("contractor_capacity", "contractor", "运力报备", "contractor_capacity", "/contractor/capacity", "contractor/capacity/index", "list", 31),
+    ("contractor_dispatch", "contractor", "智能派工", "contractor_dispatch", "/contractor/dispatch", "contractor/dispatch/index", "send", 32),
+    ("contractor_sheets", "contractor", "修井运行表", "contractor_sheets", "/contractor/operation-sheets", "contractor/operation-sheets/index", "document", 33),
+    ("engineering", None, "工程设计管理", "engineering", "/engineering", "Layout", "edit", 40),
+    ("engineering_designs", "engineering", "设计文档", "engineering_designs", "/engineering/designs", "engineering/designs/index", "document", 41),
 ]
 
 PERMISSION_DEFINITIONS = [
@@ -52,6 +58,22 @@ PERMISSION_DEFINITIONS = [
     ("workover_project_pool:export", "导出上修项目池", "/api/v1/workover-project-pools/export/all", "GET"),
     ("approval_log:read", "查看审批日志", "/api/v1/approval-logs", "GET"),
     ("rbac:manage", "管理RBAC权限", "/api/v1/rbac", "POST"),
+    # 承包商管理权限
+    ("contractor:read", "查看承包商运力", "/api/v1/contractors", "GET"),
+    ("contractor:create", "报承包商运力", "/api/v1/contractors", "POST"),
+    ("contractor:update", "更新承包商运力", "/api/v1/contractors/{contractor_id}", "PUT"),
+    ("operation-sheet:read", "查看修井运行表", "/api/v1/contractors/operation-sheets", "GET"),
+    ("operation-sheet:create", "创建修井运行表", "/api/v1/contractors/operation-sheets", "POST"),
+    ("operation-sheet:dispatch", "派工分配队伍", "/api/v1/contractors/dispatch", "PATCH"),
+    ("operation-sheet:update", "更新修井运行表", "/api/v1/contractors/operation-sheets/{sheet_id}/progress", "PATCH"),
+    # A5 系统集成权限
+    ("a5:sso", "生成A5 SSO令牌", "/api/v1/a5/sso-token", "POST"),
+    ("a5:read", "查看A5同步状态", "/api/v1/a5/sync/status", "GET"),
+    ("a5:sync", "触发A5数据同步", "/api/v1/a5/sync/trigger", "POST"),
+    # 工程设计管理权限
+    ("engineering:read", "查看工程设计文档", "/api/v1/engineering-designs", "GET"),
+    ("engineering:generate", "生成工程设计文档", "/api/v1/engineering-designs/generate", "POST"),
+    ("engineering:delete", "删除工程设计文档", "/api/v1/engineering-designs/{id}", "DELETE"),
 ]
 
 ROLE_DEFINITIONS = [
@@ -76,6 +98,7 @@ ROLE_PERMISSION_CODES = {
         "workover_project_pool:import",
         "workover_project_pool:export",
         "approval_log:read",
+        "operation-sheet:read",
     },
     "base_entry_clerk": {
         "system:dictionary:read",
@@ -89,9 +112,16 @@ ROLE_PERMISSION_CODES = {
         "workover_project_pool:read",
         "workover_project_pool:approve",
         "approval_log:read",
-    },
+        "operation-sheet:read",
+        "operation-sheet:dispatch",
+        "a5:sso",
+        "a5:read",
+        "engineering:read",
+        "engineering:generate",
     "contractor_operator": {
         "system:dictionary:read",
+        "contractor:read",
+        "contractor:create",
     },
 }
 
@@ -176,7 +206,14 @@ def seed() -> None:
         roles_by_code["ops_admin"].menus = list(menus_by_key.values())
         roles_by_code["project_pool_admin"].menus = [menus_by_key["workover"], menus_by_key["workover_project_pool"]]
         roles_by_code["base_entry_clerk"].menus = [menus_by_key["workover"], menus_by_key["workover_project_pool"]]
-        roles_by_code["business_reviewer"].menus = [menus_by_key["workover"], menus_by_key["workover_project_pool"]]
+        roles_by_code["business_reviewer"].menus = [
+            menus_by_key["workover"], menus_by_key["workover_project_pool"],
+            menus_by_key["contractor"], menus_by_key["contractor_dispatch"], menus_by_key["contractor_sheets"],
+            menus_by_key["engineering"], menus_by_key["engineering_designs"],
+        ]
+        roles_by_code["contractor_operator"].menus = [
+            menus_by_key["contractor"], menus_by_key["contractor_capacity"],
+        ]
 
         admin = db.scalar(select(User).where(User.username == "admin"))
         if admin is None:
