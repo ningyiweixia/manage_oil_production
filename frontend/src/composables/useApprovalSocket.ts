@@ -1,43 +1,10 @@
 import { onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElNotification } from 'element-plus'
-import { emitProjectDataChanged, emitProjectNotification } from './useProjectSync'
-import { statusLabels } from '../utils/status'
-import type { ProjectPoolStatus } from '../types/workover'
+import { emitProjectDataChanged, emitProjectNotification, normalizeNotificationMessage, resolveNodeLabel } from './useProjectSync'
 
 const MAX_RECONNECT_ATTEMPTS = 6
 const BASE_RECONNECT_DELAY_MS = 1000
-const notificationNodeLabels: Partial<Record<ProjectPoolStatus, string>> = {
-  APPROVED: '入运行库'
-}
-const notificationMessages: Partial<Record<ProjectPoolStatus, string>> = {
-  DRAFT: '项目已退回草稿',
-  PENDING_GEOLOGY_VERIFY: '项目已提交至地质核实',
-  PENDING_PROCESS_VERIFY: '项目已流转至工艺核实',
-  APPROVED: '项目已通过审批，进入运行库',
-  REJECTED: '项目已驳回，待补充修改',
-  DISPATCHED: '项目已派工',
-  VOIDED: '项目已作废'
-}
-
-function nodeLabel(payload: Record<string, any>) {
-  const code = payload.node_code as ProjectPoolStatus | undefined
-  return payload.node_label || (code && (notificationNodeLabels[code] || statusLabels[code])) || '待处理'
-}
-
-function normalizeMessage(payload: Record<string, any>) {
-  const code = payload.node_code as ProjectPoolStatus | undefined
-  let message = payload.message || (code && notificationMessages[code]) || `收到新的审批消息：${nodeLabel(payload)}`
-  Object.entries(statusLabels).forEach(([code, name]) => {
-    message = String(message).replaceAll(code, name)
-  })
-  message = String(message)
-    .replaceAll('已流转至 已通过', '已通过审批，进入运行库')
-    .replaceAll('已流转至已通过', '已通过审批，进入运行库')
-    .replaceAll('流转至 已通过', '通过审批，进入运行库')
-    .replaceAll('流转至已通过', '通过审批，进入运行库')
-  return message
-}
 
 export function useApprovalSocket() {
   const router = useRouter()
@@ -73,8 +40,8 @@ export function useApprovalSocket() {
         } catch {
           return
         }
-        const message = normalizeMessage(payload)
-        emitProjectNotification({ ...payload, message, node_label: nodeLabel(payload) })
+        const message = normalizeNotificationMessage(payload)
+        emitProjectNotification({ ...payload, message, node_label: resolveNodeLabel(payload) })
         if (payload.node_code || payload.status || payload.project_ids?.length) {
           emitProjectDataChanged()
         }

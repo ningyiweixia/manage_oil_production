@@ -46,6 +46,8 @@ async function handleLogin() {
     localStorage.setItem('access_token', result.token.access_token)
     localStorage.setItem('refresh_token', result.token.refresh_token)
     localStorage.setItem('current_user', JSON.stringify(result.user))
+    localStorage.setItem('permissions', JSON.stringify(result.permissions || []))
+    localStorage.setItem('menus', JSON.stringify(result.menus || []))
     ElMessage.success('登录成功')
     router.push(typeof route.query.redirect === 'string' ? route.query.redirect : '/approval')
   } catch {

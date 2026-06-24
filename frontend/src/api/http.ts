@@ -21,6 +21,9 @@ http.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem('access_token')
       localStorage.removeItem('refresh_token')
+      localStorage.removeItem('current_user')
+      localStorage.removeItem('permissions')
+      localStorage.removeItem('menus')
       window.dispatchEvent(new CustomEvent('auth-expired'))
       ElMessage.error('登录已失效，请重新登录')
     }

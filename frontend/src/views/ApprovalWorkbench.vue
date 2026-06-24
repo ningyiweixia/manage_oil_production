@@ -20,7 +20,7 @@
       <el-form-item>
         <el-button type="primary" :icon="Search" @click="loadProjects">查询</el-button>
         <el-button :icon="Refresh" @click="resetQuery">重置</el-button>
-        <el-button :icon="Plus" @click="openCreate">新增提报</el-button>
+        <el-button v-if="hasPermission('workover_project_pool:create')" :icon="Plus" @click="openCreate">新增提报</el-button>
         <el-button :icon="TrendCharts" @click="openDashboard">查看大屏</el-button>
       </el-form-item>
     </el-form>
@@ -46,7 +46,7 @@
         <h2>项目池与审批流转</h2>
         <p>勾选草稿可批量提交；待审核节点可在线通过、驳回或退回补充。</p>
       </div>
-      <el-button type="success" :disabled="!selectedIds.length" :icon="Promotion" @click="submitDialogVisible = true">批量提交</el-button>
+      <el-button v-if="hasPermission('workover_project_pool:submit')" type="success" :disabled="!selectedIds.length" :icon="Promotion" @click="submitDialogVisible = true">批量提交</el-button>
     </div>
 
     <el-table v-loading="loading" :data="projects" row-key="id" empty-text="暂无符合条件的项目" @selection-change="onSelectionChange">
@@ -88,11 +88,11 @@
       </el-table-column>
       <el-table-column label="操作" min-width="260" fixed="right">
         <template #default="{ row }">
-          <el-button text type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button v-if="row.status === 'REJECTED'" text type="success" @click="resubmitRejected(row)">重新提报</el-button>
-          <el-button v-else text type="success" :disabled="!canApprove(row.status)" @click="openApproval(row, 'APPROVED')">通过</el-button>
-          <el-button v-if="row.status !== 'REJECTED'" text type="warning" :disabled="!canApprove(row.status)" @click="openApproval(row, 'REJECTED')">驳回</el-button>
-          <el-button text type="danger" @click="confirmDelete(row)">删除</el-button>
+          <el-button v-if="hasPermission('workover_project_pool:update')" text type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button v-if="row.status === 'REJECTED' && hasPermission('workover_project_pool:submit')" text type="success" @click="resubmitRejected(row)">重新提报</el-button>
+          <el-button v-else-if="hasPermission('workover_project_pool:approve')" text type="success" :disabled="!canApprove(row.status)" @click="openApproval(row, 'APPROVED')">通过</el-button>
+          <el-button v-if="row.status !== 'REJECTED' && hasPermission('workover_project_pool:approve')" text type="warning" :disabled="!canApprove(row.status)" @click="openApproval(row, 'REJECTED')">驳回</el-button>
+          <el-button v-if="hasPermission('workover_project_pool:delete')" text type="danger" @click="confirmDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -180,19 +180,21 @@ import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { Delete, Plus, Promotion, Refresh, Search, TrendCharts } from '@element-plus/icons-vue'
 import { createProject, deleteProject, getProjectAnalytics, listProjects, patchProjectStatus, submitProjects, updateProject } from '../api/workover'
 import { listDictionaryItems, type DictionaryItem } from '../api/dictionary'
-import { approvalFlowNodes, approvalNodeClass, canApprove, isRejectedStatus, nextApprovedStatus, rejectedAtLabel, showApprovalFlow, statusLabels, statusTagType } from '../utils/status'
+import { approvalFlowNodes, approvalNodeClass, canApprove, nextApprovedStatus, rejectedAtLabel, showApprovalFlow, statusLabels, statusTagType } from '../utils/status'
 import { emitProjectDataChanged, useProjectDataChanged } from '../composables/useProjectSync'
 import type { ProjectPoolStatus, ProjectQuery, WorkoverProject } from '../types/workover'
 
-const statusOptions = [
-  'DRAFT',
-  'PENDING_GEOLOGY_VERIFY',
-  'PENDING_PROCESS_VERIFY',
-  'APPROVED',
-  'REJECTED',
-  'DISPATCHED',
-  'VOIDED'
-].map((value) => ({ label: statusLabels[value as ProjectPoolStatus], value }))
+const statusOptions = (Object.keys(statusLabels) as ProjectPoolStatus[]).map((value) => ({
+  label: statusLabels[value],
+  value
+}))
+
+function userPermissions(): string[] {
+  try { return JSON.parse(localStorage.getItem('permissions') || '[]') } catch { return [] }
+}
+function hasPermission(perm: string): boolean {
+  return userPermissions().includes(perm)
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -475,10 +477,15 @@ async function confirmApproval() {
 }
 
 async function resubmitRejected(row: WorkoverProject) {
-  const targetLabel = row.rejected_from_status ? rejectedAtLabel(row.rejected_from_status) : '已驳回'
+  // Smart routing: re-submit to the node where it was rejected, or default to geology
+  const resubmitTo: ProjectPoolStatus =
+    row.rejected_from_status === 'PENDING_PROCESS_VERIFY'
+      ? 'PENDING_PROCESS_VERIFY'
+      : 'PENDING_GEOLOGY_VERIFY'
+  const targetName = resubmitTo === 'PENDING_PROCESS_VERIFY' ? '工艺核实' : '地质核实'
   try {
     await ElMessageBox.confirm(
-      `将项目「${row.well_no}」修改后重新提交至${targetLabel === '地质驳回' ? '地质核实' : '工艺核实'}环节继续审批。`,
+      `将项目「${row.well_no}」修改后重新提交至「${targetName}」环节继续审批。`,
       '重新提报',
       { confirmButtonText: '确认提交', cancelButtonText: '取消', type: 'warning' }
     )
@@ -487,8 +494,8 @@ async function resubmitRejected(row: WorkoverProject) {
   }
   saving.value = true
   try {
-    await patchProjectStatus(row.id, 'PENDING_GEOLOGY_VERIFY', '修改后重新提报')
-    ElMessage.success('已重新提交至地质核实')
+    await patchProjectStatus(row.id, resubmitTo, '修改后重新提报')
+    ElMessage.success(`已重新提交至${targetName}`)
     emitProjectDataChanged()
     await loadWorkflowCounts()
     await loadProjects()

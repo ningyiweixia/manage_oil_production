@@ -113,7 +113,11 @@ const kpis = computed(() => {
 })
 
 function formatDate(value: Date) {
-  return value.toISOString().slice(0, 10)
+  // Use local date to avoid timezone offset shifting the day
+  const yyyy = value.getFullYear()
+  const mm = String(value.getMonth() + 1).padStart(2, '0')
+  const dd = String(value.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
 }
 
 function currentQuery(): AnalyticsQuery {

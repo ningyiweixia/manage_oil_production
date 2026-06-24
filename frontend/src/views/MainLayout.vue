@@ -6,14 +6,26 @@
         <span>采油二厂</span>
       </div>
       <el-menu router :default-active="$route.path" class="nav-menu">
-        <el-menu-item index="/approval">
-          <el-icon><Tickets /></el-icon>
-          <span>审核审批工作台</span>
-        </el-menu-item>
-        <el-menu-item index="/dashboard">
-          <el-icon><TrendCharts /></el-icon>
-          <span>统计分析大屏</span>
-        </el-menu-item>
+        <template v-for="item in sidebarMenus" :key="item.id">
+          <el-sub-menu v-if="item.children && item.children.length" :index="String(item.id)">
+            <template #title>
+              <el-icon v-if="item.icon && iconMap[item.icon]"><component :is="iconMap[item.icon]" /></el-icon>
+              <span>{{ item.title }}</span>
+            </template>
+            <el-menu-item
+              v-for="child in item.children"
+              :key="child.id"
+              :index="child.route_path || String(child.id)"
+            >
+              <el-icon v-if="child.icon && iconMap[child.icon]"><component :is="iconMap[child.icon]" /></el-icon>
+              <span>{{ child.title }}</span>
+            </el-menu-item>
+          </el-sub-menu>
+          <el-menu-item v-else :index="item.route_path || String(item.id)">
+            <el-icon v-if="item.icon && iconMap[item.icon]"><component :is="iconMap[item.icon]" /></el-icon>
+            <span>{{ item.title }}</span>
+          </el-menu-item>
+        </template>
       </el-menu>
     </el-aside>
 
@@ -71,23 +83,13 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Bell, Tickets, TrendCharts, User } from '@element-plus/icons-vue'
+import { Bell, Tickets, TrendCharts, User, Setting, Monitor, Document, DataAnalysis } from '@element-plus/icons-vue'
 import { useApprovalSocket } from '../composables/useApprovalSocket'
-import { PROJECT_NOTIFICATION, type ProjectNotification } from '../composables/useProjectSync'
-import { statusLabels } from '../utils/status'
-import type { ProjectPoolStatus } from '../types/workover'
+import { PROJECT_NOTIFICATION, normalizeNotificationMessage, type ProjectNotification } from '../composables/useProjectSync'
+import type { MenuNode } from '../api/auth'
 
-const notificationNodeLabels: Partial<Record<ProjectPoolStatus, string>> = {
-  APPROVED: '入运行库'
-}
-const notificationMessages: Partial<Record<ProjectPoolStatus, string>> = {
-  DRAFT: '项目已退回草稿',
-  PENDING_GEOLOGY_VERIFY: '项目已提交至地质核实',
-  PENDING_PROCESS_VERIFY: '项目已流转至工艺核实',
-  APPROVED: '项目已通过审批，进入运行库',
-  REJECTED: '项目已驳回，待补充修改',
-  DISPATCHED: '项目已派工',
-  VOIDED: '项目已作废'
+const iconMap: Record<string, any> = {
+  Tickets, TrendCharts, Setting, Monitor, Document, DataAnalysis, Bell, User
 }
 
 const route = useRoute()
@@ -95,11 +97,47 @@ const router = useRouter()
 const { connect } = useApprovalSocket()
 const notificationCount = ref(0)
 const notifications = ref<Array<ProjectNotification & { id: number; title: string; message: string; time: string }>>([])
-const user = computed(() => JSON.parse(localStorage.getItem('current_user') || '{}'))
+const user = computed(() => {
+  try { return JSON.parse(localStorage.getItem('current_user') || '{}') } catch { return {} }
+})
+const permissions = computed<string[]>(() => {
+  try { return JSON.parse(localStorage.getItem('permissions') || '[]') } catch { return [] }
+})
+
+/** Build sidebar menus from backend RBAC menus, with a static fallback */
+const sidebarMenus = computed<MenuNode[]>(() => {
+  try {
+    const stored = JSON.parse(localStorage.getItem('menus') || '[]') as MenuNode[]
+    if (stored && stored.length) {
+      // Filter invisible menus and recursively filter children
+      const filterVisible = (items: MenuNode[]): MenuNode[] =>
+        items
+          .filter((m) => m.is_visible !== false && m.is_active !== false)
+          .map((m) => ({ ...m, children: filterVisible(m.children || []) }))
+          .sort((a, b) => a.sort_order - b.sort_order)
+      return filterVisible(stored)
+    }
+  } catch { /* fall through to fallback */ }
+  return [
+    {
+      id: 1, title: '审核审批工作台', route_name: 'approval', route_path: '/approval',
+      component: null, icon: 'Tickets', parent_id: null, sort_order: 1,
+      is_visible: true, is_active: true, meta: {}, children: []
+    },
+    {
+      id: 2, title: '统计分析大屏', route_name: 'dashboard', route_path: '/dashboard',
+      component: null, icon: 'TrendCharts', parent_id: null, sort_order: 2,
+      is_visible: true, is_active: true, meta: {}, children: []
+    }
+  ]
+})
 
 function logout() {
   localStorage.removeItem('access_token')
   localStorage.removeItem('refresh_token')
+  localStorage.removeItem('current_user')
+  localStorage.removeItem('permissions')
+  localStorage.removeItem('menus')
   router.push('/login')
 }
 
@@ -119,21 +157,6 @@ function openNotification(item: ProjectNotification) {
   })
 }
 
-function notificationNodeLabel(payload: ProjectNotification) {
-  const code = payload.node_code as ProjectPoolStatus | undefined
-  return payload.node_label || (code ? notificationNodeLabels[code] || statusLabels[code] : '') || '待处理'
-}
-
-function notificationMessage(payload: ProjectNotification) {
-  const code = payload.node_code as ProjectPoolStatus | undefined
-  const message = payload.message || (code && notificationMessages[code]) || `收到新的审批消息：${notificationNodeLabel(payload)}`
-  return String(message)
-    .replaceAll('已流转至 已通过', '已通过审批，进入运行库')
-    .replaceAll('已流转至已通过', '已通过审批，进入运行库')
-    .replaceAll('流转至 已通过', '通过审批，进入运行库')
-    .replaceAll('流转至已通过', '通过审批，进入运行库')
-}
-
 function handleProjectNotification(event: Event) {
   const payload = (event as CustomEvent<ProjectNotification>).detail || {}
   notificationCount.value += 1
@@ -141,7 +164,7 @@ function handleProjectNotification(event: Event) {
     ...payload,
     id: Date.now() + Math.random(),
     title: payload.title || '审批待办提醒',
-    message: notificationMessage(payload),
+    message: normalizeNotificationMessage(payload),
     time: new Date().toLocaleString('zh-CN', { hour12: false })
   })
   notifications.value = notifications.value.slice(0, 20)

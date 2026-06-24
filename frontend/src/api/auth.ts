@@ -5,7 +5,22 @@ interface LoginPayload {
   password: string
 }
 
-interface LoginResponse {
+export interface MenuNode {
+  id: number
+  title: string
+  route_name: string
+  route_path: string
+  component: string | null
+  icon: string | null
+  parent_id: number | null
+  sort_order: number
+  is_visible: boolean
+  is_active: boolean
+  meta: Record<string, unknown>
+  children: MenuNode[]
+}
+
+export interface LoginResponse {
   token: {
     access_token: string
     refresh_token: string
@@ -18,6 +33,7 @@ interface LoginResponse {
     department?: string
   }
   permissions: string[]
+  menus: MenuNode[]
 }
 
 export async function login(payload: LoginPayload): Promise<LoginResponse> {

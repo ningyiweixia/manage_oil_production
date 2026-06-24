@@ -37,6 +37,9 @@ router.beforeEach((to) => {
   if (to.path !== '/login' && !isTokenValid(localStorage.getItem('access_token'))) {
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
+    localStorage.removeItem('current_user')
+    localStorage.removeItem('permissions')
+    localStorage.removeItem('menus')
     return { path: '/login', query: { redirect: to.fullPath } }
   }
   if (to.path === '/login' && isTokenValid(localStorage.getItem('access_token'))) {
