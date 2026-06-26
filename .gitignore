@@ -11,6 +11,7 @@ __pycache__/
 *.egg-info/
 .local/
 *.log
+runtime-pids.json
 node_modules/
 frontend/dist/
 frontend/src/**/*.js
