@@ -31,6 +31,34 @@ function New-CheckResult {
     }
 }
 
+function Redact-LoginBody {
+    param([string]$Body)
+
+    try {
+        $parsed = $Body | ConvertFrom-Json
+        if ($parsed.code -eq 20000 -and $parsed.data) {
+            $username = $parsed.data.user.username
+            $permissionCount = @($parsed.data.permissions).Count
+            $menuCount = @($parsed.data.menus).Count
+            return (@{
+                code = $parsed.code
+                msg = $parsed.msg
+                data = @{
+                    user = @{ username = $username }
+                    token = "[redacted]"
+                    permission_count = $permissionCount
+                    menu_count = $menuCount
+                }
+            } | ConvertTo-Json -Compress -Depth 5)
+        }
+    }
+    catch {
+        return $Body
+    }
+
+    return $Body
+}
+
 function Test-Port {
     param(
         [string]$Name,
@@ -85,7 +113,7 @@ function Test-Login {
     foreach ($target in $targets) {
         try {
             $response = Invoke-WebRequest -Method Post -Uri $target -ContentType "application/json" -Body $payload -TimeoutSec 8
-            return New-CheckResult "Login API" "ok" "HTTP $($response.StatusCode)" "POST /api/v1/auth/login via $target" $response.Content
+            return New-CheckResult "Login API" "ok" "HTTP $($response.StatusCode)" "POST /api/v1/auth/login via $target" (Redact-LoginBody $response.Content)
         }
         catch {
             if ($_.Exception.Response) {

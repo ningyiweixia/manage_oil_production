@@ -12,6 +12,7 @@ __pycache__/
 .local/
 *.log
 runtime-pids.json
+local_dev.db*
 node_modules/
 frontend/dist/
 frontend/src/**/*.js

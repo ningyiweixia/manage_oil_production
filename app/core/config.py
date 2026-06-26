@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import computed_field
+from pydantic import Field, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 120
     refresh_token_expire_minutes: int = 10080
     redis_url: str | None = None
+    sqlalchemy_database_url: str | None = Field(default=None, validation_alias="DATABASE_URL")
     cors_allow_origins: str = "http://127.0.0.1:8000,http://localhost:8000"
     auth_whitelist: str = "/docs,/docs/oauth2-redirect,/redoc,/openapi.json,/health,/api/v1/auth/login,/api/v1/auth/refresh,/api/v1/auth/logout,/api/v1/a5/callback"
     admin_initial_password: str | None = None
@@ -47,6 +48,8 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def database_url(self) -> str:
+        if self.sqlalchemy_database_url:
+            return self.sqlalchemy_database_url
         return (
             f"postgresql+psycopg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_server}:{self.postgres_port}/{self.postgres_db}"
