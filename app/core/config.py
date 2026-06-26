@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     a5_base_url: str = ""
     a5_api_key: str = ""
     a5_api_secret: str = ""
+    a5_ip_whitelist: str = ""
+    alert_webhook_url: str = ""
     # MinIO 对象存储配置
     minio_endpoint: str = "127.0.0.1:9000"
     minio_access_key: str = "minioadmin"
@@ -57,6 +59,10 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [item.strip() for item in self.cors_allow_origins.split(",") if item.strip()]
+
+    @property
+    def a5_allowed_ips(self) -> set[str]:
+        return {item.strip() for item in self.a5_ip_whitelist.split(",") if item.strip()}
 
 
 @lru_cache

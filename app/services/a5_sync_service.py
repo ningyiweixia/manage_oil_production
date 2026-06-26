@@ -8,15 +8,21 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.exceptions import BusinessException
+from app.core.redis import cache_client
 from app.core.status_codes import A5_LINK_FAILED
 from app.models.workover import OperationStatus, WorkoverOperationSheet
 from app.services.a5_client import A5Client
 from app.services.a5_data_cleaner import clean_daily_report, validate_operation_data
 
 logger = logging.getLogger(__name__)
+
+A5_SYNC_STATUS_KEY = "a5:sync:last_status"
+A5_SYNC_COUNT_PREFIX = "a5:sync:count:"
 
 
 async def sync_daily_operations(db: Session, sync_date: str | None = None) -> dict[str, Any]:
@@ -101,15 +107,37 @@ async def full_sync(db: Session) -> dict[str, Any]:
     if daily_stats.get("error") or anomaly_stats.get("error"):
         result["overall"] = "partial_failure"
 
+    today_key = f"{A5_SYNC_COUNT_PREFIX}{sync_date}"
+    count = cache_client.get_json(today_key) or 0
+    cache_client.set_json(today_key, int(count) + 1, expire_seconds=172800)
+    cache_client.set_json(
+        A5_SYNC_STATUS_KEY,
+        {
+            "last_sync_time": result["sync_time"],
+            "last_sync_status": result["overall"],
+            "last_sync_message": (
+                daily_stats.get("error")
+                or anomaly_stats.get("error")
+                or f"日报更新 {daily_stats.get('updated', 0)} 条，异常同步 {anomaly_stats.get('synced', 0)} 条"
+            ),
+            "sync_count_today": int(count) + 1,
+            "is_running": False,
+        },
+        expire_seconds=604800,
+    )
     return result
 
 
 def _trigger_alert(message: str) -> None:
-    """触发企业微信/内部通告警（预留接口）。
-
-    当前实现记录日志，后续可对接企业微信 Webhook。
-    """
+    """触发企业微信/内部通告警。"""
     logger.error(f"[A5 告警] {message}")
-    # TODO: 对接企业微信 Webhook
-    # import requests
-    # requests.post(WECHAT_WEBHOOK_URL, json={"msgtype": "text", "text": {"content": message}})
+    if not settings.alert_webhook_url:
+        return
+    try:
+        with httpx.Client(timeout=5) as client:
+            client.post(
+                settings.alert_webhook_url,
+                json={"msgtype": "text", "text": {"content": message}},
+            )
+    except Exception:
+        logger.exception("告警 Webhook 推送失败")

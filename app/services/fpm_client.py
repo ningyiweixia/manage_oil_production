@@ -31,6 +31,12 @@ class FpmClient:
                 response = await client.request(method, url, **kwargs)
                 response.raise_for_status()
                 return response.json()
+            except httpx.TimeoutException as exc:
+                logger.error(f"防偏磨系统请求超时: {url} -> {exc}")
+                raise BusinessException(FPM_LINK_FAILED, f"防偏磨系统请求超时: {path}")
+            except httpx.HTTPStatusError as exc:
+                logger.error(f"防偏磨系统返回错误: {url} -> {exc.response.status_code}")
+                raise BusinessException(FPM_LINK_FAILED, f"防偏磨系统返回错误: {exc.response.status_code}")
             except httpx.RequestError as exc:
                 logger.error(f"防偏磨系统请求失败: {url} -> {exc}")
                 raise BusinessException(FPM_LINK_FAILED, f"防偏磨系统连接失败: {path}")

@@ -26,7 +26,7 @@ def acquire_dispatch_lock(contractor_capacity_id: int, ttl: int = 30) -> bool:
     payload = json.dumps({"locked_at": datetime.now(timezone.utc).isoformat()})
     # CacheClient.set_json 内部会覆写，我们用 memory dict 存标志
     # 当 Redis 不可用时自动降级为进程内缓存
-    return cache_client.set_json(lock_key, json.loads(payload), expire_seconds=ttl)
+    return cache_client.set_json(lock_key, json.loads(payload), expire_seconds=ttl, nx=True)
 
 
 def release_dispatch_lock(contractor_capacity_id: int) -> None:

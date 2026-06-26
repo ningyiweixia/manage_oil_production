@@ -52,15 +52,6 @@ def list_items(
     )
 
 
-@router.get("/{design_id}", response_model=ApiResponse[EngineeringDesignOut])
-def detail(
-    design_id: int,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_permission("engineering:read")),
-) -> ApiResponse[EngineeringDesignOut]:
-    return success(EngineeringDesignOut.model_validate(get_design_doc(db, design_id)))
-
-
 @router.post("/generate", response_model=ApiResponse[DesignGenerateOut])
 async def generate(
     payload: EngineeringDesignCreate,
@@ -88,6 +79,32 @@ async def generate(
     )
 
 
+@router.post("/check-rules", response_model=ApiResponse[RuleCheckResult])
+async def check_rules(
+    project_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("engineering:read")),
+) -> ApiResponse[RuleCheckResult]:
+    """手动触发现场规则校验（不生成文档）。"""
+    project = get_project_pool(db, project_id)
+    measures = project.measures_jsonb or {}
+
+    fpm_client = FpmClient()
+    fpm_params = await fpm_client.fetch_parameters(project.well_no)
+
+    result = validate_design_before_generation(project.well_no, measures, fpm_params)
+    return success(result)
+
+
+@router.get("/{design_id}", response_model=ApiResponse[EngineeringDesignOut])
+def detail(
+    design_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("engineering:read")),
+) -> ApiResponse[EngineeringDesignOut]:
+    return success(EngineeringDesignOut.model_validate(get_design_doc(db, design_id)))
+
+
 @router.get("/{design_id}/download", response_model=ApiResponse[dict])
 def download(
     design_id: int,
@@ -110,20 +127,3 @@ def delete(
         db, design_id, operator_id=current_user.id, operator_ip=_client_ip(request)
     )
     return success(msg="已删除")
-
-
-@router.post("/check-rules", response_model=ApiResponse[RuleCheckResult])
-async def check_rules(
-    project_id: int,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_permission("engineering:read")),
-) -> ApiResponse[RuleCheckResult]:
-    """手动触发现场规则校验（不生成文档）。"""
-    project = get_project_pool(db, project_id)
-    measures = project.measures_jsonb or {}
-
-    fpm_client = FpmClient()
-    fpm_params = await fpm_client.fetch_parameters(project.well_no)
-
-    result = validate_design_before_generation(project.well_no, measures, fpm_params)
-    return success(result)

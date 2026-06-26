@@ -8,13 +8,16 @@
 """
 
 import logging
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, Request
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
+from app.core.config import settings
 from app.core.exceptions import BusinessException
+from app.core.redis import cache_client
 from app.core.status_codes import A5_LINK_FAILED, BAD_REQUEST
 from app.db.session import get_db
 from app.models.rbac import User
@@ -27,6 +30,7 @@ from app.schemas.a5_integration import (
 )
 from app.schemas.response import ApiResponse, success
 from app.services.a5_auth_service import generate_sso_token, verify_a5_callback_signature
+from app.services.a5_sync_service import A5_SYNC_COUNT_PREFIX, A5_SYNC_STATUS_KEY, full_sync
 from app.tasks.a5_tasks import sync_a5_data_task, sync_anomaly_task
 
 logger = logging.getLogger(__name__)
@@ -111,19 +115,32 @@ def sync_status(
     _: User = Depends(require_permission("a5:read")),
 ) -> ApiResponse[A5SyncStatusOut]:
     """查看最近一次 A5 数据同步状态。"""
-    # TODO: 可从 Redis 或数据库读取上次同步记录
+    cached = cache_client.get_json(A5_SYNC_STATUS_KEY) or {}
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    sync_count_today = cache_client.get_json(f"{A5_SYNC_COUNT_PREFIX}{today}") or cached.get("sync_count_today", 0)
     return success(A5SyncStatusOut(
-        last_sync_status="unknown",
-        sync_count_today=0,
-        is_running=False,
+        last_sync_time=cached.get("last_sync_time"),
+        last_sync_status=cached.get("last_sync_status", "unknown"),
+        last_sync_message=cached.get("last_sync_message", ""),
+        sync_count_today=int(sync_count_today or 0),
+        is_running=bool(cached.get("is_running", False)),
     ))
 
 
 @router.post("/sync/trigger", response_model=ApiResponse[A5SyncTriggerOut])
-def trigger_sync(
+async def trigger_sync(
+    db: Session = Depends(get_db),
     _: User = Depends(require_permission("a5:sync")),
 ) -> ApiResponse[A5SyncTriggerOut]:
     """手动触发一次 A5 全量数据同步。"""
+    if settings.environment == "local" and not settings.redis_url:
+        task_id = f"local-{uuid.uuid4().hex[:12]}"
+        await full_sync(db)
+        return success(A5SyncTriggerOut(
+            task_id=task_id,
+            message="本地同步已执行",
+        ), msg="同步已执行")
+
     task = sync_a5_data_task.delay()
     return success(A5SyncTriggerOut(
         task_id=task.id,

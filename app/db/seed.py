@@ -17,12 +17,14 @@ MENU_DEFINITIONS = [
     ("system_logs", "system", "操作日志", "system_logs", "/system/operation-logs", "system/logs/index", "file-text", 16),
     ("workover", None, "上修项目池", "workover", "/workover", "Layout", "database", 20),
     ("workover_project_pool", "workover", "项目池台账", "workover_project_pool", "/workover/project-pools", "workover/project-pools/index", "table", 21),
+    ("analytics", None, "统计分析", "analytics", "/dashboard", "analytics/dashboard", "trend-charts", 25),
     ("contractor", None, "承包商管理", "contractor", "/contractor", "Layout", "team", 30),
     ("contractor_capacity", "contractor", "运力报备", "contractor_capacity", "/contractor/capacity", "contractor/capacity/index", "list", 31),
     ("contractor_dispatch", "contractor", "智能派工", "contractor_dispatch", "/contractor/dispatch", "contractor/dispatch/index", "send", 32),
     ("contractor_sheets", "contractor", "修井运行表", "contractor_sheets", "/contractor/operation-sheets", "contractor/operation-sheets/index", "document", 33),
     ("engineering", None, "工程设计管理", "engineering", "/engineering", "Layout", "edit", 40),
     ("engineering_designs", "engineering", "设计文档", "engineering_designs", "/engineering/designs", "engineering/designs/index", "document", 41),
+    ("a5", None, "A5 系统集成", "a5", "/a5/integration", "a5/integration", "monitor", 50),
 ]
 
 PERMISSION_DEFINITIONS = [
@@ -204,12 +206,13 @@ def seed() -> None:
 
         roles_by_code["super_admin"].menus = list(menus_by_key.values())
         roles_by_code["ops_admin"].menus = list(menus_by_key.values())
-        roles_by_code["project_pool_admin"].menus = [menus_by_key["workover"], menus_by_key["workover_project_pool"]]
+        roles_by_code["project_pool_admin"].menus = [menus_by_key["workover"], menus_by_key["workover_project_pool"], menus_by_key["analytics"]]
         roles_by_code["base_entry_clerk"].menus = [menus_by_key["workover"], menus_by_key["workover_project_pool"]]
         roles_by_code["business_reviewer"].menus = [
             menus_by_key["workover"], menus_by_key["workover_project_pool"],
             menus_by_key["contractor"], menus_by_key["contractor_dispatch"], menus_by_key["contractor_sheets"],
             menus_by_key["engineering"], menus_by_key["engineering_designs"],
+            menus_by_key["analytics"], menus_by_key["a5"],
         ]
         roles_by_code["contractor_operator"].menus = [
             menus_by_key["contractor"], menus_by_key["contractor_capacity"],

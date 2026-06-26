@@ -26,7 +26,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
-        if request.method == "OPTIONS" or path in settings.auth_whitelist_paths:
+        if request.method == "OPTIONS" or path in settings.auth_whitelist_paths or path.startswith("/local_minio/"):
             return await call_next(request)
 
         authorization = request.headers.get("Authorization", "")
@@ -52,7 +52,11 @@ class OperationLogMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
-        if request.method == "OPTIONS" or request.url.path in settings.auth_whitelist_paths:
+        if (
+            request.method == "OPTIONS"
+            or request.url.path in settings.auth_whitelist_paths
+            or request.url.path.startswith("/local_minio/")
+        ):
             return response
 
         try:

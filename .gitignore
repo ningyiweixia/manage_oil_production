@@ -1,6 +1,8 @@
 __pycache__/
 **/__pycache__/
 *.py[cod]
+.DS_Store
+**/.DS_Store
 .venv/
 .env
 .env.local
@@ -15,6 +17,8 @@ frontend/src/**/*.js
 frontend/src/**/*.js.map
 data/
 logs/
+local_minio/
+.claude/
 deploy/nginx/ssl/*.crt
 deploy/nginx/ssl/*.key
 deploy/nginx/ssl/*.csr

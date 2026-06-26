@@ -18,8 +18,8 @@ body {
   place-items: center;
   padding: 32px;
   background:
-    linear-gradient(rgba(238, 243, 248, 0.88), rgba(238, 243, 248, 0.88)),
-    url("https://images.unsplash.com/photo-1518709414768-a88981a4515d?auto=format&fit=crop&w=1800&q=80") center/cover;
+    radial-gradient(circle at 12% 18%, rgba(18, 161, 130, 0.16), transparent 28%),
+    linear-gradient(135deg, #eef3f8 0%, #f8fbfd 55%, #e8f0f7 100%);
 }
 
 .login-panel {
@@ -417,6 +417,25 @@ body {
   height: 340px;
 }
 
+.split-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.admin-tabs {
+  background: #ffffff;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+  padding: 12px 16px 16px;
+}
+
+.admin-tabs .table-panel {
+  border: 0;
+  padding: 0;
+}
+
 @media (max-width: 980px) {
   .sidebar {
     width: 76px !important;
@@ -429,7 +448,8 @@ body {
 
   .workflow-strip,
   .kpi-grid,
-  .chart-grid {
+  .chart-grid,
+  .split-grid {
     grid-template-columns: 1fr;
   }
 

@@ -208,7 +208,12 @@ def create_operation_sheet(
 def acquire_dispatch_lock(contractor_capacity_id: int) -> bool:
     """获取 Redis 分布式派工锁，防止并发派工冲突。"""
     lock_key = f"{LOCK_PREFIX}{contractor_capacity_id}"
-    return cache_client.set_json(lock_key, {"locked_at": datetime.now(timezone.utc).isoformat()}, expire_seconds=LOCK_TTL)
+    return cache_client.set_json(
+        lock_key,
+        {"locked_at": datetime.now(timezone.utc).isoformat()},
+        expire_seconds=LOCK_TTL,
+        nx=True,
+    )
 
 
 def release_dispatch_lock(contractor_capacity_id: int) -> None:

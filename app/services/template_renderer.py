@@ -8,6 +8,7 @@ import hashlib
 import io
 import logging
 import os
+from datetime import timedelta
 from typing import Any
 
 from app.core.config import settings
@@ -23,9 +24,20 @@ class MinioClient:
         self.access_key = settings.minio_access_key
         self.secret_key = settings.minio_secret_key
         self._client = None
+        self._use_local = False
+
+    def _local_path(self, bucket: str, object_key: str = "") -> str:
+        return os.path.join(".", "local_minio", bucket, object_key)
+
+    def _fallback_to_local(self, exc: Exception) -> None:
+        logger.warning(f"MinIO 不可用，使用本地文件系统模拟: {exc}")
+        self._client = None
+        self._use_local = True
 
     def _get_client(self):
         """延迟初始化 MinIO 客户端。"""
+        if self._use_local:
+            return None
         if self._client is not None:
             return self._client
         try:
@@ -45,10 +57,14 @@ class MinioClient:
         """确保存储桶存在。"""
         client = self._get_client()
         if client is None:
-            os.makedirs(f"./local_minio/{bucket_name}", exist_ok=True)
+            os.makedirs(self._local_path(bucket_name), exist_ok=True)
             return
-        if not client.bucket_exists(bucket_name):
-            client.make_bucket(bucket_name)
+        try:
+            if not client.bucket_exists(bucket_name):
+                client.make_bucket(bucket_name)
+        except Exception as exc:
+            self._fallback_to_local(exc)
+            os.makedirs(self._local_path(bucket_name), exist_ok=True)
 
     def upload_file(self, bucket: str, object_key: str, data: bytes, content_type: str = "application/octet-stream") -> str:
         """上传文件到 MinIO。
@@ -59,45 +75,59 @@ class MinioClient:
         checksum = hashlib.md5(data).hexdigest()
         client = self._get_client()
         if client is None:
-            local_path = f"./local_minio/{bucket}/{object_key}"
+            local_path = self._local_path(bucket, object_key)
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
             with open(local_path, "wb") as f:
                 f.write(data)
             logger.info(f"文件写入本地模拟存储: {local_path}")
             return checksum
 
-        self.ensure_bucket(bucket)
-        from minio.commonconfig import Tags
-        client.put_object(
-            bucket,
-            object_key,
-            io.BytesIO(data),
-            length=len(data),
-            content_type=content_type,
-        )
-        logger.info(f"文件上传 MinIO: {bucket}/{object_key}")
+        try:
+            self.ensure_bucket(bucket)
+            client = self._get_client()
+            if client is None:
+                return self.upload_file(bucket, object_key, data, content_type)
+            client.put_object(
+                bucket,
+                object_key,
+                io.BytesIO(data),
+                length=len(data),
+                content_type=content_type,
+            )
+            logger.info(f"文件上传 MinIO: {bucket}/{object_key}")
+        except Exception as exc:
+            self._fallback_to_local(exc)
+            return self.upload_file(bucket, object_key, data, content_type)
         return checksum
 
     def download_file(self, bucket: str, object_key: str) -> bytes:
         """从 MinIO 下载文件。"""
         client = self._get_client()
         if client is None:
-            local_path = f"./local_minio/{bucket}/{object_key}"
+            local_path = self._local_path(bucket, object_key)
             with open(local_path, "rb") as f:
                 return f.read()
 
-        response = client.get_object(bucket, object_key)
-        data = response.read()
-        response.close()
-        response.release_conn()
-        return data
+        try:
+            response = client.get_object(bucket, object_key)
+            data = response.read()
+            response.close()
+            response.release_conn()
+            return data
+        except Exception as exc:
+            self._fallback_to_local(exc)
+            return self.download_file(bucket, object_key)
 
     def get_presigned_url(self, bucket: str, object_key: str, expire_seconds: int = 3600) -> str:
         """生成临时下载链接。"""
         client = self._get_client()
         if client is None:
             return f"/local_minio/{bucket}/{object_key}"
-        return client.presigned_get_object(bucket, object_key, expires=expire_seconds)
+        try:
+            return client.presigned_get_object(bucket, object_key, expires=timedelta(seconds=expire_seconds))
+        except Exception as exc:
+            self._fallback_to_local(exc)
+            return f"/local_minio/{bucket}/{object_key}"
 
 
 class TemplateRenderer:

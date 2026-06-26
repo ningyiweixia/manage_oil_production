@@ -35,6 +35,9 @@ class A5Client:
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         """通用请求方法，统一异常处理。"""
+        if not self.base_url:
+            logger.warning("A5 系统未配置（A5_BASE_URL 为空），返回空数据")
+            return {"data": []}
         url = f"{self.base_url}{path}"
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:

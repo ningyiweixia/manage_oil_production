@@ -72,11 +72,12 @@ def verify_a5_callback_signature(
         True 表示签名验证通过
     """
     # 1. 验证 IP 白名单（如果配置了的话）
-    # client_ip = request_headers.get("x-forwarded-for", "").split(",")[0].strip()
-    # a5_ip_whitelist = getattr(settings, "a5_ip_whitelist", "")
-    # if a5_ip_whitelist and client_ip not in a5_ip_whitelist.split(","):
-    #     logger.warning(f"A5 回调 IP 不在白名单: {client_ip}")
-    #     return False
+    client_ip = request_headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+    if not client_ip:
+        client_ip = request_headers.get("x-real-ip", "").strip()
+    if settings.a5_allowed_ips and client_ip not in settings.a5_allowed_ips:
+        logger.warning(f"A5 回调 IP 不在白名单: {client_ip or 'unknown'}")
+        return False
 
     # 2. 获取请求签名
     signature = request_headers.get("X-A5-Signature", "")

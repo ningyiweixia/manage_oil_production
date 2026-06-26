@@ -11,7 +11,8 @@ import logging
 from celery import shared_task
 
 from app.db.session import SessionLocal
-from app.services.a5_sync_service import _trigger_alert, full_sync
+from app.core.redis import cache_client
+from app.services.a5_sync_service import A5_SYNC_STATUS_KEY, _trigger_alert, full_sync
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,15 @@ def sync_a5_data_task(self) -> dict:
     - 连续失败 3 次触发企业微信告警
     """
     db = SessionLocal()
+    cache_client.set_json(
+        A5_SYNC_STATUS_KEY,
+        {
+            "last_sync_status": "running",
+            "last_sync_message": "A5 数据同步任务运行中",
+            "is_running": True,
+        },
+        expire_seconds=604800,
+    )
     try:
         # Celery 任务运行在同步上下文中，需要手动运行 async 函数
         loop = asyncio.new_event_loop()
@@ -46,6 +56,15 @@ def sync_a5_data_task(self) -> dict:
         # 连续失败 3 次触发告警（方案强制要求）
         if self.request.retries >= 2:
             _trigger_alert(f"A5 数据同步连续失败 3 次，请检查 A5 系统连接: {exc}")
+            cache_client.set_json(
+                A5_SYNC_STATUS_KEY,
+                {
+                    "last_sync_status": "failed",
+                    "last_sync_message": str(exc),
+                    "is_running": False,
+                },
+                expire_seconds=604800,
+            )
 
         raise self.retry(exc=exc)
 

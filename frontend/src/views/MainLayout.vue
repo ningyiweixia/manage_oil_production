@@ -83,13 +83,16 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Bell, Tickets, TrendCharts, User, Setting, Monitor, Document, DataAnalysis } from '@element-plus/icons-vue'
+import { Bell, Tickets, TrendCharts, User, Setting, Monitor, Document, DataAnalysis, Edit, List, Key, Menu, OfficeBuilding, Promotion } from '@element-plus/icons-vue'
 import { useApprovalSocket } from '../composables/useApprovalSocket'
 import { PROJECT_NOTIFICATION, normalizeNotificationMessage, type ProjectNotification } from '../composables/useProjectSync'
 import type { MenuNode } from '../api/auth'
 
 const iconMap: Record<string, any> = {
-  Tickets, TrendCharts, Setting, Monitor, Document, DataAnalysis, Bell, User
+  Tickets, TrendCharts, Setting, Monitor, Document, DataAnalysis, Bell, User,
+  settings: Setting, database: DataAnalysis, table: Tickets, team: OfficeBuilding,
+  list: List, send: Promotion, edit: Edit, key: Key, menu: Menu,
+  'trend-charts': TrendCharts
 }
 
 const route = useRoute()
@@ -127,6 +130,26 @@ const sidebarMenus = computed<MenuNode[]>(() => {
     {
       id: 2, title: '统计分析大屏', route_name: 'dashboard', route_path: '/dashboard',
       component: null, icon: 'TrendCharts', parent_id: null, sort_order: 2,
+      is_visible: true, is_active: true, meta: {}, children: []
+    },
+    {
+      id: 3, title: '承包商调度', route_name: 'contractor_dispatch', route_path: '/contractor/dispatch',
+      component: null, icon: 'team', parent_id: null, sort_order: 3,
+      is_visible: true, is_active: true, meta: {}, children: []
+    },
+    {
+      id: 4, title: '工程设计管理', route_name: 'engineering_designs', route_path: '/engineering/designs',
+      component: null, icon: 'Document', parent_id: null, sort_order: 4,
+      is_visible: true, is_active: true, meta: {}, children: []
+    },
+    {
+      id: 5, title: 'A5 系统集成', route_name: 'a5', route_path: '/a5/integration',
+      component: null, icon: 'Monitor', parent_id: null, sort_order: 5,
+      is_visible: true, is_active: true, meta: {}, children: []
+    },
+    {
+      id: 6, title: '系统管理', route_name: 'system_users', route_path: '/system/users',
+      component: null, icon: 'Setting', parent_id: null, sort_order: 6,
       is_visible: true, is_active: true, meta: {}, children: []
     }
   ]

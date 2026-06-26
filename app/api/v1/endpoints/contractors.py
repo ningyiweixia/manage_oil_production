@@ -63,29 +63,6 @@ def create_item(
     return success(ContractorCapacityOut.model_validate(obj), msg="报备成功")
 
 
-@router.get("/{contractor_id}", response_model=ApiResponse[ContractorCapacityOut])
-def detail(
-    contractor_id: int,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_permission("contractor:read")),
-) -> ApiResponse[ContractorCapacityOut]:
-    return success(ContractorCapacityOut.model_validate(get_contractor_capacity(db, contractor_id)))
-
-
-@router.put("/{contractor_id}", response_model=ApiResponse[ContractorCapacityOut])
-def update_item(
-    contractor_id: int,
-    payload: ContractorCapacityUpdate,
-    request: Request,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("contractor:update")),
-) -> ApiResponse[ContractorCapacityOut]:
-    obj = update_contractor_capacity(
-        db, contractor_id, payload, operator_id=current_user.id, operator_ip=_client_ip(request)
-    )
-    return success(ContractorCapacityOut.model_validate(obj), msg="更新成功")
-
-
 @router.get("/priority-sheets", response_model=ApiResponse[list[WorkoverOperationSheetOut]])
 def list_priority_sheets(
     db: Session = Depends(get_db),
@@ -163,3 +140,26 @@ def update_progress(
         db, sheet_id, payload, operator_id=current_user.id, operator_ip=_client_ip(request)
     )
     return success(WorkoverOperationSheetOut.model_validate(sheet), msg="进度已更新")
+
+
+@router.get("/{contractor_id}", response_model=ApiResponse[ContractorCapacityOut])
+def detail(
+    contractor_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("contractor:read")),
+) -> ApiResponse[ContractorCapacityOut]:
+    return success(ContractorCapacityOut.model_validate(get_contractor_capacity(db, contractor_id)))
+
+
+@router.put("/{contractor_id}", response_model=ApiResponse[ContractorCapacityOut])
+def update_item(
+    contractor_id: int,
+    payload: ContractorCapacityUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permission("contractor:update")),
+) -> ApiResponse[ContractorCapacityOut]:
+    obj = update_contractor_capacity(
+        db, contractor_id, payload, operator_id=current_user.id, operator_ip=_client_ip(request)
+    )
+    return success(ContractorCapacityOut.model_validate(obj), msg="更新成功")

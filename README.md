@@ -1,12 +1,25 @@
 # 采油二厂井下作业管理系统
 
-后端采用 `FastAPI + SQLAlchemy 2.0 + Pydantic v2 + PostgreSQL 15(JSONB) + Redis + Celery + JWT + Alembic`。前端采用 `Vue3 + Element Plus + ECharts 5 + TypeScript`。当前已完成全部 5 个模块。
+后端采用 `FastAPI + SQLAlchemy 2.0 + Pydantic v2 + PostgreSQL 15(JSONB) + Redis + Celery + JWT + Alembic`。前端采用 `Vue3 + Element Plus + ECharts 5 + TypeScript`。当前已完成方案中的核心模块，并已完成本机联调巡检。
 
 - 模块 1：系统总体底层搭建
 - 模块 2：上修项目池管理
 - 模块 3：系统基础支撑与管理模块（RBAC + 统一身份认证）
 - 模块 4：前端交互与可视化大屏（Vue3 + Element Plus + ECharts）
-- 模块 5：跨系统协同与异步引擎（承包商管理 + A5 集成 + 工程设计）
+- 模块 5：跨系统协同与异步引擎（承包商调度 + A5 集成 + 工程设计）
+
+## 功能完成情况
+
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| 系统底层搭建 | 已完成 | PostgreSQL JSONB 模型、Alembic 迁移、统一异常、操作日志、Prometheus 指标 |
+| 上修项目池管理 | 已完成 | 项目池 CRUD、复杂 JSONB 措施字段、审批状态机、驳回重提智能路由 |
+| RBAC 与统一认证 | 已完成 | JWT 登录、刷新、登出、用户/角色/菜单/权限、动态菜单和权限按钮 |
+| 前端业务界面 | 已完成 | Vue3 + Element Plus 页面、审批工作台、WebSocket 待办提醒 |
+| 数据统计分析 | 已完成 | ECharts KPI、柱状图、饼图、热力图、趋势图、图表导出 |
+| 承包商调度 | 已完成 | 运力报备、运行表、优先派工、Redis 悲观锁防重复派工 |
+| A5 系统集成 | 已完成 | Celery 定时同步、手动触发、SSO 跳转、RESTful 回调、同步状态缓存 |
+| 工程设计管理 | 已完成 | 规则校验、python-docx/openpyxl 模板生成、MinIO 归档、本地模拟存储 |
 
 ## 项目结构
 
@@ -28,6 +41,9 @@ manage_factory/
           dictionaries.py       # 数据字典 CRUD
           rbac.py               # 用户/角色/菜单/权限管理
           workover_project_pools.py  # 上修项目池核心接口
+          contractors.py             # 承包商运力/运行表/派工
+          engineering.py             # 工程设计文档生成与下载
+          a5_integration.py          # A5 回调/SSO/同步状态
     core/
       config.py                 # 应用配置（环境变量驱动）
       exceptions.py             # 全局异常处理
@@ -39,6 +55,7 @@ manage_factory/
       dictionary.py             # 数据字典 CRUD
       rbac.py                   # RBAC CRUD
       workover_project_pool.py  # 项目池 CRUD + 状态机 + 智能路由
+      contractor.py             # 承包商 CRUD + 修井运行表
     db/
       base.py                   # ORM 基类与命名规范
       seed.py                   # 初始化种子数据
@@ -88,11 +105,15 @@ manage_factory/
         dictionary.ts           # 数据字典接口
         http.ts                 # Axios 封装 + JWT 请求头 + 统一解包
         workover.ts             # 项目池/审批接口（含演示模式降级）
+        contractor.ts           # 承包商调度接口
+        engineering.ts          # 工程设计接口
+        a5.ts                   # A5 集成接口
+        rbac.ts                 # 用户/角色/菜单/权限接口
       composables/
         useApprovalSocket.ts    # WebSocket 待办弹窗提醒
         useProjectSync.ts       # 项目数据同步 + 通知消息格式化
       router/
-        index.ts                # 前端路由（登录/工作台/大屏）+ JWT 守卫
+        index.ts                # 前端路由（登录/工作台/大屏/系统模块）+ JWT 守卫
       styles/
         main.css                # 全局样式
       types/
@@ -104,6 +125,11 @@ manage_factory/
         MainLayout.vue          # 主布局（动态 RBAC 侧边栏+顶栏+通知）
         ApprovalWorkbench.vue   # 审批工作台（权限按钮守卫）
         AnalyticsDashboard.vue  # 统计分析大屏
+        ContractorDispatchView.vue # 承包商运力与智能派工
+        EngineeringDesignView.vue  # 工程设计管理
+        A5IntegrationView.vue      # A5 系统集成
+        SystemAdminView.vue        # 系统用户/角色/菜单/权限/日志
+        DictionaryManageView.vue   # 数据字典管理
     index.html                  # HTML 入口
     vite.config.ts              # Vite 构建配置
   deploy/
@@ -121,9 +147,9 @@ manage_factory/
 
 ### 后端
 
-```powershell
+```bash
 python -m venv .venv
-.\.venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
 
 # 确保 PostgreSQL 已启动，数据库 manage_factory 已创建
@@ -140,7 +166,7 @@ uvicorn main:app --reload --host 127.0.0.1 --port 8000
 
 ### 前端
 
-```powershell
+```bash
 cd frontend
 npm install
 npm run dev -- --port 5173
@@ -175,11 +201,14 @@ REDIS_URL=redis://127.0.0.1:6379/0
 JWT_SECRET_KEY=<generate-a-random-secret>
 ACCESS_TOKEN_EXPIRE_MINUTES=120
 REFRESH_TOKEN_EXPIRE_MINUTES=10080
-AUTH_WHITELIST_PATHS=/docs,/openapi.json,/health,/metrics
+AUTH_WHITELIST=/docs,/docs/oauth2-redirect,/redoc,/openapi.json,/health,/metrics,/api/v1/auth/login,/api/v1/auth/refresh,/api/v1/auth/logout,/api/v1/a5/callback
 CORS_ALLOW_ORIGINS=http://127.0.0.1:5173,http://localhost:5173
+A5_BASE_URL=
+FPM_BASE_URL=
+MINIO_ENDPOINT=127.0.0.1:9000
 ```
 
-> `.env` 已加入 `.gitignore`，禁止提交。Redis 不可用时自动降级为进程内缓存。
+> `.env` 已加入 `.gitignore`，禁止提交。Redis 不可用时自动降级为进程内缓存；本地未配置 A5/FPM/MinIO 时，系统会使用空数据、模拟参数和 `local_minio/` 本地文件目录继续完成联调。
 
 ## 统一接口规范
 
@@ -205,9 +234,11 @@ CORS_ALLOW_ORIGINS=http://127.0.0.1:5173,http://localhost:5173
 
 ```env
 # A5 系统集成配置
-A5_BASE_URL=http://a5-internal:8080
+A5_BASE_URL=
 A5_API_KEY=your-api-key
 A5_API_SECRET=your-api-secret
+A5_IP_WHITELIST=
+ALERT_WEBHOOK_URL=
 
 # MinIO 对象存储配置
 MINIO_ENDPOINT=127.0.0.1:9000
@@ -217,10 +248,17 @@ MINIO_BUCKET_ENGINEERING=engineering-designs
 MINIO_BUCKET_TEMPLATES=design-templates
 
 # 防偏磨设计系统配置
-FPM_BASE_URL=http://fpm-system:9090
+FPM_BASE_URL=
 ```
 
-> A5 系统的 `AUTH_WHITELIST` 已包含 `/api/v1/a5/callback` 免鉴权路径，供 A5 系统回调。
+> 生产/联调环境接入真实系统时再填入 `A5_BASE_URL` 和 `FPM_BASE_URL`。A5 系统的 `AUTH_WHITELIST` 已包含 `/api/v1/a5/callback` 免鉴权路径，供 A5 系统回调。
+
+### 本地降级模式
+
+- `A5_BASE_URL` 为空：同步任务返回空数据并记录成功状态，方便本机验证按钮和状态流转。
+- `FPM_BASE_URL` 为空：工程设计生成时使用模拟防偏磨参数。
+- MinIO 未启动：工程设计文档自动写入 `local_minio/`，下载地址通过 `/local_minio/...` 提供。
+- Redis 未启动：缓存和分布式锁使用进程内降级实现，生产环境仍建议启用 Redis。
 
 ## Celery 异步任务
 
@@ -508,10 +546,6 @@ POST   /api/v1/engineering-designs/check-rules      手动触发规则校验
 | 通过 / 驳回 | `workover_project_pool:approve` |
 | 删除项目 | `workover_project_pool:delete` |
 
-### 演示模式
-
-当后端不可用时，前端自动降级为演示模式（使用 localStorage 存储数据），便于前端页面展示和联调。连接后端后自动切换为正常模式。
-
 ### WebSocket 消息格式
 
 ```json
@@ -579,6 +613,8 @@ alembic revision --autogenerate -m "描述"
 
 ## 验证记录
 
+最近一次完整本机巡检：2026-06-26。
+
 - ✅ `pip install -r requirements.txt`
 - ✅ `alembic upgrade head`
 - ✅ `python -m app.db.seed`
@@ -610,3 +646,6 @@ alembic revision --autogenerate -m "描述"
 - ✅ openpyxl Excel 报表渲染
 - ✅ MinIO 对象存储归档（自动版本号 v1/v2/v3...）
 - ✅ 工程设计文档 CRUD + 临时下载链接
+- ✅ 本地无 A5/FPM/MinIO 时降级联调通过
+- ✅ 系统管理前端：用户、角色、菜单、权限、操作日志入口逐页验证通过
+- ✅ `POSTGRES_PASSWORD=dummy JWT_SECRET_KEY=dummy-secret ADMIN_INITIAL_PASSWORD='ChangeMe_123!' python -m compileall -q app main.py celery_app.py`
