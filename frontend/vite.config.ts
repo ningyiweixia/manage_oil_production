@@ -1,16 +1,24 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import { fileURLToPath } from 'node:url'
+
+const projectRoot = fileURLToPath(new URL('.', import.meta.url))
+const frontendDist = fileURLToPath(new URL('../deploy/frontend-dist', import.meta.url))
 
 export default defineConfig({
+  root: projectRoot,
   plugins: [vue()],
   build: {
+    outDir: frontendDist,
+    emptyOutDir: true,
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (!id.includes('node_modules')) return undefined
-          if (id.includes('/vue/') || id.includes('/vue-router/')) return 'vue'
-          if (id.includes('/element-plus/') || id.includes('/@element-plus/icons-vue/')) return 'element'
-          if (id.includes('/echarts/')) return 'charts'
+          const normalizedId = id.replaceAll('\\', '/')
+          if (!normalizedId.includes('node_modules')) return undefined
+          if (normalizedId.includes('/vue/') || normalizedId.includes('/vue-router/')) return 'vue'
+          if (normalizedId.includes('/element-plus/') || normalizedId.includes('/@element-plus/icons-vue/')) return 'element'
+          if (normalizedId.includes('/echarts/')) return 'charts'
           return undefined
         }
       }

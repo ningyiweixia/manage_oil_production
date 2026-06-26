@@ -199,6 +199,7 @@ POSTGRES_PASSWORD=<your-password>
 POSTGRES_DB=manage_factory
 REDIS_URL=redis://127.0.0.1:6379/0
 JWT_SECRET_KEY=<generate-a-random-secret>
+ADMIN_INITIAL_PASSWORD=ChangeMe_123!
 ACCESS_TOKEN_EXPIRE_MINUTES=120
 REFRESH_TOKEN_EXPIRE_MINUTES=10080
 AUTH_WHITELIST=/docs,/docs/oauth2-redirect,/redoc,/openapi.json,/health,/metrics,/api/v1/auth/login,/api/v1/auth/refresh,/api/v1/auth/logout,/api/v1/a5/callback

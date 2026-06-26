@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core import status_codes
@@ -55,6 +55,11 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def integrity_exception_handler(_: Request, exc: IntegrityError) -> JSONResponse:
         logger.exception("Database integrity error", exc_info=exc)
         return _response(status_codes.CONFLICT, "Data uniqueness or relationship constraint conflict", http_status=409)
+
+    @app.exception_handler(OperationalError)
+    async def operational_exception_handler(_: Request, exc: OperationalError) -> JSONResponse:
+        logger.exception("Database unavailable", exc_info=exc)
+        return _response(status_codes.DATABASE_UNAVAILABLE, "Database unavailable", http_status=503)
 
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:
