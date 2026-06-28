@@ -16,6 +16,11 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _jsonb_type():
+    """Return the correct JSON column type for the current dialect."""
+    return postgresql.JSONB(astext_type=sa.Text())
+
+
 def upgrade() -> None:
     op.create_table(
         "sys_permissions",
@@ -64,7 +69,7 @@ def upgrade() -> None:
         sa.Column("report_date", sa.Date(), nullable=False, comment="日报日期"),
         sa.Column("available_count", sa.Integer(), nullable=False, comment="可用队伍数"),
         sa.Column("status", sa.Enum("AVAILABLE", "BUSY", "OFFLINE", native_enum=False, length=32), nullable=False, comment="队伍状态"),
-        sa.Column("capability_tags", postgresql.JSONB(astext_type=sa.Text()), nullable=False, comment="特定施工能力标签JSONB"),
+        sa.Column("capability_tags", _jsonb_type(), nullable=False, comment="特定施工能力标签JSONB"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False, comment="创建时间"),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False, comment="更新时间"),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_contractor_capacity")),
@@ -98,7 +103,7 @@ def upgrade() -> None:
         sa.Column("production_priority", sa.Integer(), nullable=False, comment="产量优先级"),
         sa.Column("status", sa.Enum("DRAFT", "PENDING_GEOLOGY_VERIFY", "PENDING_PROCESS_VERIFY", "APPROVED", "REJECTED", "DISPATCHED", native_enum=False, length=64), nullable=False, comment="项目状态"),
         sa.Column("reason", sa.Text(), nullable=True, comment="上修原因"),
-        sa.Column("workover_measures", postgresql.JSONB(astext_type=sa.Text()), nullable=False, comment="修井措施JSONB"),
+        sa.Column("workover_measures", _jsonb_type(), nullable=False, comment="修井措施JSONB"),
         sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True, comment="审批通过时间"),
         sa.Column("created_by_id", sa.Integer(), nullable=True, comment="创建人ID"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False, comment="创建时间"),
@@ -108,7 +113,10 @@ def upgrade() -> None:
         comment="上修项目池表",
     )
     op.create_index("ix_workover_project_pool_well_no", "workover_project_pool", ["well_no"], unique=False)
-    op.create_index("ix_workover_project_pool_measures_gin", "workover_project_pool", ["workover_measures"], unique=False, postgresql_using="gin")
+    if op.get_bind().dialect.name != "sqlite":
+        op.create_index("ix_workover_project_pool_measures_gin", "workover_project_pool", ["workover_measures"], unique=False, postgresql_using="gin")
+    else:
+        op.create_index("ix_workover_project_pool_measures_gin", "workover_project_pool", ["workover_measures"], unique=False)
     op.create_table(
         "approval_log",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False, comment="审批日志ID"),
@@ -119,8 +127,8 @@ def upgrade() -> None:
         sa.Column("comment", sa.Text(), nullable=True, comment="审批意见"),
         sa.Column("operator_id", sa.Integer(), nullable=False, comment="操作人ID"),
         sa.Column("operator_ip", sa.String(length=64), nullable=True, comment="操作人IP"),
-        sa.Column("before_snapshot", postgresql.JSONB(astext_type=sa.Text()), nullable=True, comment="变更前数据快照"),
-        sa.Column("after_snapshot", postgresql.JSONB(astext_type=sa.Text()), nullable=True, comment="变更后数据快照"),
+        sa.Column("before_snapshot", _jsonb_type(), nullable=True, comment="变更前数据快照"),
+        sa.Column("after_snapshot", _jsonb_type(), nullable=True, comment="变更后数据快照"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False, comment="创建时间"),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False, comment="更新时间"),
         sa.ForeignKeyConstraint(["operator_id"], ["sys_users.id"], name=op.f("fk_approval_log_operator_id_sys_users")),
@@ -157,7 +165,7 @@ def upgrade() -> None:
         sa.Column("actual_start_at", sa.DateTime(timezone=True), nullable=True, comment="实际开始时间"),
         sa.Column("actual_end_at", sa.DateTime(timezone=True), nullable=True, comment="实际结束时间"),
         sa.Column("progress", sa.Integer(), nullable=False, comment="施工进度百分比"),
-        sa.Column("progress_detail", postgresql.JSONB(astext_type=sa.Text()), nullable=False, comment="施工进度明细JSONB"),
+        sa.Column("progress_detail", _jsonb_type(), nullable=False, comment="施工进度明细JSONB"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False, comment="创建时间"),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False, comment="更新时间"),
         sa.ForeignKeyConstraint(["contractor_capacity_id"], ["contractor_capacity.id"], name=op.f("fk_workover_operation_sheet_contractor_capacity_id_contractor_capacity"), ondelete="SET NULL"),
@@ -175,7 +183,10 @@ def downgrade() -> None:
     op.drop_table("engineering_design_doc")
     op.drop_index("ix_approval_log_business", table_name="approval_log")
     op.drop_table("approval_log")
-    op.drop_index("ix_workover_project_pool_measures_gin", table_name="workover_project_pool")
+    if op.get_bind().dialect.name != "sqlite":
+        op.drop_index("ix_workover_project_pool_measures_gin", table_name="workover_project_pool", postgresql_using="gin")
+    else:
+        op.drop_index("ix_workover_project_pool_measures_gin", table_name="workover_project_pool")
     op.drop_index("ix_workover_project_pool_well_no", table_name="workover_project_pool")
     op.drop_table("workover_project_pool")
     op.drop_table("sys_user_roles")

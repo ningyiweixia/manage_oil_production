@@ -16,7 +16,25 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _jsonb_type():
+    """Return the correct JSON column type for the current dialect."""
+    return postgresql.JSONB(astext_type=sa.Text())
+
+
+def _jsonb_server_default():
+    """Return server_default safe for the current dialect.
+
+    PostgreSQL uses ``'{}'::jsonb``; SQLite uses ``'{}'``.
+    """
+    if op.get_bind().dialect.name == "sqlite":
+        return sa.text("'{}'")
+    return sa.text("'{}'::jsonb")
+
+
 def upgrade() -> None:
+    is_sqlite = op.get_bind().dialect.name == "sqlite"
+
+    # SQLite doesn't support RENAME TABLE but does via ALTER TABLE RENAME TO
     op.rename_table("sys_users", "sys_user")
     op.rename_table("sys_roles", "sys_role")
     op.rename_table("sys_permissions", "sys_permission")
@@ -26,20 +44,22 @@ def upgrade() -> None:
     op.alter_column("sys_permission", "resource", new_column_name="path", existing_type=sa.String(length=128), existing_nullable=False)
     op.alter_column("sys_permission", "action", new_column_name="method", existing_type=sa.String(length=32), existing_nullable=False)
     op.execute("UPDATE sys_permission SET method = upper(method)")
-    op.alter_column("sys_permission", "path", type_=sa.String(length=255), existing_type=sa.String(length=128), existing_nullable=False)
-    op.alter_column("sys_permission", "method", type_=sa.String(length=16), existing_type=sa.String(length=32), existing_nullable=False)
+    # ALTER COLUMN TYPE is not supported in SQLite — skip type changes on SQLite
+    if not is_sqlite:
+        op.alter_column("sys_permission", "path", type_=sa.String(length=255), existing_type=sa.String(length=128), existing_nullable=False)
+        op.alter_column("sys_permission", "method", type_=sa.String(length=16), existing_type=sa.String(length=32), existing_nullable=False)
 
     op.add_column("sys_user", sa.Column("mobile", sa.String(length=32), nullable=True, comment="Mobile phone"))
     op.add_column("sys_user", sa.Column("email", sa.String(length=128), nullable=True, comment="Email"))
     op.add_column("sys_user", sa.Column("is_superuser", sa.Boolean(), server_default=sa.false(), nullable=False, comment="Superuser flag"))
-    op.add_column("sys_user", sa.Column("extra_config", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False, comment="JSONB extension config"))
+    op.add_column("sys_user", sa.Column("extra_config", _jsonb_type(), server_default=_jsonb_server_default(), nullable=False, comment="JSONB extension config"))
 
     op.add_column("sys_role", sa.Column("is_active", sa.Boolean(), server_default=sa.true(), nullable=False, comment="Enabled flag"))
-    op.add_column("sys_role", sa.Column("extra_config", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False, comment="JSONB extension config"))
+    op.add_column("sys_role", sa.Column("extra_config", _jsonb_type(), server_default=_jsonb_server_default(), nullable=False, comment="JSONB extension config"))
 
     op.add_column("sys_permission", sa.Column("description", sa.String(length=255), nullable=True, comment="Description"))
     op.add_column("sys_permission", sa.Column("is_active", sa.Boolean(), server_default=sa.true(), nullable=False, comment="Enabled flag"))
-    op.add_column("sys_permission", sa.Column("extra_config", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'{}'::jsonb"), nullable=False, comment="JSONB extension config"))
+    op.add_column("sys_permission", sa.Column("extra_config", _jsonb_type(), server_default=_jsonb_server_default(), nullable=False, comment="JSONB extension config"))
 
     op.create_table(
         "sys_menu",
@@ -53,7 +73,7 @@ def upgrade() -> None:
         sa.Column("sort_order", sa.Integer(), nullable=False, server_default="0", comment="Sort order"),
         sa.Column("is_visible", sa.Boolean(), nullable=False, server_default=sa.true(), comment="Visible flag"),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true(), comment="Enabled flag"),
-        sa.Column("meta", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'::jsonb"), comment="JSONB route meta"),
+        sa.Column("meta", _jsonb_type(), nullable=False, server_default=_jsonb_server_default(), comment="JSONB route meta"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False, comment="创建时间"),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False, comment="更新时间"),
         sa.ForeignKeyConstraint(["parent_id"], ["sys_menu.id"], name=op.f("fk_sys_menu_parent_id_sys_menu"), ondelete="SET NULL"),
@@ -83,7 +103,7 @@ def upgrade() -> None:
         sa.Column("path", sa.String(length=255), nullable=False, comment="Request path"),
         sa.Column("operation", sa.String(length=255), nullable=True, comment="Operation content"),
         sa.Column("status_code", sa.Integer(), nullable=True, comment="Business response code"),
-        sa.Column("request_payload", postgresql.JSONB(astext_type=sa.Text()), nullable=True, comment="JSONB request payload snapshot"),
+        sa.Column("request_payload", _jsonb_type(), nullable=True, comment="JSONB request payload snapshot"),
         sa.Column("response_message", sa.Text(), nullable=True, comment="Response message"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False, comment="创建时间"),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False, comment="更新时间"),
@@ -99,6 +119,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    is_sqlite = op.get_bind().dialect.name == "sqlite"
+
     op.drop_index("ix_sys_permission_method_path", table_name="sys_permission")
     op.drop_index("ix_sys_operation_log_path", table_name="sys_operation_log")
     op.drop_index("ix_sys_operation_log_user_id", table_name="sys_operation_log")
@@ -115,8 +137,9 @@ def downgrade() -> None:
     op.drop_column("sys_user", "is_superuser")
     op.drop_column("sys_user", "email")
     op.drop_column("sys_user", "mobile")
-    op.alter_column("sys_permission", "method", type_=sa.String(length=32), existing_type=sa.String(length=16), existing_nullable=False)
-    op.alter_column("sys_permission", "path", type_=sa.String(length=128), existing_type=sa.String(length=255), existing_nullable=False)
+    if not is_sqlite:
+        op.alter_column("sys_permission", "method", type_=sa.String(length=32), existing_type=sa.String(length=16), existing_nullable=False)
+        op.alter_column("sys_permission", "path", type_=sa.String(length=128), existing_type=sa.String(length=255), existing_nullable=False)
     op.alter_column("sys_permission", "method", new_column_name="action", existing_type=sa.String(length=32), existing_nullable=False)
     op.alter_column("sys_permission", "path", new_column_name="resource", existing_type=sa.String(length=128), existing_nullable=False)
     op.rename_table("sys_role_permission", "sys_role_permissions")

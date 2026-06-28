@@ -7,6 +7,18 @@ from app.core.config import settings
 from app.db.base import Base
 from app import models  # noqa: F401
 
+# Ensure postgresql.JSONB compiles to JSON on SQLite during migrations.
+# This is needed because migration scripts import postgresql.JSONB directly
+# and Alembic uses its own compile path.
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
+
+
+@compiles(JSONB, "sqlite")
+def _compile_jsonb_for_sqlite(*_, **__) -> str:
+    return "JSON"
+
+
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
 

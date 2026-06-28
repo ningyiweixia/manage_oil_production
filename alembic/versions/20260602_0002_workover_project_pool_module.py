@@ -16,6 +16,13 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _jsonb_type(*, astext: bool = True):
+    """Return the correct JSON column type for the current dialect."""
+    if astext:
+        return postgresql.JSONB(astext_type=sa.Text())
+    return postgresql.JSONB()
+
+
 def upgrade() -> None:
     op.create_table(
         "data_dictionary",
@@ -37,7 +44,7 @@ def upgrade() -> None:
         "workover_project_pool",
         "workover_measures",
         new_column_name="measures_jsonb",
-        existing_type=postgresql.JSONB(),
+        existing_type=_jsonb_type(astext=False),
         existing_nullable=False,
     )
     op.add_column("workover_project_pool", sa.Column("well_name", sa.String(length=128), nullable=True, comment="Well name"))
@@ -49,7 +56,10 @@ def upgrade() -> None:
         "workover_project_pool",
         sa.Column("is_deleted", sa.Boolean(), server_default=sa.false(), nullable=False, comment="Logical delete flag"),
     )
-    op.create_index("ix_workover_project_pool_measures_gin", "workover_project_pool", ["measures_jsonb"], unique=False, postgresql_using="gin")
+    if op.get_bind().dialect.name != "sqlite":
+        op.create_index("ix_workover_project_pool_measures_gin", "workover_project_pool", ["measures_jsonb"], unique=False, postgresql_using="gin")
+    else:
+        op.create_index("ix_workover_project_pool_measures_gin", "workover_project_pool", ["measures_jsonb"], unique=False)
     op.create_index("ix_workover_project_pool_status", "workover_project_pool", ["status"], unique=False)
     op.create_index("ix_workover_project_pool_block_name", "workover_project_pool", ["block_name"], unique=False)
 
@@ -57,7 +67,10 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_workover_project_pool_block_name", table_name="workover_project_pool")
     op.drop_index("ix_workover_project_pool_status", table_name="workover_project_pool")
-    op.drop_index("ix_workover_project_pool_measures_gin", table_name="workover_project_pool")
+    if op.get_bind().dialect.name != "sqlite":
+        op.drop_index("ix_workover_project_pool_measures_gin", table_name="workover_project_pool", postgresql_using="gin")
+    else:
+        op.drop_index("ix_workover_project_pool_measures_gin", table_name="workover_project_pool")
     op.drop_column("workover_project_pool", "is_deleted")
     op.drop_column("workover_project_pool", "remark")
     op.drop_column("workover_project_pool", "territory_unit")
@@ -68,9 +81,12 @@ def downgrade() -> None:
         "workover_project_pool",
         "measures_jsonb",
         new_column_name="workover_measures",
-        existing_type=postgresql.JSONB(),
+        existing_type=_jsonb_type(astext=False),
         existing_nullable=False,
     )
-    op.create_index("ix_workover_project_pool_measures_gin", "workover_project_pool", ["workover_measures"], unique=False, postgresql_using="gin")
+    if op.get_bind().dialect.name != "sqlite":
+        op.create_index("ix_workover_project_pool_measures_gin", "workover_project_pool", ["workover_measures"], unique=False, postgresql_using="gin")
+    else:
+        op.create_index("ix_workover_project_pool_measures_gin", "workover_project_pool", ["workover_measures"], unique=False)
     op.drop_index("ix_data_dictionary_type", table_name="data_dictionary")
     op.drop_table("data_dictionary")
