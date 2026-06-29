@@ -126,7 +126,7 @@
         <el-button size="small" :icon="Plus" @click="addMeasure">新增措施</el-button>
       </div>
       <div v-for="(measure, index) in projectForm.measures_jsonb.measures" :key="index" class="measure-row">
-        <el-select v-model="measure.measure_type" placeholder="措施类型" filterable allow-create clearable>
+        <el-select v-model="measure.measure_type" placeholder="措施类型" filterable clearable>
           <el-option v-for="opt in measureTypeOptions" :key="opt.item_value" :label="opt.item_label" :value="opt.item_value" />
         </el-select>
         <el-input v-model="measure.process" placeholder="施工工序" />
@@ -229,8 +229,7 @@ const measureLabelMap = ref<Record<string, string>>({})
 async function loadMeasureTypes() {
   try {
     const items = await listDictionaryItems('measure_type')
-    // 只展示中文 item_value 的条目，过滤掉纯英文编码条目
-    measureTypeOptions.value = items.filter((item) => /[一-鿿]/.test(item.item_value))
+    measureTypeOptions.value = items
     // 构建 value → label 映射表，用于表格显示
     const map: Record<string, string> = {}
     for (const item of items) {

@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_permission
 from app.crud.dictionary import (
     create_dictionary_item,
+    delete_dictionary_item,
     list_dictionary_items,
     set_dictionary_item_active,
     update_dictionary_item,
@@ -53,3 +54,13 @@ def set_active(
     _: User = Depends(require_permission("system:dictionary:manage")),
 ) -> ApiResponse[DataDictionaryOut]:
     return success(DataDictionaryOut.model_validate(set_dictionary_item_active(db, item_id, is_active)), msg="updated")
+
+
+@router.delete("/{item_id}", response_model=ApiResponse[None])
+def delete_item(
+    item_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("system:dictionary:manage")),
+) -> ApiResponse[None]:
+    delete_dictionary_item(db, item_id)
+    return success(msg="deleted")

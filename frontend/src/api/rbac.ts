@@ -82,6 +82,10 @@ export function setUserActive(id: number, isActive: boolean) {
   return unwrap<UserItem>(http.patch(`/users/${id}/active`, null, { params: { is_active: isActive } }))
 }
 
+export function deleteUser(id: number) {
+  return unwrap<null>(http.delete(`/users/${id}`))
+}
+
 export function assignUserRoles(id: number, roleIds: number[]) {
   return unwrap<UserItem>(http.patch(`/users/${id}/roles`, { ids: roleIds }))
 }

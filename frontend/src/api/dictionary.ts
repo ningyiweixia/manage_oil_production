@@ -29,3 +29,7 @@ export async function updateDictionaryItem(id: number, payload: Partial<Pick<Dic
 export async function setDictionaryActive(id: number, isActive: boolean) {
   return unwrap<DictionaryItem>(http.patch(`/dictionaries/${id}/active`, null, { params: { is_active: isActive } }))
 }
+
+export async function deleteDictionaryItem(id: number) {
+  return unwrap<null>(http.delete(`/dictionaries/${id}`))
+}

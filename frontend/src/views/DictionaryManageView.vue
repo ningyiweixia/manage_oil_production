@@ -2,7 +2,9 @@
   <section class="toolbar">
     <el-form :model="query" inline>
       <el-form-item label="字典类型">
-        <el-input v-model="query.dict_type" clearable placeholder="measure_type" />
+        <el-select v-model="query.dict_type" clearable filterable placeholder="全部类型" style="width: 220px">
+          <el-option v-for="type in dictionaryTypes" :key="type.value" :label="type.label" :value="type.value" />
+        </el-select>
       </el-form-item>
       <el-form-item>
         <el-button type="primary" :icon="Search" @click="loadItems">查询</el-button>
@@ -15,11 +17,13 @@
     <div class="panel-head">
       <div>
         <h2>数据字典</h2>
-        <p>维护井号资源、修井措施类型、工序标准等动态选项。</p>
+        <p>维护全库通用枚举、业务状态、系统角色、菜单编码和外部系统等动态选项。</p>
       </div>
     </div>
     <el-table v-loading="loading" :data="filteredItems" row-key="id">
-      <el-table-column prop="dict_type" label="类型" min-width="160" />
+      <el-table-column label="类型" min-width="180">
+        <template #default="{ row }">{{ typeLabel(row.dict_type) }}</template>
+      </el-table-column>
       <el-table-column prop="item_label" label="显示名称" min-width="180" />
       <el-table-column prop="item_value" label="取值" min-width="180" />
       <el-table-column label="启用" width="90">
@@ -27,9 +31,10 @@
           <el-switch :model-value="row.is_active" @change="(value: string | number | boolean) => changeActive(row.id, Boolean(value))" />
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="90">
+      <el-table-column label="操作" width="130">
         <template #default="{ row }">
           <el-button text type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button text type="danger" @click="deleteItem(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -37,7 +42,11 @@
 
   <el-dialog v-model="visible" :title="editing ? '编辑字典项' : '新增字典项'" width="520px">
     <el-form :model="form" label-width="100px">
-      <el-form-item label="类型"><el-input v-model="form.dict_type" /></el-form-item>
+      <el-form-item label="类型">
+        <el-select v-model="form.dict_type" allow-create default-first-option filterable placeholder="选择或输入类型" style="width: 100%">
+          <el-option v-for="type in dictionaryTypes" :key="type.value" :label="type.label" :value="type.value" />
+        </el-select>
+      </el-form-item>
       <el-form-item label="显示名称"><el-input v-model="form.item_label" /></el-form-item>
       <el-form-item label="取值"><el-input v-model="form.item_value" /></el-form-item>
       <el-form-item label="启用"><el-switch v-model="form.is_active" /></el-form-item>
@@ -51,10 +60,11 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import {
   createDictionaryItem,
+  deleteDictionaryItem,
   listAllDictionaryItems,
   setDictionaryActive,
   updateDictionaryItem,
@@ -72,6 +82,26 @@ const filteredItems = computed(() => {
   if (!query.dict_type) return items.value
   return items.value.filter((item) => item.dict_type.includes(query.dict_type))
 })
+const dictionaryTypes = computed(() => {
+  const typeItems = items.value.filter((item) => item.dict_type === 'dictionary_type')
+  const typeMap = new Map<string, string>()
+  for (const item of typeItems) {
+    typeMap.set(item.item_value, item.item_label)
+  }
+  for (const item of items.value) {
+    if (!typeMap.has(item.dict_type)) {
+      typeMap.set(item.dict_type, item.dict_type)
+    }
+  }
+  return Array.from(typeMap.entries())
+    .map(([value, label]) => ({ value, label: `${label}（${value}）` }))
+    .sort((a, b) => a.value.localeCompare(b.value))
+})
+
+function typeLabel(dictType: string) {
+  const type = dictionaryTypes.value.find((item) => item.value === dictType)
+  return type ? type.label : dictType
+}
 
 async function loadItems() {
   loading.value = true
@@ -107,6 +137,27 @@ async function save() {
     await loadItems()
   } finally {
     saving.value = false
+  }
+}
+
+async function deleteItem(row: DictionaryItem) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除字典项「${row.item_label}」吗？`,
+      '删除字典项',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger'
+      }
+    )
+    await deleteDictionaryItem(row.id)
+    ElMessage.success('已删除')
+    await loadItems()
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(error instanceof Error ? error.message : '删除失败')
   }
 }
 

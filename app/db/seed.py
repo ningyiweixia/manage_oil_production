@@ -5,6 +5,7 @@ from app.core.security import get_password_hash
 from app.db.session import SessionLocal
 from app.models.dictionary import DataDictionary
 from app.models.rbac import Menu, Permission, Role, User
+from app.models.workover import WorkoverProjectPool
 
 
 MENU_DEFINITIONS = [
@@ -129,24 +130,114 @@ ROLE_PERMISSION_CODES = {
 
 
 DICTIONARY_DEFINITIONS = [
+    ("dictionary_type", "字典类型", "dictionary_type"),
+    ("dictionary_type", "修井措施类型", "measure_type"),
+    ("dictionary_type", "工序标准", "process_standard"),
+    ("dictionary_type", "井区/作业区", "well_area"),
+    ("dictionary_type", "上修项目池状态", "project_pool_status"),
+    ("dictionary_type", "修井运行状态", "operation_status"),
+    ("dictionary_type", "承包商运力状态", "contractor_capacity_status"),
+    ("dictionary_type", "审批动作", "approval_action"),
+    ("dictionary_type", "业务类型", "business_type"),
+    ("dictionary_type", "生产优先级", "production_priority"),
+    ("dictionary_type", "HTTP 请求方法", "http_method"),
+    ("dictionary_type", "业务响应码", "business_status_code"),
+    ("dictionary_type", "系统角色", "system_role"),
+    ("dictionary_type", "系统菜单", "system_menu"),
+    ("dictionary_type", "外部系统", "external_system"),
     ("measure_type", "常规检泵", "pump_repair"),
-    ("measure_type", "常规检泵", "常规检泵"),
-    ("measure_type", "检泵", "检泵"),
+    ("measure_type", "检泵", "pump_inspection"),
     ("measure_type", "冲砂洗井", "sand_washing"),
-    ("measure_type", "冲砂洗井", "冲砂洗井"),
     ("measure_type", "酸化解堵", "acidizing"),
-    ("measure_type", "酸化解堵", "酸化解堵"),
-    ("measure_type", "酸化", "酸化"),
     ("measure_type", "管柱更换", "tubing_replacement"),
-    ("measure_type", "管柱更换", "管柱更换"),
     ("measure_type", "大修作业", "major_workover"),
-    ("measure_type", "大修作业", "大修作业"),
-    ("measure_type", "热洗清蜡", "热洗清蜡"),
-    ("measure_type", "套损治理", "套损治理"),
+    ("measure_type", "热洗清蜡", "hot_wax_washing"),
+    ("measure_type", "套损治理", "casing_damage_treatment"),
     ("process_standard", "常规修井工序", "standard_workover"),
     ("well_area", "第一采油作业区", "area_1"),
     ("well_area", "第二采油作业区", "area_2"),
+    ("project_pool_status", "草稿", "DRAFT"),
+    ("project_pool_status", "待地质核实", "PENDING_GEOLOGY_VERIFY"),
+    ("project_pool_status", "待工艺核实", "PENDING_PROCESS_VERIFY"),
+    ("project_pool_status", "已通过", "APPROVED"),
+    ("project_pool_status", "已驳回", "REJECTED"),
+    ("project_pool_status", "已派工", "DISPATCHED"),
+    ("project_pool_status", "已作废", "VOIDED"),
+    ("operation_status", "待派工", "WAITING_DISPATCH"),
+    ("operation_status", "已派工", "DISPATCHED"),
+    ("operation_status", "施工中", "WORKING"),
+    ("operation_status", "已完工", "FINISHED"),
+    ("operation_status", "已取消", "CANCELED"),
+    ("contractor_capacity_status", "可用", "AVAILABLE"),
+    ("contractor_capacity_status", "忙碌", "BUSY"),
+    ("contractor_capacity_status", "离线", "OFFLINE"),
+    ("approval_action", "创建", "CREATE"),
+    ("approval_action", "更新", "UPDATE"),
+    ("approval_action", "删除", "DELETE"),
+    ("approval_action", "作废", "VOID"),
+    ("approval_action", "提交", "SUBMIT"),
+    ("approval_action", "审批通过", "APPROVE"),
+    ("approval_action", "驳回", "REJECT"),
+    ("approval_action", "回退", "ROLLBACK"),
+    ("business_type", "上修项目池", "workover_project_pool"),
+    ("business_type", "承包商运力", "contractor_capacity"),
+    ("business_type", "修井运行表", "workover_operation_sheet"),
+    ("business_type", "工程设计文档", "engineering_design_doc"),
+    ("business_type", "A5 系统集成", "a5_integration"),
+    ("production_priority", "低优先级", "1"),
+    ("production_priority", "中优先级", "3"),
+    ("production_priority", "高优先级", "5"),
+    ("production_priority", "紧急优先级", "10"),
+    ("http_method", "读取", "GET"),
+    ("http_method", "创建", "POST"),
+    ("http_method", "全量更新", "PUT"),
+    ("http_method", "局部更新", "PATCH"),
+    ("http_method", "删除", "DELETE"),
+    ("business_status_code", "成功", "20000"),
+    ("business_status_code", "请求参数错误", "40001"),
+    ("business_status_code", "未认证", "40100"),
+    ("business_status_code", "无权限", "40300"),
+    ("business_status_code", "并发或唯一性冲突", "40900"),
+    ("business_status_code", "请求过于频繁", "42900"),
+    ("business_status_code", "数据库不可用", "50300"),
+    ("business_status_code", "A5 系统连接失败", "60001"),
+    ("business_status_code", "防偏磨系统连接失败", "60002"),
+    ("system_role", "超级管理员", "super_admin"),
+    ("system_role", "项目池管理员", "project_pool_admin"),
+    ("system_role", "基层录入员", "base_entry_clerk"),
+    ("system_role", "业务审核员", "business_reviewer"),
+    ("system_role", "承包商操作员", "contractor_operator"),
+    ("system_role", "运维管理员", "ops_admin"),
+    ("system_menu", "系统管理", "system"),
+    ("system_menu", "用户管理", "system_users"),
+    ("system_menu", "角色管理", "system_roles"),
+    ("system_menu", "菜单管理", "system_menus"),
+    ("system_menu", "权限管理", "system_permissions"),
+    ("system_menu", "数据字典", "system_dictionaries"),
+    ("system_menu", "操作日志", "system_logs"),
+    ("system_menu", "上修项目池", "workover"),
+    ("system_menu", "项目池台账", "workover_project_pool"),
+    ("system_menu", "统计分析", "analytics"),
+    ("system_menu", "承包商管理", "contractor"),
+    ("system_menu", "工程设计管理", "engineering"),
+    ("system_menu", "A5 系统集成", "a5"),
+    ("external_system", "A5 系统", "a5"),
+    ("external_system", "防偏磨系统", "fpm"),
+    ("external_system", "MinIO 对象存储", "minio"),
+    ("external_system", "企业微信告警", "wecom_alert"),
 ]
+
+MEASURE_TYPE_VALUE_ALIASES = {
+    "常规检泵": "pump_repair",
+    "检泵": "pump_inspection",
+    "冲砂洗井": "sand_washing",
+    "酸化解堵": "acidizing",
+    "酸化": "acidizing",
+    "管柱更换": "tubing_replacement",
+    "大修作业": "major_workover",
+    "热洗清蜡": "hot_wax_washing",
+    "套损治理": "casing_damage_treatment",
+}
 
 
 def seed() -> None:
@@ -191,6 +282,33 @@ def seed() -> None:
                 db.add(item)
             item.item_label = item_label
             item.is_active = True
+
+        stale_measure_items = db.scalars(
+            select(DataDictionary).where(
+                DataDictionary.dict_type == "measure_type",
+                DataDictionary.item_value.in_(MEASURE_TYPE_VALUE_ALIASES.keys()),
+            )
+        ).all()
+        for item in stale_measure_items:
+            db.delete(item)
+
+        for project in db.scalars(select(WorkoverProjectPool)).all():
+            measures_jsonb = project.measures_jsonb or {}
+            measures = measures_jsonb.get("measures", [])
+            if not isinstance(measures, list):
+                continue
+            changed = False
+            next_measures = []
+            for measure in measures:
+                if isinstance(measure, dict):
+                    measure = dict(measure)
+                    raw_type = measure.get("measure_type")
+                    if isinstance(raw_type, str) and raw_type in MEASURE_TYPE_VALUE_ALIASES:
+                        measure["measure_type"] = MEASURE_TYPE_VALUE_ALIASES[raw_type]
+                        changed = True
+                next_measures.append(measure)
+            if changed:
+                project.measures_jsonb = {**measures_jsonb, "measures": next_measures}
 
         roles_by_code: dict[str, Role] = {}
         for code, name, description in ROLE_DEFINITIONS:

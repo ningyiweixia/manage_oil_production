@@ -1,11 +1,14 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
 from app.crud.rbac import list_operation_logs
 from app.db.session import get_db
+from app.models.approval import ApprovalLog
 from app.models.rbac import User
 from app.schemas.rbac import (
+    ApprovalLogOut,
     IdsPayload,
     MenuCreate,
     MenuOut,
@@ -81,7 +84,7 @@ def delete_user(
     _: User = Depends(require_permission("system:user:delete")),
 ) -> ApiResponse[None]:
     rbac_service.delete_user(db, user_id)
-    return success(msg="已停用")
+    return success(msg="已删除")
 
 
 @router.get("/roles", response_model=ApiResponse[list[RoleOut]])
@@ -221,3 +224,14 @@ def operation_logs(
     _: User = Depends(require_permission("system:operation_log:read")),
 ) -> ApiResponse[list[OperationLogOut]]:
     return success([OperationLogOut.model_validate(row) for row in list_operation_logs(db)])
+
+
+@router.get("/approval-logs", response_model=ApiResponse[list[ApprovalLogOut]])
+def approval_logs(
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("approval_log:read")),
+) -> ApiResponse[list[ApprovalLogOut]]:
+    safe_limit = max(1, min(limit, 500))
+    rows = db.scalars(select(ApprovalLog).order_by(desc(ApprovalLog.id)).limit(safe_limit)).all()
+    return success([ApprovalLogOut.model_validate(row) for row in rows])

@@ -9,7 +9,7 @@
         <template v-for="item in sidebarMenus" :key="item.id">
           <el-sub-menu v-if="item.children && item.children.length" :index="String(item.id)">
             <template #title>
-              <el-icon v-if="item.icon && iconMap[item.icon]"><component :is="iconMap[item.icon]" /></el-icon>
+              <el-icon><component :is="resolveMenuIcon(item)" /></el-icon>
               <span>{{ item.title }}</span>
             </template>
             <el-menu-item
@@ -17,12 +17,12 @@
               :key="child.id"
               :index="child.route_path || String(child.id)"
             >
-              <el-icon v-if="child.icon && iconMap[child.icon]"><component :is="iconMap[child.icon]" /></el-icon>
+              <el-icon><component :is="resolveMenuIcon(child)" /></el-icon>
               <span>{{ child.title }}</span>
             </el-menu-item>
           </el-sub-menu>
           <el-menu-item v-else :index="item.route_path || String(item.id)">
-            <el-icon v-if="item.icon && iconMap[item.icon]"><component :is="iconMap[item.icon]" /></el-icon>
+            <el-icon><component :is="resolveMenuIcon(item)" /></el-icon>
             <span>{{ item.title }}</span>
           </el-menu-item>
         </template>
@@ -83,7 +83,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Bell, Tickets, TrendCharts, User, Setting, Monitor, Document, DataAnalysis, Edit, List, Key, Menu, OfficeBuilding, Promotion } from '@element-plus/icons-vue'
+import { Bell, Tickets, TrendCharts, User, Setting, Monitor, Document, DataAnalysis, Edit, List, Key, Menu, OfficeBuilding, Promotion, Files } from '@element-plus/icons-vue'
 import { useApprovalSocket } from '../composables/useApprovalSocket'
 import { PROJECT_NOTIFICATION, normalizeNotificationMessage, type ProjectNotification } from '../composables/useProjectSync'
 import type { MenuNode } from '../api/auth'
@@ -92,7 +92,29 @@ const iconMap: Record<string, any> = {
   Tickets, TrendCharts, Setting, Monitor, Document, DataAnalysis, Bell, User,
   settings: Setting, database: DataAnalysis, table: Tickets, team: OfficeBuilding,
   list: List, send: Promotion, edit: Edit, key: Key, menu: Menu,
+  user: User, shield: Key, document: Document, monitor: Monitor, 'file-text': Files,
   'trend-charts': TrendCharts
+}
+
+const routeIconMap: Record<string, any> = {
+  '/system/users': User,
+  '/system/roles': Key,
+  '/system/menus': Menu,
+  '/system/permissions': Key,
+  '/system/dictionaries': List,
+  '/system/operation-logs': Files,
+  '/workover/project-pools': Tickets,
+  '/contractor/capacity': OfficeBuilding,
+  '/contractor/dispatch': Promotion,
+  '/contractor/operation-sheets': Document,
+  '/engineering/designs': Edit,
+  '/a5/integration': Monitor,
+  '/dashboard': TrendCharts,
+  '/approval': Tickets
+}
+
+function resolveMenuIcon(menu: MenuNode) {
+  return (menu.icon && iconMap[menu.icon]) || (menu.route_path && routeIconMap[menu.route_path]) || Document
 }
 
 const route = useRoute()

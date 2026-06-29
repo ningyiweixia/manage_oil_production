@@ -23,9 +23,10 @@
               <el-switch :model-value="row.is_active" @change="(value: string | number | boolean) => changeUserActive(row.id, Boolean(value))" />
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="120">
+          <el-table-column label="操作" width="170">
             <template #default="{ row }">
               <el-button text type="primary" @click="openRoleAssign(row)">分配角色</el-button>
+              <el-button text type="danger" :disabled="row.is_superuser" @click="deleteUserRow(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -108,6 +109,10 @@
       </section>
     </el-tab-pane>
 
+    <el-tab-pane label="数据字典" name="dictionaries">
+      <DictionaryManageView />
+    </el-tab-pane>
+
     <el-tab-pane label="操作日志" name="logs">
       <section class="table-panel">
         <div class="panel-head">
@@ -128,14 +133,17 @@
     </el-tab-pane>
   </el-tabs>
 
-  <el-dialog v-model="userVisible" title="新增用户" width="620px">
-    <el-form :model="userForm" label-width="92px">
-      <el-form-item label="账号"><el-input v-model="userForm.username" /></el-form-item>
-      <el-form-item label="密码"><el-input v-model="userForm.password" type="password" show-password /></el-form-item>
-      <el-form-item label="姓名"><el-input v-model="userForm.full_name" /></el-form-item>
+  <el-dialog v-model="userVisible" title="新增用户" width="620px" @closed="resetUserForm">
+    <el-form ref="userFormRef" :model="userForm" :rules="userRules" label-width="92px">
+      <el-form-item label="账号" prop="username"><el-input v-model="userForm.username" /></el-form-item>
+      <el-form-item label="密码" prop="password">
+        <el-input v-model="userForm.password" type="password" show-password />
+        <p class="form-tip">密码需 8-128 位，且包含大写字母、小写字母、数字和特殊字符。</p>
+      </el-form-item>
+      <el-form-item label="姓名" prop="full_name"><el-input v-model="userForm.full_name" /></el-form-item>
       <el-form-item label="部门"><el-input v-model="userForm.department" /></el-form-item>
-      <el-form-item label="角色">
-        <el-select v-model="userForm.role_ids" multiple style="width: 100%">
+      <el-form-item label="角色" prop="role_id">
+        <el-select v-model="userForm.role_id" clearable placeholder="请选择一个角色" style="width: 100%">
           <el-option v-for="role in roles" :key="role.id" :label="role.name" :value="role.id" />
         </el-select>
       </el-form-item>
@@ -147,7 +155,7 @@
   </el-dialog>
 
   <el-dialog v-model="roleAssignVisible" title="分配用户角色" width="540px">
-    <el-select v-model="selectedRoleIds" multiple style="width: 100%">
+    <el-select v-model="selectedRoleId" clearable placeholder="请选择一个角色" style="width: 100%">
       <el-option v-for="role in roles" :key="role.id" :label="role.name" :value="role.id" />
     </el-select>
     <template #footer>
@@ -175,12 +183,15 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import type { FormInstance, FormRules } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
+import DictionaryManageView from './DictionaryManageView.vue'
 import {
   assignRolePermissions,
   assignUserRoles,
   createUser,
+  deleteUser,
   listMenus,
   listOperationLogs,
   listPermissions,
@@ -201,7 +212,8 @@ const routeToTab: Record<string, string> = {
   '/system/roles': 'roles',
   '/system/menus': 'menus',
   '/system/permissions': 'permissions',
-  '/system/operation-logs': 'logs'
+  '/system/operation-logs': 'logs',
+  '/system/dictionaries': 'dictionaries'
 }
 const tabToRoute = computed<Record<string, string>>(() => Object.fromEntries(
   Object.entries(routeToTab).map(([path, tab]) => [tab, path])
@@ -219,16 +231,38 @@ const roleAssignVisible = ref(false)
 const permissionAssignVisible = ref(false)
 const editingUser = ref<UserItem | null>(null)
 const editingRole = ref<RoleItem | null>(null)
-const selectedRoleIds = ref<number[]>([])
+const selectedRoleId = ref<number>()
 const selectedPermissionIds = ref<number[]>([])
+const userFormRef = ref<FormInstance>()
 const userForm = reactive({
   username: '',
   password: '',
   full_name: '',
   department: '',
   is_active: true,
-  role_ids: [] as number[]
+  role_id: undefined as number | undefined
 })
+
+const passwordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,128}$/
+const passwordMessage = '密码需 8-128 位，且包含大写字母、小写字母、数字和特殊字符'
+const userRules: FormRules<typeof userForm> = {
+  username: [{ required: true, message: '请输入账号', trigger: 'blur' }],
+  password: [
+    { required: true, message: '请输入密码', trigger: 'blur' },
+    {
+      validator: (_rule, value: string, callback) => {
+        if (!passwordPattern.test(value || '')) {
+          callback(new Error(passwordMessage))
+          return
+        }
+        callback()
+      },
+      trigger: 'blur'
+    }
+  ],
+  full_name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
+  role_id: [{ required: true, message: '请选择一个角色', trigger: 'change' }]
+}
 
 function roleName(id: number) {
   return roles.value.find((role) => role.id === id)?.name || `角色${id}`
@@ -255,15 +289,38 @@ async function loadAll() {
 }
 
 async function saveUser() {
+  const valid = await userFormRef.value?.validate().catch(() => false)
+  if (!valid) return
   saving.value = true
   try {
-    await createUser(userForm)
+    await createUser({
+      username: userForm.username,
+      password: userForm.password,
+      full_name: userForm.full_name,
+      department: userForm.department,
+      is_active: userForm.is_active,
+      role_ids: userForm.role_id ? [userForm.role_id] : []
+    })
     ElMessage.success('用户已创建')
     userVisible.value = false
     await loadAll()
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, '用户创建失败，请检查账号、密码和角色配置'))
   } finally {
     saving.value = false
   }
+}
+
+function resetUserForm() {
+  Object.assign(userForm, {
+    username: '',
+    password: '',
+    full_name: '',
+    department: '',
+    is_active: true,
+    role_id: undefined
+  })
+  userFormRef.value?.clearValidate()
 }
 
 async function changeUserActive(id: number, isActive: boolean) {
@@ -271,9 +328,30 @@ async function changeUserActive(id: number, isActive: boolean) {
   await loadAll()
 }
 
+async function deleteUserRow(row: UserItem) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除用户「${row.full_name || row.username}」吗？删除后该账号将从系统中移除。`,
+      '删除用户',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger'
+      }
+    )
+    await deleteUser(row.id)
+    ElMessage.success('用户已删除')
+    await loadAll()
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(getErrorMessage(error, '删除用户失败'))
+  }
+}
+
 function openRoleAssign(row: UserItem) {
   editingUser.value = row
-  selectedRoleIds.value = [...row.role_ids]
+  selectedRoleId.value = row.role_ids[0]
   roleAssignVisible.value = true
 }
 
@@ -281,10 +359,12 @@ async function saveRoleAssign() {
   if (!editingUser.value) return
   saving.value = true
   try {
-    await assignUserRoles(editingUser.value.id, selectedRoleIds.value)
+    await assignUserRoles(editingUser.value.id, selectedRoleId.value ? [selectedRoleId.value] : [])
     ElMessage.success('角色已更新')
     roleAssignVisible.value = false
     await loadAll()
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, '角色更新失败'))
   } finally {
     saving.value = false
   }
@@ -309,6 +389,17 @@ async function savePermissionAssign() {
   }
 }
 
+function getErrorMessage(error: unknown, fallback: string) {
+  const response = (error as { response?: { data?: { msg?: string; data?: unknown } } }).response
+  const msg = response?.data?.msg
+  if (msg && msg !== 'Invalid request parameters') return msg
+  if (Array.isArray(response?.data?.data)) {
+    const firstPasswordError = response.data.data.find((item: { loc?: string[] }) => item.loc?.includes('password'))
+    if (firstPasswordError) return passwordMessage
+  }
+  return error instanceof Error && error.message ? error.message : fallback
+}
+
 function changeTab(tabName: string | number) {
   const nextPath = tabToRoute.value[String(tabName)]
   if (nextPath && nextPath !== route.path) {
@@ -325,3 +416,13 @@ watch(
 
 onMounted(loadAll)
 </script>
+
+<style scoped>
+.form-tip {
+  width: 100%;
+  margin: 6px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+}
+</style>

@@ -7,7 +7,6 @@ import ContractorDispatchView from '../views/ContractorDispatchView.vue'
 import EngineeringDesignView from '../views/EngineeringDesignView.vue'
 import A5IntegrationView from '../views/A5IntegrationView.vue'
 import SystemAdminView from '../views/SystemAdminView.vue'
-import DictionaryManageView from '../views/DictionaryManageView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -31,7 +30,7 @@ const router = createRouter({
         { path: '/system/menus', component: SystemAdminView, meta: { title: '系统菜单管理' } },
         { path: '/system/permissions', component: SystemAdminView, meta: { title: '系统权限管理' } },
         { path: '/system/operation-logs', component: SystemAdminView, meta: { title: '操作日志' } },
-        { path: '/system/dictionaries', component: DictionaryManageView, meta: { title: '数据字典管理' } }
+        { path: '/system/dictionaries', component: SystemAdminView, meta: { title: '数据字典管理' } }
       ]
     }
   ]

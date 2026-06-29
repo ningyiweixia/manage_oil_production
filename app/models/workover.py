@@ -67,7 +67,7 @@ class WorkoverProjectPool(TimestampMixin, Base):
     )
     remark: Mapped[str | None] = mapped_column(Text, comment="Remark")
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="审批通过时间")
-    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("sys_user.id"), comment="创建人ID")
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("sys_user.id", ondelete="SET NULL"), comment="创建人ID")
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="Logical delete flag")
 
     operations: Mapped[list["WorkoverOperationSheet"]] = relationship(

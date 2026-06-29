@@ -154,3 +154,19 @@ class OperationLogOut(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ApprovalLogOut(BaseModel):
+    id: int
+    business_type: str
+    business_id: int
+    node_code: str
+    action: str
+    comment: str | None = None
+    operator_id: int | None = None
+    operator_ip: str | None = None
+    before_snapshot: dict[str, Any] | None = None
+    after_snapshot: dict[str, Any] | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

@@ -1,10 +1,13 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import update
 
 from app.core.exceptions import BusinessException
 from app.core.security import get_password_hash
 from app.core.status_codes import BAD_REQUEST, CONFLICT
 from app.crud import rbac as crud
+from app.models.approval import ApprovalLog
 from app.models.rbac import Menu, Permission, Role, User
+from app.models.workover import WorkoverProjectPool
 from app.schemas.rbac import (
     MenuCreate,
     MenuOut,
@@ -117,9 +120,14 @@ def delete_user(db: Session, user_id: int) -> None:
     user = crud.get_user(db, user_id)
     if user is None:
         raise BusinessException(BAD_REQUEST, "用户不存在")
-    user.is_active = False
-    db.commit()
+    if user.is_superuser:
+        raise BusinessException(BAD_REQUEST, "超级管理员账号不允许删除")
     invalidate_user_permission_cache([user.id])
+    db.execute(update(ApprovalLog).where(ApprovalLog.operator_id == user.id).values(operator_id=None))
+    db.execute(update(WorkoverProjectPool).where(WorkoverProjectPool.created_by_id == user.id).values(created_by_id=None))
+    user.roles.clear()
+    db.delete(user)
+    db.commit()
 
 
 def list_users(db: Session) -> list[UserOut]:

@@ -68,3 +68,9 @@ def set_dictionary_item_active(db: Session, item_id: int, is_active: bool) -> Da
     db.commit()
     db.refresh(item)
     return item
+
+
+def delete_dictionary_item(db: Session, item_id: int) -> None:
+    item = get_dictionary_item(db, item_id)
+    db.delete(item)
+    db.commit()
