@@ -3,6 +3,8 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_permission
+from app.core.exceptions import BusinessException
+from app.core.status_codes import BAD_REQUEST
 from app.crud.rbac import list_operation_logs
 from app.db.session import get_db
 from app.models.approval import ApprovalLog
@@ -81,8 +83,10 @@ def assign_user_roles(
 def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("system:user:delete")),
+    current_user: User = Depends(require_permission("system:user:delete")),
 ) -> ApiResponse[None]:
+    if current_user.id == user_id and any(role.code == "ops_admin" for role in current_user.roles):
+        raise BusinessException(BAD_REQUEST, "运维管理员不允许删除自己的账号")
     rbac_service.delete_user(db, user_id)
     return success(msg="已删除")
 

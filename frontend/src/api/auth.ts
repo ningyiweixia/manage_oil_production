@@ -36,6 +36,28 @@ export interface LoginResponse {
   menus: MenuNode[]
 }
 
+export interface CurrentUser {
+  id: number
+  username: string
+  full_name: string
+  department?: string | null
+  roles: Array<{ id: number; name: string; code: string }>
+  permissions: Array<{ id: number; name: string; code: string }>
+  menus: MenuNode[]
+}
+
 export async function login(payload: LoginPayload): Promise<LoginResponse> {
   return unwrap<LoginResponse>(http.post('/auth/login', payload))
+}
+
+export async function getCurrentUser(): Promise<CurrentUser> {
+  return unwrap<CurrentUser>(http.get('/auth/me'))
+}
+
+export async function changeCurrentPassword(payload: { old_password: string; new_password: string }) {
+  return unwrap<null>(http.patch('/auth/me/password', payload))
+}
+
+export async function cancelCurrentAccount(payload: { password: string }) {
+  return unwrap<null>(http.delete('/auth/me', { data: payload }))
 }

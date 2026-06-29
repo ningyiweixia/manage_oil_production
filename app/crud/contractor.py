@@ -13,7 +13,9 @@ from app.models.workover import (
     ContractorCapacity,
     ContractorCapacityStatus,
     OperationStatus,
+    ProjectPoolStatus,
     WorkoverOperationSheet,
+    WorkoverProjectPool,
 )
 from app.schemas.contractor import (
     ContractorCapacityCreate,
@@ -174,6 +176,81 @@ def get_operation_sheet(db: Session, sheet_id: int) -> WorkoverOperationSheet:
     return obj
 
 
+def _new_operation_no() -> str:
+    return f"OP-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6].upper()}"
+
+
+def ensure_operation_sheet_for_project(
+    db: Session,
+    project: WorkoverProjectPool,
+    *,
+    operator_id: int | None = None,
+    operator_ip: str | None = None,
+) -> WorkoverOperationSheet:
+    existing = db.scalar(
+        select(WorkoverOperationSheet)
+        .where(WorkoverOperationSheet.project_id == project.id)
+        .limit(1)
+    )
+    if existing is not None:
+        if (
+            project.status == ProjectPoolStatus.APPROVED
+            and existing.status in {OperationStatus.DISPATCHED, OperationStatus.WORKING, OperationStatus.FINISHED}
+        ):
+            project.status = ProjectPoolStatus.DISPATCHED
+            db.flush()
+        return existing
+    if project.status != ProjectPoolStatus.APPROVED:
+        raise BusinessException(CONFLICT, f"项目 {project.well_no} 尚未入运行库，不能创建运行表")
+
+    sheet = WorkoverOperationSheet(
+        project_id=project.id,
+        operation_no=_new_operation_no(),
+        status=OperationStatus.WAITING_DISPATCH,
+    )
+    db.add(sheet)
+    db.flush()
+    write_approval_log(
+        db,
+        business_type=BUSINESS_TYPE_OPERATION,
+        business_id=sheet.id,
+        node_code="OPERATION_SHEET_AUTO_CREATE",
+        action=ApprovalAction.CREATE,
+        operator_id=operator_id,
+        operator_ip=operator_ip,
+        after_snapshot=_sheet_snapshot(sheet),
+    )
+    return sheet
+
+
+def sync_approved_projects_to_operation_sheets(
+    db: Session,
+    *,
+    operator_id: int | None = None,
+    operator_ip: str | None = None,
+) -> list[WorkoverOperationSheet]:
+    approved_projects = db.scalars(
+        select(WorkoverProjectPool)
+        .where(
+            WorkoverProjectPool.status == ProjectPoolStatus.APPROVED,
+            WorkoverProjectPool.is_deleted.is_(False),
+        )
+    ).all()
+    sheets: list[WorkoverOperationSheet] = []
+    for project in approved_projects:
+        sheet = ensure_operation_sheet_for_project(
+            db,
+            project,
+            operator_id=operator_id,
+            operator_ip=operator_ip,
+        )
+        sheets.append(sheet)
+    db.commit()
+    for sheet in sheets:
+        db.refresh(sheet)
+    return sheets
+
+
 def create_operation_sheet(
     db: Session,
     payload: WorkoverOperationSheetCreate,
@@ -182,7 +259,19 @@ def create_operation_sheet(
     operator_ip: str | None,
 ) -> WorkoverOperationSheet:
     data = payload.model_dump(mode="json")
-    operation_no = f"OP-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6].upper()}"
+    project = db.get(WorkoverProjectPool, payload.project_id)
+    if project is None or project.is_deleted:
+        raise BusinessException(BAD_REQUEST, "上修项目池记录不存在")
+    if project.status != ProjectPoolStatus.APPROVED:
+        raise BusinessException(CONFLICT, "只有已入库项目才能创建修井运行表")
+    existing = db.scalar(
+        select(WorkoverOperationSheet)
+        .where(WorkoverOperationSheet.project_id == payload.project_id)
+        .limit(1)
+    )
+    if existing is not None:
+        return existing
+    operation_no = _new_operation_no()
     obj = WorkoverOperationSheet(
         **data,
         operation_no=operation_no,
@@ -250,6 +339,7 @@ def dispatch_operation(
         before = _sheet_snapshot(sheet)
         sheet.contractor_capacity_id = contractor_capacity_id
         sheet.status = OperationStatus.DISPATCHED
+        sheet.project.status = ProjectPoolStatus.DISPATCHED
         db.flush()
 
         # 5. 更新承包商状态为忙碌
@@ -319,8 +409,6 @@ def update_sheet_progress(
 
 def select_priority_sheets(db: Session) -> list[WorkoverOperationSheet]:
     """查询待派工工单，按审批通过时间升序+产量优先级降序排列。"""
-    from app.models.workover import WorkoverProjectPool
-
     stmt = (
         select(WorkoverOperationSheet)
         .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)

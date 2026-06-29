@@ -11,6 +11,7 @@ from app.crud.contractor import (
     list_contractor_capacities,
     list_operation_sheets,
     select_priority_sheets,
+    sync_approved_projects_to_operation_sheets,
     update_contractor_capacity,
     update_sheet_progress,
 )
@@ -65,10 +66,16 @@ def create_item(
 
 @router.get("/priority-sheets", response_model=ApiResponse[list[WorkoverOperationSheetOut]])
 def list_priority_sheets(
+    request: Request,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("operation-sheet:read")),
+    current_user: User = Depends(require_permission("operation-sheet:read")),
 ) -> ApiResponse[list[WorkoverOperationSheetOut]]:
     """按优先级排序的待派工修井运行表。"""
+    sync_approved_projects_to_operation_sheets(
+        db,
+        operator_id=current_user.id,
+        operator_ip=_client_ip(request),
+    )
     sheets = select_priority_sheets(db)
     items = [WorkoverOperationSheetOut.model_validate(s) for s in sheets]
     return success(items)
@@ -76,10 +83,16 @@ def list_priority_sheets(
 
 @router.get("/operation-sheets/", response_model=ApiResponse[PageResult[WorkoverOperationSheetOut]])
 def list_sheets(
+    request: Request,
     query: WorkoverOperationSheetQuery = Depends(),
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("operation-sheet:read")),
+    current_user: User = Depends(require_permission("operation-sheet:read")),
 ) -> ApiResponse[PageResult[WorkoverOperationSheetOut]]:
+    sync_approved_projects_to_operation_sheets(
+        db,
+        operator_id=current_user.id,
+        operator_ip=_client_ip(request),
+    )
     rows, total = list_operation_sheets(db, query)
     items = [WorkoverOperationSheetOut.model_validate(row) for row in rows]
     return success(

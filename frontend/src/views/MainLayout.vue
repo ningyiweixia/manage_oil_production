@@ -66,7 +66,7 @@
             <el-button :icon="User" circle />
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item>{{ user.full_name || user.username || '当前用户' }}</el-dropdown-item>
+                <el-dropdown-item @click="openAccountSettings">{{ user.full_name || user.username || '当前用户' }}</el-dropdown-item>
                 <el-dropdown-item divided @click="logout">退出登录</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -97,6 +97,7 @@ const iconMap: Record<string, any> = {
 }
 
 const routeIconMap: Record<string, any> = {
+  '/system/account': User,
   '/system/users': User,
   '/system/roles': Key,
   '/system/menus': Menu,
@@ -129,6 +130,48 @@ const permissions = computed<string[]>(() => {
   try { return JSON.parse(localStorage.getItem('permissions') || '[]') } catch { return [] }
 })
 
+function withAccountSettingsMenu(items: MenuNode[]): MenuNode[] {
+  return items.map((item) => {
+    if (item.route_name !== 'system' && item.route_path !== '/system') return item
+    const children = item.children || []
+    if (children.some((child) => child.route_path === '/system/account')) return item
+    return {
+      ...item,
+      children: [
+        {
+          id: -1001,
+          title: '账号设置',
+          route_name: 'system_account',
+          route_path: '/system/account',
+          component: null,
+          icon: 'user',
+          parent_id: item.id,
+          sort_order: 0,
+          is_visible: true,
+          is_active: true,
+          meta: {},
+          children: []
+        },
+        ...children
+      ]
+    }
+  })
+}
+
+function normalizeDeprecatedMenus(items: MenuNode[]): MenuNode[] {
+  return items.flatMap((item) => {
+    const children = normalizeDeprecatedMenus(item.children || [])
+    if (item.route_name === 'workover' || item.route_path === '/workover') {
+      return children.map((child) => ({
+        ...child,
+        parent_id: null,
+        sort_order: child.route_name === 'workover_project_pool' ? item.sort_order : child.sort_order
+      }))
+    }
+    return [{ ...item, children }]
+  })
+}
+
 /** Build sidebar menus from backend RBAC menus, with a static fallback */
 const sidebarMenus = computed<MenuNode[]>(() => {
   try {
@@ -140,7 +183,7 @@ const sidebarMenus = computed<MenuNode[]>(() => {
           .filter((m) => m.is_visible !== false && m.is_active !== false)
           .map((m) => ({ ...m, children: filterVisible(m.children || []) }))
           .sort((a, b) => a.sort_order - b.sort_order)
-      return filterVisible(stored)
+      return withAccountSettingsMenu(normalizeDeprecatedMenus(filterVisible(stored))).sort((a, b) => a.sort_order - b.sort_order)
     }
   } catch { /* fall through to fallback */ }
   return [
@@ -172,7 +215,18 @@ const sidebarMenus = computed<MenuNode[]>(() => {
     {
       id: 6, title: '系统管理', route_name: 'system_users', route_path: '/system/users',
       component: null, icon: 'Setting', parent_id: null, sort_order: 6,
-      is_visible: true, is_active: true, meta: {}, children: []
+      is_visible: true, is_active: true, meta: {}, children: [
+        {
+          id: 61, title: '账号设置', route_name: 'system_account', route_path: '/system/account',
+          component: null, icon: 'user', parent_id: 6, sort_order: 1,
+          is_visible: true, is_active: true, meta: {}, children: []
+        },
+        {
+          id: 62, title: '用户管理', route_name: 'system_users', route_path: '/system/users',
+          component: null, icon: 'user', parent_id: 6, sort_order: 2,
+          is_visible: true, is_active: true, meta: {}, children: []
+        }
+      ]
     }
   ]
 })
@@ -184,6 +238,10 @@ function logout() {
   localStorage.removeItem('permissions')
   localStorage.removeItem('menus')
   router.push('/login')
+}
+
+function openAccountSettings() {
+  router.push('/system/account')
 }
 
 function handleAuthExpired() {

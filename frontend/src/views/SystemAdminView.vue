@@ -1,5 +1,57 @@
 <template>
   <el-tabs v-model="activeTab" class="admin-tabs" @tab-change="changeTab">
+    <el-tab-pane label="账号设置" name="account">
+      <section class="account-page">
+        <div class="account-hero">
+          <div class="account-avatar">
+            <el-icon><UserFilled /></el-icon>
+          </div>
+          <div class="account-identity">
+            <h2>{{ accountInfo?.full_name || accountInfo?.username || '当前用户' }}</h2>
+            <p>{{ accountInfo?.username || '-' }}</p>
+            <div class="account-roles">
+              <el-tag v-for="role in accountInfo?.roles || []" :key="role.id" effect="plain">{{ role.name }}</el-tag>
+              <span v-if="!accountInfo?.roles?.length">暂无角色</span>
+            </div>
+          </div>
+          <dl class="account-facts">
+            <div>
+              <dt>部门</dt>
+              <dd>{{ accountInfo?.department || '-' }}</dd>
+            </div>
+            <div>
+              <dt>账号状态</dt>
+              <dd>正常</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="account-settings">
+          <div class="account-setting-row">
+            <div class="setting-icon">
+              <el-icon><Lock /></el-icon>
+            </div>
+            <div class="setting-copy">
+              <h3>修改密码</h3>
+              <p>定期更新密码可以提升账号安全性，修改成功后需要重新登录。</p>
+            </div>
+            <el-button type="primary" plain @click="passwordVisible = true">修改密码</el-button>
+          </div>
+
+          <div class="account-setting-row danger-row">
+            <div class="setting-icon">
+              <el-icon><Warning /></el-icon>
+            </div>
+            <div class="setting-copy">
+              <h3>注销账号</h3>
+              <p>注销后账号将从系统中删除，当前会话立即退出。</p>
+            </div>
+            <el-button type="danger" plain @click="cancelVisible = true">注销账号</el-button>
+          </div>
+        </div>
+      </section>
+    </el-tab-pane>
+
     <el-tab-pane label="用户管理" name="users">
       <section class="table-panel">
         <div class="panel-head">
@@ -26,7 +78,7 @@
           <el-table-column label="操作" width="170">
             <template #default="{ row }">
               <el-button text type="primary" @click="openRoleAssign(row)">分配角色</el-button>
-              <el-button text type="danger" :disabled="row.is_superuser" @click="deleteUserRow(row)">删除</el-button>
+              <el-button text type="danger" :disabled="isDeleteDisabled(row)" @click="deleteUserRow(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -178,6 +230,38 @@
       <el-button type="primary" :loading="saving" @click="savePermissionAssign">保存</el-button>
     </template>
   </el-dialog>
+
+  <el-dialog v-model="passwordVisible" title="修改密码" width="520px" @closed="resetPasswordForm">
+    <el-form ref="passwordFormRef" :model="passwordForm" :rules="passwordRules" label-width="104px" class="dialog-form">
+      <el-form-item label="原密码" prop="old_password">
+        <el-input v-model="passwordForm.old_password" type="password" show-password />
+      </el-form-item>
+      <el-form-item label="新密码" prop="new_password">
+        <el-input v-model="passwordForm.new_password" type="password" show-password />
+        <p class="form-tip">密码需 8-128 位，且包含大写字母、小写字母、数字和特殊字符。</p>
+      </el-form-item>
+      <el-form-item label="确认新密码" prop="confirm_password">
+        <el-input v-model="passwordForm.confirm_password" type="password" show-password />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="passwordVisible = false">取消</el-button>
+      <el-button type="primary" :loading="saving" @click="savePassword">保存密码</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="cancelVisible" title="注销账号" width="520px" @closed="resetCancelForm">
+    <el-alert type="warning" :closable="false" show-icon title="注销后账号将从系统中删除，无法继续登录。" />
+    <el-form ref="cancelFormRef" :model="cancelForm" :rules="cancelRules" label-width="92px" class="dialog-form">
+      <el-form-item label="当前密码" prop="password">
+        <el-input v-model="cancelForm.password" type="password" show-password />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="cancelVisible = false">取消</el-button>
+      <el-button type="danger" :loading="saving" @click="confirmCancelAccount">确认注销</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
@@ -185,7 +269,8 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Lock, Plus, UserFilled, Warning } from '@element-plus/icons-vue'
+import { cancelCurrentAccount, changeCurrentPassword, getCurrentUser, type CurrentUser } from '../api/auth'
 import DictionaryManageView from './DictionaryManageView.vue'
 import {
   assignRolePermissions,
@@ -208,6 +293,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 const routeToTab: Record<string, string> = {
+  '/system/account': 'account',
   '/system/users': 'users',
   '/system/roles': 'roles',
   '/system/menus': 'menus',
@@ -218,9 +304,10 @@ const routeToTab: Record<string, string> = {
 const tabToRoute = computed<Record<string, string>>(() => Object.fromEntries(
   Object.entries(routeToTab).map(([path, tab]) => [tab, path])
 ))
-const activeTab = ref(routeToTab[route.path] || 'users')
+const activeTab = ref(routeToTab[route.path] || 'account')
 const loading = ref(false)
 const saving = ref(false)
+const accountInfo = ref<CurrentUser | null>(null)
 const users = ref<UserItem[]>([])
 const roles = ref<RoleItem[]>([])
 const menus = ref<MenuItem[]>([])
@@ -229,11 +316,23 @@ const logs = ref<OperationLogItem[]>([])
 const userVisible = ref(false)
 const roleAssignVisible = ref(false)
 const permissionAssignVisible = ref(false)
+const passwordVisible = ref(false)
+const cancelVisible = ref(false)
 const editingUser = ref<UserItem | null>(null)
 const editingRole = ref<RoleItem | null>(null)
 const selectedRoleId = ref<number>()
 const selectedPermissionIds = ref<number[]>([])
+const passwordFormRef = ref<FormInstance>()
+const cancelFormRef = ref<FormInstance>()
 const userFormRef = ref<FormInstance>()
+const passwordForm = reactive({
+  old_password: '',
+  new_password: '',
+  confirm_password: ''
+})
+const cancelForm = reactive({
+  password: ''
+})
 const userForm = reactive({
   username: '',
   password: '',
@@ -245,6 +344,38 @@ const userForm = reactive({
 
 const passwordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,128}$/
 const passwordMessage = '密码需 8-128 位，且包含大写字母、小写字母、数字和特殊字符'
+const passwordRules: FormRules<typeof passwordForm> = {
+  old_password: [{ required: true, message: '请输入原密码', trigger: 'blur' }],
+  new_password: [
+    { required: true, message: '请输入新密码', trigger: 'blur' },
+    {
+      validator: (_rule, value: string, callback) => {
+        if (!passwordPattern.test(value || '')) {
+          callback(new Error(passwordMessage))
+          return
+        }
+        callback()
+      },
+      trigger: 'blur'
+    }
+  ],
+  confirm_password: [
+    { required: true, message: '请再次输入新密码', trigger: 'blur' },
+    {
+      validator: (_rule, value: string, callback) => {
+        if (value !== passwordForm.new_password) {
+          callback(new Error('两次输入的新密码不一致'))
+          return
+        }
+        callback()
+      },
+      trigger: 'blur'
+    }
+  ]
+}
+const cancelRules: FormRules<typeof cancelForm> = {
+  password: [{ required: true, message: '请输入当前密码', trigger: 'blur' }]
+}
 const userRules: FormRules<typeof userForm> = {
   username: [{ required: true, message: '请输入账号', trigger: 'blur' }],
   password: [
@@ -264,8 +395,83 @@ const userRules: FormRules<typeof userForm> = {
   role_id: [{ required: true, message: '请选择一个角色', trigger: 'change' }]
 }
 
+function clearAuthState() {
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('refresh_token')
+  localStorage.removeItem('current_user')
+  localStorage.removeItem('permissions')
+  localStorage.removeItem('menus')
+  router.push('/login')
+}
+
+async function loadAccount() {
+  accountInfo.value = await getCurrentUser()
+}
+
 function roleName(id: number) {
   return roles.value.find((role) => role.id === id)?.name || `角色${id}`
+}
+
+function isCurrentOpsAdmin() {
+  return Boolean(accountInfo.value?.roles?.some((role) => role.code === 'ops_admin'))
+}
+
+function isDeleteDisabled(row: UserItem) {
+  return row.is_superuser || (isCurrentOpsAdmin() && accountInfo.value?.id === row.id)
+}
+
+async function savePassword() {
+  const valid = await passwordFormRef.value?.validate().catch(() => false)
+  if (!valid) return
+  saving.value = true
+  try {
+    await changeCurrentPassword({
+      old_password: passwordForm.old_password,
+      new_password: passwordForm.new_password
+    })
+    ElMessage.success('密码已修改，请重新登录')
+    clearAuthState()
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, '密码修改失败'))
+  } finally {
+    saving.value = false
+  }
+}
+
+function resetPasswordForm() {
+  Object.assign(passwordForm, {
+    old_password: '',
+    new_password: '',
+    confirm_password: ''
+  })
+  passwordFormRef.value?.clearValidate()
+}
+
+function resetCancelForm() {
+  cancelForm.password = ''
+  cancelFormRef.value?.clearValidate()
+}
+
+async function confirmCancelAccount() {
+  const valid = await cancelFormRef.value?.validate().catch(() => false)
+  if (!valid) return
+  try {
+    await ElMessageBox.confirm('确认注销当前账号吗？注销后账号将从系统中删除。', '确认注销', {
+      confirmButtonText: '注销',
+      cancelButtonText: '取消',
+      type: 'warning',
+      confirmButtonClass: 'el-button--danger'
+    })
+    saving.value = true
+    await cancelCurrentAccount({ password: cancelForm.password })
+    ElMessage.success('账号已注销')
+    clearAuthState()
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return
+    ElMessage.error(getErrorMessage(error, '账号注销失败'))
+  } finally {
+    saving.value = false
+  }
 }
 
 async function loadAll() {
@@ -410,19 +616,166 @@ function changeTab(tabName: string | number) {
 watch(
   () => route.path,
   (path) => {
-    activeTab.value = routeToTab[path] || 'users'
+    activeTab.value = routeToTab[path] || 'account'
   }
 )
 
-onMounted(loadAll)
+onMounted(() => {
+  loadAccount()
+  loadAll()
+})
 </script>
 
 <style scoped>
+.account-page {
+  display: grid;
+  gap: 16px;
+}
+
+.account-hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(220px, auto);
+  align-items: center;
+  gap: 18px;
+  padding: 20px;
+  background: linear-gradient(135deg, #f8fbff 0%, #eef6ff 100%);
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+}
+
+.account-avatar {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  color: #2f7de1;
+  background: #ffffff;
+  border: 1px solid #c8ddfb;
+  border-radius: 50%;
+  font-size: 30px;
+}
+
+.account-identity {
+  min-width: 0;
+}
+
+.account-identity h2 {
+  margin: 0;
+  color: #172033;
+  font-size: 22px;
+}
+
+.account-identity p {
+  margin: 6px 0 10px;
+  color: #667085;
+}
+
+.account-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: #667085;
+}
+
+.account-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.account-facts div {
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+}
+
+.account-facts dt {
+  margin: 0 0 4px;
+  color: #667085;
+  font-size: 12px;
+}
+
+.account-facts dd {
+  margin: 0;
+  color: #172033;
+  font-weight: 700;
+}
+
+.account-settings {
+  display: grid;
+  gap: 12px;
+}
+
+.account-setting-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  background: #ffffff;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+}
+
+.account-setting-row.danger-row {
+  border-color: var(--el-color-danger-light-7);
+}
+
+.setting-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  color: #2f7de1;
+  background: #eef6ff;
+  border-radius: 8px;
+  font-size: 20px;
+}
+
+.danger-row .setting-icon {
+  color: var(--el-color-danger);
+  background: var(--el-color-danger-light-9);
+}
+
+.setting-copy h3 {
+  margin: 0;
+  color: #172033;
+  font-size: 16px;
+}
+
+.setting-copy p {
+  margin: 5px 0 0;
+  color: #667085;
+  line-height: 1.5;
+}
+
+.dialog-form {
+  margin-top: 16px;
+}
+
 .form-tip {
   width: 100%;
   margin: 6px 0 0;
   color: var(--el-text-color-secondary);
   font-size: 12px;
   line-height: 1.4;
+}
+
+@media (max-width: 900px) {
+  .account-hero,
+  .account-setting-row {
+    grid-template-columns: 1fr;
+  }
+
+  .account-avatar {
+    width: 56px;
+    height: 56px;
+  }
+
+  .account-facts {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

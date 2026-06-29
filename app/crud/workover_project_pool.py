@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import BusinessException
 from app.core.status_codes import BAD_REQUEST, CONFLICT
+from app.crud.contractor import ensure_operation_sheet_for_project
 from app.models.approval import ApprovalAction, ApprovalLog
 from app.models.workover import ProjectPoolStatus, WorkoverProjectPool
 from app.schemas.workover_project_pool import (
@@ -167,6 +168,13 @@ def update_project_pool(
         before_snapshot=before,
         after_snapshot=_project_snapshot(project),
     )
+    if target_status == ProjectPoolStatus.APPROVED:
+        ensure_operation_sheet_for_project(
+            db,
+            project,
+            operator_id=operator_id,
+            operator_ip=operator_ip,
+        )
     db.commit()
     db.refresh(project)
     return project
@@ -335,6 +343,13 @@ def patch_project_status(
         before_snapshot=before,
         after_snapshot=_project_snapshot(project),
     )
+    if status == ProjectPoolStatus.APPROVED:
+        ensure_operation_sheet_for_project(
+            db,
+            project,
+            operator_id=operator_id,
+            operator_ip=operator_ip,
+        )
     db.commit()
     db.refresh(project)
     return project

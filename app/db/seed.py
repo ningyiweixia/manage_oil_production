@@ -10,14 +10,14 @@ from app.models.workover import WorkoverProjectPool
 
 MENU_DEFINITIONS = [
     ("system", None, "系统管理", "system", "/system", "Layout", "settings", 10),
-    ("system_users", "system", "用户管理", "system_users", "/system/users", "system/users/index", "user", 11),
-    ("system_roles", "system", "角色管理", "system_roles", "/system/roles", "system/roles/index", "shield", 12),
-    ("system_menus", "system", "菜单管理", "system_menus", "/system/menus", "system/menus/index", "menu", 13),
-    ("system_permissions", "system", "权限管理", "system_permissions", "/system/permissions", "system/permissions/index", "key", 14),
-    ("system_dictionaries", "system", "数据字典", "system_dictionaries", "/system/dictionaries", "system/dictionaries/index", "list", 15),
-    ("system_logs", "system", "操作日志", "system_logs", "/system/operation-logs", "system/logs/index", "file-text", 16),
-    ("workover", None, "上修项目池", "workover", "/workover", "Layout", "database", 20),
-    ("workover_project_pool", "workover", "项目池台账", "workover_project_pool", "/workover/project-pools", "workover/project-pools/index", "table", 21),
+    ("system_account", "system", "账号设置", "system_account", "/system/account", "system/account/index", "user", 11),
+    ("system_users", "system", "用户管理", "system_users", "/system/users", "system/users/index", "user", 12),
+    ("system_roles", "system", "角色管理", "system_roles", "/system/roles", "system/roles/index", "shield", 13),
+    ("system_menus", "system", "菜单管理", "system_menus", "/system/menus", "system/menus/index", "menu", 14),
+    ("system_permissions", "system", "权限管理", "system_permissions", "/system/permissions", "system/permissions/index", "key", 15),
+    ("system_dictionaries", "system", "数据字典", "system_dictionaries", "/system/dictionaries", "system/dictionaries/index", "list", 16),
+    ("system_logs", "system", "操作日志", "system_logs", "/system/operation-logs", "system/logs/index", "file-text", 17),
+    ("workover_project_pool", None, "项目池台账", "workover_project_pool", "/workover/project-pools", "workover/project-pools/index", "table", 20),
     ("analytics", None, "统计分析", "analytics", "/dashboard", "analytics/dashboard", "trend-charts", 25),
     ("contractor", None, "承包商管理", "contractor", "/contractor", "Layout", "team", 30),
     ("contractor_capacity", "contractor", "运力报备", "contractor_capacity", "/contractor/capacity", "contractor/capacity/index", "list", 31),
@@ -215,7 +215,6 @@ DICTIONARY_DEFINITIONS = [
     ("system_menu", "权限管理", "system_permissions"),
     ("system_menu", "数据字典", "system_dictionaries"),
     ("system_menu", "操作日志", "system_logs"),
-    ("system_menu", "上修项目池", "workover"),
     ("system_menu", "项目池台账", "workover_project_pool"),
     ("system_menu", "统计分析", "analytics"),
     ("system_menu", "承包商管理", "contractor"),
@@ -239,6 +238,10 @@ MEASURE_TYPE_VALUE_ALIASES = {
     "套损治理": "casing_damage_treatment",
 }
 
+STALE_DICTIONARY_ITEMS = [
+    ("system_menu", "workover"),
+]
+
 
 def seed() -> None:
     with SessionLocal() as db:
@@ -257,6 +260,10 @@ def seed() -> None:
             menu.is_visible = True
             menu.is_active = True
             menus_by_key[key] = menu
+
+        deprecated_workover_menu = db.scalar(select(Menu).where(Menu.route_name == "workover"))
+        if deprecated_workover_menu is not None:
+            db.delete(deprecated_workover_menu)
 
         permissions_by_code: dict[str, Permission] = {}
         for code, name, path, method in PERMISSION_DEFINITIONS:
@@ -291,6 +298,15 @@ def seed() -> None:
         ).all()
         for item in stale_measure_items:
             db.delete(item)
+        for dict_type, item_value in STALE_DICTIONARY_ITEMS:
+            item = db.scalar(
+                select(DataDictionary).where(
+                    DataDictionary.dict_type == dict_type,
+                    DataDictionary.item_value == item_value,
+                )
+            )
+            if item is not None:
+                db.delete(item)
 
         for project in db.scalars(select(WorkoverProjectPool)).all():
             measures_jsonb = project.measures_jsonb or {}
@@ -324,10 +340,10 @@ def seed() -> None:
 
         roles_by_code["super_admin"].menus = list(menus_by_key.values())
         roles_by_code["ops_admin"].menus = list(menus_by_key.values())
-        roles_by_code["project_pool_admin"].menus = [menus_by_key["workover"], menus_by_key["workover_project_pool"], menus_by_key["analytics"]]
-        roles_by_code["base_entry_clerk"].menus = [menus_by_key["workover"], menus_by_key["workover_project_pool"]]
+        roles_by_code["project_pool_admin"].menus = [menus_by_key["workover_project_pool"], menus_by_key["analytics"]]
+        roles_by_code["base_entry_clerk"].menus = [menus_by_key["workover_project_pool"]]
         roles_by_code["business_reviewer"].menus = [
-            menus_by_key["workover"], menus_by_key["workover_project_pool"],
+            menus_by_key["workover_project_pool"],
             menus_by_key["contractor"], menus_by_key["contractor_dispatch"], menus_by_key["contractor_sheets"],
             menus_by_key["engineering"], menus_by_key["engineering_designs"],
             menus_by_key["analytics"], menus_by_key["a5"],

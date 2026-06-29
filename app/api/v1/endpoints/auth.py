@@ -6,12 +6,14 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.exceptions import BusinessException
-from app.core.status_codes import TOO_MANY_REQUESTS
+from app.core.security import get_password_hash, verify_password
+from app.core.status_codes import BAD_REQUEST, TOO_MANY_REQUESTS, UNAUTHORIZED
 from app.db.session import get_db
 from app.models.rbac import User
-from app.schemas.auth import CurrentUserOut, LoginRequest, LoginResponse, RefreshTokenRequest, TokenResponse
+from app.schemas.auth import AccountCancelRequest, ChangePasswordRequest, CurrentUserOut, LoginRequest, LoginResponse, RefreshTokenRequest, TokenResponse
 from app.schemas.response import ApiResponse, success
 from app.schemas.rbac import PermissionOut, RoleOut
+from app.services import rbac_service
 from app.services.auth_service import (
     authenticate_user,
     build_menu_tree,
@@ -92,3 +94,44 @@ def current_user(user: User = Depends(get_current_user)) -> ApiResponse[CurrentU
             menus=build_menu_tree(user_menus(user)),
         )
     )
+
+
+@router.patch("/me/password", response_model=ApiResponse[None])
+def change_password(
+    payload: ChangePasswordRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ApiResponse[None]:
+    db_user = db.get(User, user.id)
+    if db_user is None:
+        raise BusinessException(UNAUTHORIZED, "身份失效")
+    if not verify_password(payload.old_password, db_user.hashed_password):
+        raise BusinessException(BAD_REQUEST, "原密码不正确")
+    if verify_password(payload.new_password, db_user.hashed_password):
+        raise BusinessException(BAD_REQUEST, "新密码不能与原密码相同")
+    db_user.hashed_password = get_password_hash(payload.new_password)
+    db.commit()
+    scheme, _, access_token = request.headers.get("Authorization", "").partition(" ")
+    logout_token(None, access_token if scheme.lower() == "bearer" else None)
+    return success(msg="密码已修改，请重新登录")
+
+
+@router.delete("/me", response_model=ApiResponse[None])
+def cancel_account(
+    payload: AccountCancelRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ApiResponse[None]:
+    db_user = db.get(User, user.id)
+    if db_user is None:
+        raise BusinessException(UNAUTHORIZED, "身份失效")
+    if db_user.is_superuser:
+        raise BusinessException(BAD_REQUEST, "超级管理员账号不允许注销")
+    if not verify_password(payload.password, db_user.hashed_password):
+        raise BusinessException(BAD_REQUEST, "密码不正确")
+    scheme, _, access_token = request.headers.get("Authorization", "").partition(" ")
+    logout_token(None, access_token if scheme.lower() == "bearer" else None)
+    rbac_service.delete_user(db, db_user.id)
+    return success(msg="账号已注销")

@@ -25,6 +25,7 @@ const router = createRouter({
         { path: '/contractor/operation-sheets', component: ContractorDispatchView, meta: { title: '修井运行表' } },
         { path: '/engineering/designs', component: EngineeringDesignView, meta: { title: '工程设计管理' } },
         { path: '/a5/integration', component: A5IntegrationView, meta: { title: 'A5 系统集成' } },
+        { path: '/system/account', component: SystemAdminView, meta: { title: '账号设置' } },
         { path: '/system/users', component: SystemAdminView, meta: { title: '系统用户管理' } },
         { path: '/system/roles', component: SystemAdminView, meta: { title: '系统角色管理' } },
         { path: '/system/menus', component: SystemAdminView, meta: { title: '系统菜单管理' } },
