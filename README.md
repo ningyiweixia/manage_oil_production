@@ -1,6 +1,25 @@
 # 采油二厂井下作业管理系统
 
-后端采用 `FastAPI` + `SQLAlchemy 2.0` + `Pydantic v2` + `PostgreSQL 15 (JSONB)` + `Redis 7.4` + `Celery 5.4` + `JWT` + `Alembic`。前端采用 `Vue 3.5` + `Element Plus 2.9` + `ECharts 5.5` + `TypeScript 5.7` + `Vite 8.0`。当前核心模块全部实现，已完成本机联调巡检。
+后端采用 `FastAPI` + `SQLAlchemy 2.0` + `Pydantic v2` + `PostgreSQL 15 (JSONB)` + `Redis 7.4` + `Celery 5.4` + `JWT` + `Alembic`。前端采用 `Vue 3.5` + `Element Plus 2.9` + `ECharts 5.5` + `TypeScript 5.7` + `Vite 8.0`。系统支持 PostgreSQL/Redis/MinIO/A5/FPM 的生产接入，也支持本地 SQLite、内存缓存和模拟外部系统的降级联调。
+
+## 快速入口
+
+| 场景 | 地址/命令 |
+|------|-----------|
+| 前端开发服务 | `http://127.0.0.1:5173` |
+| 后端 API | `http://127.0.0.1:8000/api/v1` |
+| Swagger 文档 | `http://127.0.0.1:8000/docs` |
+| 健康检查 | `http://127.0.0.1:8000/health` |
+| 前端构建 | `cd frontend && npm run build` |
+| 后端语法检查 | `python -m compileall app alembic tests` |
+
+默认管理员账号：
+
+```json
+{"username": "admin", "password": "ChangeMe_123!"}
+```
+
+> 首次登录后请立即修改默认密码，并在生产环境替换 `.env` 中的所有默认密钥。
 
 ## 模块总览
 
@@ -47,11 +66,11 @@ manage_oil_production/
 │   │           └── a5_integration.py # A5 集成（回调/SSO/同步状态/手动触发）
 │   ├── core/
 │   │   ├── config.py                # 应用配置（Pydantic Settings，环境变量驱动）
-│   │   ├── exceptions.py            # 全局异常处理（BusinessException + 6 类处理器）
+│   │   ├── exceptions.py            # 全局异常处理（BusinessException + 多类处理器）
 │   │   ├── middleware.py            # AuthMiddleware（JWT）+ OperationLogMiddleware（审计）
 │   │   ├── redis.py                 # Redis 缓存客户端（自动降级到内存字典）
 │   │   ├── security.py              # JWT 签发/解码/吊销（pbkdf2_sha256 + jose）
-│   │   └── status_codes.py          # 业务状态码常量（20000/40001/40100/40300/40900/50300/60001/60002）
+│   │   └── status_codes.py          # 业务状态码常量（20000/40001/40100/40300/40900/42900/50300/60001/60002）
 │   ├── crud/
 │   │   ├── rbac.py                  # 用户/角色/菜单/权限 CRUD 查询
 │   │   ├── workover_project_pool.py # 项目池 CRUD + 状态机 + ALLOWED_STATUS_TRANSITIONS
@@ -209,14 +228,6 @@ celery -A celery_app worker --loglevel=info --beat
 - 定时任务：`sync-a5-data-every-30min`（每 30 分钟拉取 A5 数据）
 - 失败重试：最多 3 次，间隔 60 秒
 - 连续失败 3 次触发企业微信告警
-
-### 初始账号
-
-```json
-{"username": "admin", "password": "ChangeMe_123!"}
-```
-
-> ⚠️ 首次登录后请立即修改密码。
 
 ## 环境配置
 
