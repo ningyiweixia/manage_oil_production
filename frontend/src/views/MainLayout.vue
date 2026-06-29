@@ -29,7 +29,7 @@
       </el-menu>
     </el-aside>
 
-    <el-container>
+    <el-container class="main-region">
       <el-header class="topbar">
         <div>
           <p>{{ route.meta.title }}</p>
