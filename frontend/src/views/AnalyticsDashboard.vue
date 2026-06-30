@@ -7,8 +7,8 @@
       start-placeholder="开始日期"
       end-placeholder="结束日期"
     />
-    <el-select v-model="measureFilter" clearable placeholder="措施类别" style="width: 180px">
-      <el-option v-for="item in measureTypes" :key="item" :label="item" :value="item" />
+    <el-select v-model="measureFilter" clearable filterable placeholder="措施类别" style="width: 180px">
+      <el-option v-for="item in measureOptions" :key="item.value" :label="item.label" :value="item.value" />
     </el-select>
     <el-select v-model="statusFilter" clearable placeholder="审批状态" style="width: 180px">
       <el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" />
@@ -69,6 +69,7 @@ import { Download, Refresh } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import type { ECharts, EChartsOption } from 'echarts'
 import { getProjectAnalytics } from '../api/workover'
+import { listDictionaryItems, type DictionaryItem } from '../api/dictionary'
 import { useProjectDataChanged } from '../composables/useProjectSync'
 import { statusLabels } from '../utils/status'
 import type { AnalyticsQuery, ProjectPoolStatus, WorkoverAnalytics } from '../types/workover'
@@ -77,6 +78,7 @@ const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const analytics = ref<WorkoverAnalytics | null>(null)
+const measureDictionary = ref<DictionaryItem[]>([])
 const dateRange = ref<[Date, Date] | null>(null)
 const measureFilter = ref('')
 const statusFilter = ref<ProjectPoolStatus | ''>('')
@@ -92,7 +94,20 @@ let trendChart: ECharts | null = null
 
 const statusOptions = Object.entries(statusLabels).map(([value, label]) => ({ value, label }))
 
-const measureTypes = computed(() => analytics.value?.measure_types || [])
+const measureLabelMap = computed(() => {
+  const map: Record<string, string> = {}
+  measureDictionary.value.forEach((item) => {
+    if (item.is_active) {
+      map[item.item_value] = item.item_label
+    }
+  })
+  return map
+})
+
+const measureOptions = computed(() => (analytics.value?.measure_types || []).map((value) => ({
+  value,
+  label: measureLabel(value)
+})))
 
 const kpis = computed(() => {
   const summary = analytics.value?.kpis
@@ -130,6 +145,17 @@ function currentQuery(): AnalyticsQuery {
   }
 }
 
+function measureLabel(value: string) {
+  return measureLabelMap.value[value] || value
+}
+
+function localizedMeasureDistribution() {
+  return (analytics.value?.measure_distribution || []).map((item) => ({
+    ...item,
+    name: measureLabel(item.name)
+  }))
+}
+
 function renderCharts() {
   const summary = analytics.value
   if (!summary) return
@@ -145,13 +171,20 @@ function renderCharts() {
 
   measureChart?.setOption({
     tooltip: { trigger: 'item' },
-    legend: { bottom: 0, textStyle: commonText },
-    series: [{ type: 'pie', radius: ['42%', '68%'], center: ['50%', '45%'], data: summary.measure_distribution, label: { formatter: '{b}: {d}%' } }]
+    legend: { bottom: 0, type: 'scroll', textStyle: commonText },
+    series: [{
+      type: 'pie',
+      radius: ['42%', '66%'],
+      center: ['50%', '45%'],
+      data: localizedMeasureDistribution(),
+      label: { formatter: '{b}: {d}%', overflow: 'truncate', width: 120 },
+      labelLine: { length: 18, length2: 14 }
+    }]
   } satisfies EChartsOption)
 
   heatmapChart?.setOption({
     tooltip: { position: 'top' },
-    grid: { left: 70, right: 24, top: 24, bottom: 50 },
+    grid: { left: 92, right: 24, top: 24, bottom: 56 },
     xAxis: { type: 'category', data: summary.heatmap.blocks, axisLabel: commonText },
     yAxis: {
       type: 'category',
@@ -163,19 +196,53 @@ function renderCharts() {
   } satisfies EChartsOption)
 
   trendChart?.setOption({
-    tooltip: { trigger: 'axis' },
-    legend: { top: 0, textStyle: commonText },
-    grid: { left: 46, right: 46, top: 42, bottom: 42 },
-    xAxis: { type: 'category', data: summary.trend.days, axisLabel: commonText },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+      valueFormatter: (value) => String(value)
+    },
+    legend: { top: 4, left: 'center', itemGap: 18, textStyle: commonText },
+    grid: { left: 58, right: 72, top: 64, bottom: 48, containLabel: true },
+    xAxis: {
+      type: 'category',
+      data: summary.trend.days,
+      axisLabel: { ...commonText, hideOverlap: true },
+      axisTick: { alignWithLabel: true }
+    },
     yAxis: [
-      { type: 'value', name: '提报数', axisLabel: commonText },
-      { type: 'value', name: '万元', axisLabel: commonText }
+      { type: 'value', name: '提报数', nameGap: 22, axisLabel: commonText, splitLine: { lineStyle: { color: '#dfe7f1' } } },
+      { type: 'value', name: '万元', nameGap: 22, axisLabel: commonText, splitLine: { show: false } }
     ],
     series: [
-      { name: '提报数', type: 'line', smooth: true, data: summary.trend.counts, symbolSize: 8 },
-      { name: '预计费用', type: 'bar', yAxisIndex: 1, data: summary.trend.costs, itemStyle: { color: '#12a182', borderRadius: [4, 4, 0, 0] } }
+      {
+        name: '提报数',
+        type: 'line',
+        smooth: true,
+        data: summary.trend.counts,
+        symbolSize: 8,
+        symbol: 'circle',
+        lineStyle: { width: 3, color: '#5570c6' },
+        itemStyle: { color: '#5570c6' }
+      },
+      {
+        name: '预计费用',
+        type: 'bar',
+        yAxisIndex: 1,
+        data: summary.trend.costs,
+        barMaxWidth: 44,
+        barCategoryGap: '45%',
+        itemStyle: { color: '#12a182', borderRadius: [5, 5, 0, 0] }
+      }
     ]
   } satisfies EChartsOption)
+}
+
+async function loadMeasureDictionary() {
+  try {
+    measureDictionary.value = await listDictionaryItems('measure_type')
+  } catch {
+    measureDictionary.value = []
+  }
 }
 
 async function loadDashboard() {
@@ -252,6 +319,7 @@ onMounted(async () => {
   heatmapChart = echarts.init(heatmapChartRef.value!)
   trendChart = echarts.init(trendChartRef.value!)
   window.addEventListener('resize', resizeCharts)
+  await loadMeasureDictionary()
   await loadDashboard()
 })
 

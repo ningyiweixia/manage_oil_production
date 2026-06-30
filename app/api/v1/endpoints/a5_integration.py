@@ -18,11 +18,13 @@ from app.api.deps import require_permission
 from app.core.config import settings
 from app.core.exceptions import BusinessException
 from app.core.redis import cache_client
-from app.core.status_codes import A5_LINK_FAILED, BAD_REQUEST
+from app.core.status_codes import BAD_REQUEST
 from app.db.session import get_db
 from app.models.rbac import User
-from app.models.workover import OperationStatus, WorkoverOperationSheet
+from app.models.workover import WorkoverOperationSheet
 from app.schemas.a5_integration import (
+    A5AnalyticsOut,
+    A5AnalyticsQuery,
     A5CallbackPayload,
     A5SyncStatusOut,
     A5SyncTriggerOut,
@@ -30,8 +32,14 @@ from app.schemas.a5_integration import (
 )
 from app.schemas.response import ApiResponse, success
 from app.services.a5_auth_service import generate_sso_token, verify_a5_callback_signature
-from app.services.a5_sync_service import A5_SYNC_COUNT_PREFIX, A5_SYNC_STATUS_KEY, full_sync
-from app.tasks.a5_tasks import sync_a5_data_task, sync_anomaly_task
+from app.services.a5_sync_service import (
+    A5_SYNC_COUNT_PREFIX,
+    A5_SYNC_STATUS_KEY,
+    apply_a5_update_to_operation_sheet,
+    build_a5_analytics,
+    full_sync,
+)
+from app.tasks.a5_tasks import sync_a5_data_task
 
 logger = logging.getLogger(__name__)
 
@@ -70,21 +78,14 @@ async def a5_callback(
         logger.warning(f"A5 回调: 工单 {payload.operation_no} 不存在")
         return success({"matched": False, "operation_no": payload.operation_no}, msg="工单未匹配")
 
-    # 更新状态
     old_status = sheet.status
-    status_map = {
-        "通过": OperationStatus.FINISHED,
-        "办结": OperationStatus.FINISHED,
-        "驳回": OperationStatus.WAITING_DISPATCH,
-        "关闭": OperationStatus.CANCELED,
-    }
-    new_status = status_map.get(payload.status)
-    if new_status:
-        sheet.status = new_status
-        if new_status == OperationStatus.FINISHED:
-            sheet.actual_end_at = datetime.now(timezone.utc)
-
-    sheet.remark = payload.remark
+    new_status = apply_a5_update_to_operation_sheet(
+        sheet,
+        status=payload.status,
+        remark=payload.remark,
+        detail=payload.model_dump(mode="json"),
+        source="callback",
+    )
     db.commit()
     db.refresh(sheet)
 
@@ -125,6 +126,15 @@ def sync_status(
         sync_count_today=int(sync_count_today or 0),
         is_running=bool(cached.get("is_running", False)),
     ))
+
+
+@router.get("/analytics/summary", response_model=ApiResponse[A5AnalyticsOut])
+def analytics_summary(
+    query: A5AnalyticsQuery = Depends(),
+    _: User = Depends(require_permission("a5:read")),
+) -> ApiResponse[A5AnalyticsOut]:
+    """按时间和类别统计 A5 异常情况、特殊工序等关键信息。"""
+    return success(build_a5_analytics(query))
 
 
 @router.post("/sync/trigger", response_model=ApiResponse[A5SyncTriggerOut])

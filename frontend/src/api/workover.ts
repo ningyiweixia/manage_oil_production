@@ -134,22 +134,6 @@ const initialDemoProjects: WorkoverProject[] = [
     created_at: '2026-06-08T13:10:00Z',
     updated_at: '2026-06-10T08:45:00Z'
   },
-  {
-    id: 1009,
-    well_no: 'CY2-909',
-    well_name: '采二-909',
-    layer: '长8',
-    fault_description: '历史资料不完整，暂不具备审批条件',
-    territory_unit: '采油九队',
-    block_name: '北一区',
-    report_unit: '采油九队',
-    production_priority: 45,
-    status: 'VOIDED',
-    reason: '重复提报，已作废',
-    measures_jsonb: { measures: [{ measure_type: 'hot_wax_washing', process: '热洗复核', construction_params: { temperature: '80C' }, duration_days: 1, estimated_cost: 3.2 }] },
-    created_at: '2026-06-09T15:20:00Z',
-    updated_at: '2026-06-09T16:30:00Z'
-  }
 ]
 
 function demoProjects(): WorkoverProject[] {
@@ -206,7 +190,8 @@ function buildAnalytics(projects: WorkoverProject[], query: AnalyticsQuery = {})
     const matchesMeasure = !query.measure_type || project.measures_jsonb.measures?.some((measure) => measure.measure_type.includes(query.measure_type || ''))
     return matchesStart && matchesEnd && matchesStatus && matchesBlock && matchesMeasure
   })
-  const statusEntries = Object.entries(statusLabels) as [ProjectPoolStatus, string][]
+  const statusOrder = ['DRAFT', 'PENDING_GEOLOGY_VERIFY', 'PENDING_PROCESS_VERIFY', 'APPROVED', 'DISPATCHED', 'REJECTED'] as ProjectPoolStatus[]
+  const statusEntries = statusOrder.map((status) => [status, statusLabels[status]] as [ProjectPoolStatus, string])
   const measures = filtered.flatMap((project) => project.measures_jsonb.measures || [])
   const totalCost = measures.reduce((sum, measure) => sum + Number(measure.estimated_cost || 0), 0)
   const approved = filtered.filter((project) => project.status === 'APPROVED' || project.status === 'DISPATCHED').length
@@ -214,7 +199,7 @@ function buildAnalytics(projects: WorkoverProject[], query: AnalyticsQuery = {})
   const measureBucket = new Map<string, number>()
   measures.forEach((measure) => measureBucket.set(measure.measure_type, (measureBucket.get(measure.measure_type) || 0) + 1))
   const blocks = Array.from(new Set(filtered.map((project) => project.block_name || '未填区块'))).sort()
-  const heatmapStatuses = ['PENDING_GEOLOGY_VERIFY', 'PENDING_PROCESS_VERIFY', 'APPROVED', 'REJECTED'] as ProjectPoolStatus[]
+  const heatmapStatuses = ['DRAFT', 'PENDING_GEOLOGY_VERIFY', 'PENDING_PROCESS_VERIFY', 'APPROVED', 'DISPATCHED', 'REJECTED'] as ProjectPoolStatus[]
   const heatmapData: [number, number, number][] = []
   blocks.forEach((block, x) => {
     heatmapStatuses.forEach((status, y) => {

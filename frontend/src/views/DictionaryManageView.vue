@@ -33,8 +33,10 @@
       </el-table-column>
       <el-table-column label="操作" width="130">
         <template #default="{ row }">
-          <el-button text type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button text type="danger" @click="deleteItem(row)">删除</el-button>
+          <div class="table-actions">
+            <el-button text type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button text type="danger" @click="deleteItem(row)">删除</el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>

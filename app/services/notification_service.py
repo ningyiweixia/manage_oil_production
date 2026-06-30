@@ -9,7 +9,6 @@ STATUS_LABELS = {
     "APPROVED": "入运行库",
     "REJECTED": "已驳回",
     "DISPATCHED": "已派工",
-    "VOIDED": "已作废",
 }
 
 STATUS_MESSAGES = {
@@ -19,7 +18,6 @@ STATUS_MESSAGES = {
     "APPROVED": "{well_no} 已通过审批，进入运行库",
     "REJECTED": "{well_no} 已驳回，待补充修改",
     "DISPATCHED": "{well_no} 已派工",
-    "VOIDED": "{well_no} 已作废",
 }
 
 

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -40,3 +40,29 @@ class A5SyncTriggerOut(BaseModel):
     """手动触发同步的响应。"""
     task_id: str = Field(description="Celery 任务 ID")
     message: str = Field(description="描述信息")
+
+
+class A5AnalyticsQuery(BaseModel):
+    """A5 关键信息统计查询。"""
+    start_date: date | None = None
+    end_date: date | None = None
+    category: str | None = Field(default=None, description="异常类型/工序类型")
+
+
+class A5NameValueOut(BaseModel):
+    name: str
+    value: int
+
+
+class A5TrendOut(BaseModel):
+    days: list[str] = Field(default_factory=list)
+    anomaly_counts: list[int] = Field(default_factory=list)
+    process_counts: list[int] = Field(default_factory=list)
+
+
+class A5AnalyticsOut(BaseModel):
+    anomaly_total: int = 0
+    special_process_total: int = 0
+    anomaly_distribution: list[A5NameValueOut] = Field(default_factory=list)
+    process_distribution: list[A5NameValueOut] = Field(default_factory=list)
+    trend: A5TrendOut = Field(default_factory=A5TrendOut)

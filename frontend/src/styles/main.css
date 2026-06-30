@@ -338,8 +338,24 @@ body {
   margin-bottom: 8px;
 }
 
+.project-dialog .el-dialog__body {
+  padding-top: 10px;
+}
+
+.form-section-title {
+  margin: 0 0 12px;
+  color: #172033;
+  font-size: 15px;
+  font-weight: 800;
+}
+
 .tag-gap {
   margin: 0 6px 6px 0;
+}
+
+.muted-text {
+  color: #909399;
+  font-size: 13px;
 }
 
 .pager {
@@ -347,10 +363,22 @@ body {
   margin-top: 16px;
 }
 
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.table-actions .el-button {
+  margin-left: 0;
+  padding-inline: 2px;
+}
+
 .approval-status-cell {
   display: grid;
   gap: 8px;
-  min-width: 240px;
+  min-width: 300px;
 }
 
 .approval-status-cell .el-tag {
@@ -360,7 +388,7 @@ body {
 
 .approval-flow {
   display: grid;
-  grid-template-columns: repeat(4, minmax(42px, 1fr));
+  grid-template-columns: repeat(5, minmax(46px, 1fr));
   align-items: start;
   column-gap: 6px;
   width: 100%;
@@ -400,7 +428,7 @@ body {
 
 .approval-flow-node b {
   overflow: hidden;
-  max-width: 48px;
+  max-width: 58px;
   text-overflow: ellipsis;
   font-weight: 700;
 }
@@ -447,14 +475,41 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin: 4px 0 10px;
+  gap: 12px;
+  margin: 4px 0 12px;
+  padding-top: 8px;
+  border-top: 1px solid #e7edf5;
+  color: #172033;
 }
 
 .measure-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 140px 140px 40px;
-  gap: 10px;
-  margin-bottom: 10px;
+  grid-template-columns: minmax(180px, 1.1fr) minmax(180px, 1fr) minmax(120px, 0.65fr) minmax(140px, 0.75fr) 40px;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.measure-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.measure-field label {
+  color: #667085;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.measure-field .el-select,
+.measure-field .el-input,
+.measure-field .el-input-number {
+  width: 100%;
+}
+
+.measure-delete {
+  margin-bottom: 1px;
 }
 
 .dashboard-filters {
@@ -521,7 +576,11 @@ body {
   }
 
   .measure-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .measure-delete {
+    justify-self: start;
   }
 }
 
@@ -533,6 +592,12 @@ body {
 
 @media (max-width: 980px) {
   .workflow-strip {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .measure-row {
     grid-template-columns: 1fr;
   }
 }

@@ -65,7 +65,9 @@
         </el-table-column>
         <el-table-column label="操作" width="110">
           <template #default="{ row }">
-            <el-button text type="primary" @click="openDispatch(row)">派工</el-button>
+            <div class="table-actions">
+              <el-button text type="primary" @click="openDispatch(row)">派工</el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -93,9 +95,23 @@
           <el-progress :percentage="row.progress" />
         </template>
       </el-table-column>
+      <el-table-column label="A5状态" width="120">
+        <template #default="{ row }">
+          <el-tag v-if="row.a5_status" effect="plain">{{ row.a5_status }}</el-tag>
+          <span v-else class="muted-text">未同步</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="a5_remark" label="A5备注" min-width="160" show-overflow-tooltip />
+      <el-table-column label="A5同步时间" min-width="170">
+        <template #default="{ row }">
+          {{ formatDateTime(row.last_a5_sync_at) }}
+        </template>
+      </el-table-column>
       <el-table-column label="操作" width="150">
         <template #default="{ row }">
-          <el-button text type="primary" @click="openProgress(row)">更新进度</el-button>
+          <div class="table-actions">
+            <el-button text type="primary" @click="openProgress(row)">更新进度</el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -227,17 +243,34 @@ function sheetStatusLabel(status: keyof typeof sheetStatusText) {
   return sheetStatusText[status] || status
 }
 
+function formatDateTime(value?: string | null) {
+  if (!value) return '-'
+  return value.replace('T', ' ').slice(0, 19)
+}
+
 async function loadAll() {
   loading.value = true
   try {
-    const [contractorPage, sheetPage, priority] = await Promise.all([
+    const [contractorResult, sheetResult, priorityResult] = await Promise.allSettled([
       listContractors(contractorQuery),
       listOperationSheets({ page: 1, page_size: 100 }),
       listPrioritySheets()
     ])
-    contractors.value = contractorPage.items
-    sheets.value = sheetPage.items
-    prioritySheets.value = priority
+    if (contractorResult.status === 'fulfilled') {
+      contractors.value = contractorResult.value.items
+    } else {
+      ElMessage.error('承包商运力加载失败')
+    }
+    if (sheetResult.status === 'fulfilled') {
+      sheets.value = sheetResult.value.items
+    } else {
+      ElMessage.error('修井运行表加载失败')
+    }
+    if (priorityResult.status === 'fulfilled') {
+      prioritySheets.value = priorityResult.value
+    } else {
+      ElMessage.error('待派工运行表加载失败')
+    }
   } finally {
     loading.value = false
   }

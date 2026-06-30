@@ -20,16 +20,26 @@ STATUS_LABELS: dict[ProjectPoolStatus, str] = {
     ProjectPoolStatus.DRAFT: "草稿",
     ProjectPoolStatus.PENDING_GEOLOGY_VERIFY: "待地质核实",
     ProjectPoolStatus.PENDING_PROCESS_VERIFY: "待工艺核实",
-    ProjectPoolStatus.APPROVED: "已通过",
+    ProjectPoolStatus.APPROVED: "已入库",
     ProjectPoolStatus.REJECTED: "已驳回",
     ProjectPoolStatus.DISPATCHED: "已派工",
-    ProjectPoolStatus.VOIDED: "已作废",
 }
 
-HEATMAP_STATUSES = [
+STATUS_COUNT_ORDER = [
+    ProjectPoolStatus.DRAFT,
     ProjectPoolStatus.PENDING_GEOLOGY_VERIFY,
     ProjectPoolStatus.PENDING_PROCESS_VERIFY,
     ProjectPoolStatus.APPROVED,
+    ProjectPoolStatus.DISPATCHED,
+    ProjectPoolStatus.REJECTED,
+]
+
+HEATMAP_STATUSES = [
+    ProjectPoolStatus.DRAFT,
+    ProjectPoolStatus.PENDING_GEOLOGY_VERIFY,
+    ProjectPoolStatus.PENDING_PROCESS_VERIFY,
+    ProjectPoolStatus.APPROVED,
+    ProjectPoolStatus.DISPATCHED,
     ProjectPoolStatus.REJECTED,
 ]
 
@@ -119,7 +129,7 @@ def build_workover_analytics(db: Session, query: WorkoverAnalyticsQuery) -> Work
             label=STATUS_LABELS[status],
             count=int((filtered["status"] == status.value).sum()) if total else 0,
         )
-        for status in ProjectPoolStatus
+        for status in STATUS_COUNT_ORDER
     ]
 
     if measures.empty:

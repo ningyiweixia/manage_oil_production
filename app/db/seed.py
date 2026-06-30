@@ -162,7 +162,6 @@ DICTIONARY_DEFINITIONS = [
     ("project_pool_status", "已通过", "APPROVED"),
     ("project_pool_status", "已驳回", "REJECTED"),
     ("project_pool_status", "已派工", "DISPATCHED"),
-    ("project_pool_status", "已作废", "VOIDED"),
     ("operation_status", "待派工", "WAITING_DISPATCH"),
     ("operation_status", "已派工", "DISPATCHED"),
     ("operation_status", "施工中", "WORKING"),

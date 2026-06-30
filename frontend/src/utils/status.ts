@@ -4,24 +4,25 @@ export const statusLabels: Record<ProjectPoolStatus, string> = {
   DRAFT: '草稿',
   PENDING_GEOLOGY_VERIFY: '待地质核实',
   PENDING_PROCESS_VERIFY: '待工艺核实',
-  APPROVED: '已通过',
-  REJECTED: '已驳回',
+  APPROVED: '已入库',
   DISPATCHED: '已派工',
-  VOIDED: '已作废'
+  REJECTED: '已驳回'
 }
 
 export const approvalStatusFlow: ProjectPoolStatus[] = [
   'DRAFT',
   'PENDING_GEOLOGY_VERIFY',
   'PENDING_PROCESS_VERIFY',
-  'APPROVED'
+  'APPROVED',
+  'DISPATCHED'
 ]
 
 export const approvalFlowNodes = [
   { status: 'DRAFT', label: '提报' },
   { status: 'PENDING_GEOLOGY_VERIFY', label: '地质' },
   { status: 'PENDING_PROCESS_VERIFY', label: '工艺' },
-  { status: 'APPROVED', label: '入库' }
+  { status: 'APPROVED', label: '已入库' },
+  { status: 'DISPATCHED', label: '已派工' }
 ] as const
 
 const approvalProgressIndex: Record<ProjectPoolStatus, number> = {
@@ -30,8 +31,7 @@ const approvalProgressIndex: Record<ProjectPoolStatus, number> = {
   PENDING_PROCESS_VERIFY: 2,
   APPROVED: 3,
   REJECTED: 1,
-  DISPATCHED: 3,
-  VOIDED: -1
+  DISPATCHED: 4
 }
 
 export function statusStep(status: ProjectPoolStatus) {
@@ -39,16 +39,15 @@ export function statusStep(status: ProjectPoolStatus) {
     DRAFT: 0,
     PENDING_GEOLOGY_VERIFY: 1,
     PENDING_PROCESS_VERIFY: 2,
-    APPROVED: 4,
+    APPROVED: 3,
     REJECTED: 1,
-    DISPATCHED: 4,
-    VOIDED: 0
+    DISPATCHED: 4
   }
   return map[status]
 }
 
 export function showApprovalFlow(status: ProjectPoolStatus) {
-  return status !== 'VOIDED'
+  return status !== 'REJECTED'
 }
 
 export function approvalNodeClass(status: ProjectPoolStatus, nodeStatus: ProjectPoolStatus, rejectedFrom?: ProjectPoolStatus | null) {
@@ -59,11 +58,13 @@ export function approvalNodeClass(status: ProjectPoolStatus, nodeStatus: Project
   const currentIndex = approvalProgressIndex[effectiveStatus]
   const nodeIndex = approvalProgressIndex[nodeStatus]
   const rejected = status === 'REJECTED'
+  const dispatchWaiting = status === 'APPROVED' && nodeStatus === 'DISPATCHED'
+  const completedStatus = status === 'APPROVED' || status === 'DISPATCHED'
   return {
-    'is-done': currentIndex > nodeIndex,
-    'is-current': currentIndex === nodeIndex && !rejected,
+    'is-done': currentIndex > nodeIndex || (completedStatus && currentIndex === nodeIndex),
+    'is-current': (currentIndex === nodeIndex && !rejected && !completedStatus) || dispatchWaiting,
     'is-rejected': currentIndex === nodeIndex && rejected,
-    'is-pending': currentIndex < nodeIndex
+    'is-pending': currentIndex < nodeIndex && !dispatchWaiting
   }
 }
 
@@ -79,7 +80,7 @@ export function rejectedAtLabel(rejectedFrom: ProjectPoolStatus | null | undefin
 
 export function statusTagType(status: ProjectPoolStatus) {
   if (status === 'APPROVED' || status === 'DISPATCHED') return 'success'
-  if (status === 'REJECTED' || status === 'VOIDED') return 'danger'
+  if (status === 'REJECTED') return 'danger'
   if (status === 'PENDING_GEOLOGY_VERIFY' || status === 'PENDING_PROCESS_VERIFY') return 'warning'
   return 'info'
 }

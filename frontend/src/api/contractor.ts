@@ -28,6 +28,9 @@ export interface OperationSheet {
   actual_end_at?: string | null
   progress: number
   progress_detail: Record<string, unknown>
+  a5_status?: string | null
+  a5_remark?: string | null
+  last_a5_sync_at?: string | null
   created_at: string
   updated_at: string
 }

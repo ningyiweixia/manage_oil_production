@@ -66,7 +66,7 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="审批状态" min-width="280">
+      <el-table-column label="审批状态" min-width="340">
         <template #default="{ row }">
           <div class="approval-status-cell">
             <el-tag :type="statusTagType(row.status)" effect="light" round>
@@ -88,11 +88,13 @@
       </el-table-column>
       <el-table-column label="操作" min-width="260" fixed="right">
         <template #default="{ row }">
-          <el-button v-if="hasPermission('workover_project_pool:update')" text type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button v-if="row.status === 'REJECTED' && hasPermission('workover_project_pool:submit')" text type="success" @click="resubmitRejected(row)">重新提报</el-button>
-          <el-button v-else-if="hasPermission('workover_project_pool:approve')" text type="success" :disabled="!canApprove(row.status)" @click="openApproval(row, 'APPROVED')">通过</el-button>
-          <el-button v-if="row.status !== 'REJECTED' && hasPermission('workover_project_pool:approve')" text type="warning" :disabled="!canApprove(row.status)" @click="openApproval(row, 'REJECTED')">驳回</el-button>
-          <el-button v-if="hasPermission('workover_project_pool:delete')" text type="danger" @click="confirmDelete(row)">删除</el-button>
+          <div class="table-actions">
+            <el-button v-if="hasPermission('workover_project_pool:update')" text type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button v-if="row.status === 'REJECTED' && hasPermission('workover_project_pool:submit')" text type="success" @click="resubmitRejected(row)">重新提报</el-button>
+            <el-button v-else-if="hasPermission('workover_project_pool:approve')" text type="success" :disabled="!canApprove(row.status)" @click="openApproval(row, 'APPROVED')">通过</el-button>
+            <el-button v-if="row.status !== 'REJECTED' && hasPermission('workover_project_pool:approve')" text type="warning" :disabled="!canApprove(row.status)" @click="openApproval(row, 'REJECTED')">驳回</el-button>
+            <el-button v-if="hasPermission('workover_project_pool:delete')" text type="danger" @click="confirmDelete(row)">删除</el-button>
+          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -107,8 +109,9 @@
     />
   </section>
 
-  <el-dialog v-model="formVisible" :title="dialogTitle" width="820px">
-    <el-form ref="projectFormRef" :model="projectForm" :rules="projectRules" label-width="104px">
+  <el-dialog v-model="formVisible" :title="dialogTitle" width="960px" class="project-dialog">
+    <el-form ref="projectFormRef" :model="projectForm" :rules="projectRules" label-width="96px">
+      <div class="form-section-title">基础信息</div>
       <el-row :gutter="16">
         <el-col :span="8"><el-form-item label="井号" prop="well_no"><el-input v-model="projectForm.well_no" /></el-form-item></el-col>
         <el-col :span="8"><el-form-item label="井名"><el-input v-model="projectForm.well_name" /></el-form-item></el-col>
@@ -117,22 +120,34 @@
         <el-col :span="8"><el-form-item label="属地单位"><el-input v-model="projectForm.territory_unit" /></el-form-item></el-col>
         <el-col :span="8"><el-form-item label="区块"><el-input v-model="projectForm.block_name" /></el-form-item></el-col>
         <el-col :span="24"><el-form-item label="故障描述"><el-input v-model="projectForm.fault_description" type="textarea" :rows="2" /></el-form-item></el-col>
-        <el-col :span="16"><el-form-item label="上修原因"><el-input v-model="projectForm.reason" /></el-form-item></el-col>
+        <el-col :span="16"><el-form-item label="上修原因" prop="reason"><el-input v-model="projectForm.reason" /></el-form-item></el-col>
         <el-col :span="8"><el-form-item label="优先级"><el-slider v-model="projectForm.production_priority" :max="100" /></el-form-item></el-col>
       </el-row>
 
       <div class="measure-head">
-        <strong>措施 JSONB 表单</strong>
+        <strong>修井措施</strong>
         <el-button size="small" :icon="Plus" @click="addMeasure">新增措施</el-button>
       </div>
       <div v-for="(measure, index) in projectForm.measures_jsonb.measures" :key="index" class="measure-row">
-        <el-select v-model="measure.measure_type" placeholder="措施类型" filterable clearable>
-          <el-option v-for="opt in measureTypeOptions" :key="opt.item_value" :label="opt.item_label" :value="opt.item_value" />
-        </el-select>
-        <el-input v-model="measure.process" placeholder="施工工序" />
-        <el-input-number v-model="measure.duration_days" :min="0" placeholder="天数" />
-        <el-input-number v-model="measure.estimated_cost" :min="0" :precision="1" placeholder="费用(万元)" />
-        <el-button :icon="Delete" circle @click="removeMeasure(index)" />
+        <div class="measure-field">
+          <label>措施类型</label>
+          <el-select v-model="measure.measure_type" placeholder="请选择" filterable clearable>
+            <el-option v-for="opt in measureTypeOptions" :key="opt.item_value" :label="opt.item_label" :value="opt.item_value" />
+          </el-select>
+        </div>
+        <div class="measure-field">
+          <label>施工工序</label>
+          <el-input v-model="measure.process" placeholder="如冲砂、检泵" />
+        </div>
+        <div class="measure-field">
+          <label>预计工期(天)</label>
+          <el-input-number v-model="measure.duration_days" :min="0" :controls="false" />
+        </div>
+        <div class="measure-field">
+          <label>估算费用(万元)</label>
+          <el-input-number v-model="measure.estimated_cost" :min="0" :precision="1" :controls="false" />
+        </div>
+        <el-button class="measure-delete" :icon="Delete" circle @click="removeMeasure(index)" />
       </div>
     </el-form>
     <template #footer>
@@ -163,7 +178,7 @@
 
   <el-dialog v-model="deleteDialogVisible" title="删除项目" width="440px">
     <p v-if="deleteTarget">
-      确认要删除项目 <strong>{{ deleteTarget.well_no }}</strong>（{{ deleteTarget.well_name || '未命名' }}）吗？删除后项目将标记为已作废，可在数据库中恢复。
+      确认要删除项目 <strong>{{ deleteTarget.well_no }}</strong>（{{ deleteTarget.well_name || '未命名' }}）吗？删除后项目将从列表中移除，可在数据库中恢复。
     </p>
     <template #footer>
       <el-button @click="deleteDialogVisible = false">取消</el-button>
@@ -207,8 +222,7 @@ const workflowCounts = ref<Record<ProjectPoolStatus, number>>({
   PENDING_PROCESS_VERIFY: 0,
   APPROVED: 0,
   REJECTED: 0,
-  DISPATCHED: 0,
-  VOIDED: 0
+  DISPATCHED: 0
 })
 const loading = ref(false)
 const saving = ref(false)
@@ -265,7 +279,8 @@ const projectForm = reactive<Omit<WorkoverProject, 'id' | 'created_at' | 'update
 
 const projectRules: FormRules = {
   well_no: [{ required: true, message: '请输入井号', trigger: 'blur' }],
-  report_unit: [{ required: true, message: '请输入提报单位', trigger: 'blur' }]
+  report_unit: [{ required: true, message: '请输入提报单位', trigger: 'blur' }],
+  reason: [{ required: true, message: '请输入上修原因', trigger: 'blur' }]
 }
 
 const dialogTitle = computed(() => {
@@ -279,7 +294,8 @@ const workflowNodes = computed(() => [
   { code: 'DRAFT', label: '基层提报', desc: '项目池录入', count: countStatus('DRAFT') },
   { code: 'PENDING_GEOLOGY_VERIFY', label: '地质核实', desc: '产量与油藏核实', count: countStatus('PENDING_GEOLOGY_VERIFY') },
   { code: 'PENDING_PROCESS_VERIFY', label: '工艺核实', desc: '井况与可行性', count: countStatus('PENDING_PROCESS_VERIFY') },
-  { code: 'APPROVED', label: '入运行库', desc: '等待派工', count: countStatus('APPROVED') },
+  { code: 'APPROVED', label: '已入库', desc: '等待派工', count: countStatus('APPROVED') },
+  { code: 'DISPATCHED', label: '已派工', desc: '进入施工跟踪', count: countStatus('DISPATCHED') },
   { code: 'REJECTED', label: '已驳回', desc: '待补充修改', count: countStatus('REJECTED') }
 ])
 
@@ -317,8 +333,7 @@ async function loadWorkflowCounts() {
     PENDING_PROCESS_VERIFY: 0,
     APPROVED: 0,
     REJECTED: 0,
-    DISPATCHED: 0,
-    VOIDED: 0
+    DISPATCHED: 0
   }
   summary.status_counts.forEach((item) => {
     nextCounts[item.status] = item.count
@@ -398,6 +413,24 @@ function removeMeasure(index: number) {
   projectForm.measures_jsonb.measures?.splice(index, 1)
 }
 
+function validateMeasures() {
+  const measures = projectForm.measures_jsonb.measures || []
+  if (!measures.length) {
+    ElMessage.warning('请至少新增一条修井措施')
+    return false
+  }
+  const measureTypes = measures.map((measure) => measure.measure_type).filter(Boolean)
+  if (measureTypes.length !== measures.length) {
+    ElMessage.warning('请选择每条修井措施的措施类型')
+    return false
+  }
+  if (new Set(measureTypes).size !== measureTypes.length) {
+    ElMessage.warning('修井措施类型不能重复')
+    return false
+  }
+  return true
+}
+
 async function saveProject() {
   try {
     await projectFormRef.value?.validate()
@@ -405,6 +438,7 @@ async function saveProject() {
     // 表单校验不通过，Element Plus 会自动提示
     return
   }
+  if (!validateMeasures()) return
   saving.value = true
   try {
     if (editingProject.value) {
@@ -516,7 +550,7 @@ async function confirmDeleteAction() {
   saving.value = true
   try {
     await deleteProject(deleteTarget.value.id)
-    ElMessage.success('项目已删除（已作废）')
+    ElMessage.success('项目已删除')
     deleteDialogVisible.value = false
     deleteTarget.value = null
     emitProjectDataChanged()

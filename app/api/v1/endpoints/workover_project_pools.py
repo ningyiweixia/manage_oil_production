@@ -240,4 +240,4 @@ def delete_item(
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
     )
-    return success(msg="已作废")
+    return success(msg="已删除")

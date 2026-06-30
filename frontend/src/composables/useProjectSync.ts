@@ -26,8 +26,7 @@ export const notificationMessages: Partial<Record<ProjectPoolStatus, string>> = 
   PENDING_PROCESS_VERIFY: '项目已流转至工艺核实',
   APPROVED: '项目已通过审批，进入运行库',
   REJECTED: '项目已驳回，待补充修改',
-  DISPATCHED: '项目已派工',
-  VOIDED: '项目已作废'
+  DISPATCHED: '项目已派工'
 }
 
 /** Resolve a human-readable node label from a WebSocket/notification payload */

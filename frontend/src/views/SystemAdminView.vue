@@ -77,8 +77,10 @@
           </el-table-column>
           <el-table-column label="操作" width="170">
             <template #default="{ row }">
-              <el-button text type="primary" @click="openRoleAssign(row)">分配角色</el-button>
-              <el-button text type="danger" :disabled="isDeleteDisabled(row)" @click="deleteUserRow(row)">删除</el-button>
+              <div class="table-actions">
+                <el-button text type="primary" @click="openRoleAssign(row)">分配角色</el-button>
+                <el-button text type="danger" :disabled="isDeleteDisabled(row)" @click="deleteUserRow(row)">删除</el-button>
+              </div>
             </template>
           </el-table-column>
         </el-table>
@@ -105,7 +107,9 @@
           </el-table-column>
           <el-table-column label="操作" width="120">
             <template #default="{ row }">
-              <el-button text type="primary" @click="openPermissionAssign(row)">绑定权限</el-button>
+              <div class="table-actions">
+                <el-button text type="primary" @click="openPermissionAssign(row)">绑定权限</el-button>
+              </div>
             </template>
           </el-table-column>
         </el-table>

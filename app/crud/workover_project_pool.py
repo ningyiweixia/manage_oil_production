@@ -21,13 +21,12 @@ from app.utils.jsonb import measure_type_filter
 BUSINESS_TYPE = "workover_project_pool"
 
 ALLOWED_STATUS_TRANSITIONS: dict[ProjectPoolStatus, set[ProjectPoolStatus]] = {
-    ProjectPoolStatus.DRAFT: {ProjectPoolStatus.PENDING_GEOLOGY_VERIFY, ProjectPoolStatus.VOIDED},
+    ProjectPoolStatus.DRAFT: {ProjectPoolStatus.PENDING_GEOLOGY_VERIFY},
     ProjectPoolStatus.PENDING_GEOLOGY_VERIFY: {ProjectPoolStatus.PENDING_PROCESS_VERIFY, ProjectPoolStatus.REJECTED},
     ProjectPoolStatus.PENDING_PROCESS_VERIFY: {ProjectPoolStatus.APPROVED, ProjectPoolStatus.REJECTED},
-    ProjectPoolStatus.APPROVED: {ProjectPoolStatus.DISPATCHED, ProjectPoolStatus.VOIDED},
-    ProjectPoolStatus.REJECTED: {ProjectPoolStatus.DRAFT, ProjectPoolStatus.PENDING_GEOLOGY_VERIFY, ProjectPoolStatus.PENDING_PROCESS_VERIFY, ProjectPoolStatus.VOIDED},
+    ProjectPoolStatus.APPROVED: {ProjectPoolStatus.DISPATCHED},
+    ProjectPoolStatus.REJECTED: {ProjectPoolStatus.DRAFT, ProjectPoolStatus.PENDING_GEOLOGY_VERIFY, ProjectPoolStatus.PENDING_PROCESS_VERIFY},
     ProjectPoolStatus.DISPATCHED: set(),
-    ProjectPoolStatus.VOIDED: set(),
 }
 
 
@@ -327,7 +326,7 @@ def patch_project_status(
     project.status = status
     if status == ProjectPoolStatus.APPROVED:
         project.approved_at = datetime.now(timezone.utc)
-    elif status in {ProjectPoolStatus.REJECTED, ProjectPoolStatus.VOIDED}:
+    elif status in {ProjectPoolStatus.REJECTED}:
         project.approved_at = None
     db.flush()
     action = ApprovalAction.REJECT if status == ProjectPoolStatus.REJECTED else ApprovalAction.APPROVE
@@ -365,7 +364,6 @@ def delete_project_pool(
     project = get_project_pool(db, project_id)
     before = _project_snapshot(project)
     project.is_deleted = True
-    project.status = ProjectPoolStatus.VOIDED
     db.flush()
     write_approval_log(
         db,

@@ -20,6 +20,16 @@
       <strong>SSO</strong>
       <small>生成 5 分钟有效跳转令牌</small>
     </div>
+    <div class="kpi-card">
+      <span>异常情况</span>
+      <strong>{{ analytics.anomaly_total }}</strong>
+      <small>A5 同步缓存统计</small>
+    </div>
+    <div class="kpi-card">
+      <span>特殊工序</span>
+      <strong>{{ analytics.special_process_total }}</strong>
+      <small>按工序类别聚合</small>
+    </div>
   </section>
 
   <section class="table-panel">
@@ -36,6 +46,33 @@
       <el-descriptions-item label="同步信息">{{ status.last_sync_message || '-' }}</el-descriptions-item>
       <el-descriptions-item label="今日次数">{{ status.sync_count_today }}</el-descriptions-item>
     </el-descriptions>
+  </section>
+
+  <section class="split-grid">
+    <article class="table-panel">
+      <div class="panel-head">
+        <div>
+          <h2>异常情况统计</h2>
+          <p>按 A5 异常类别汇总。</p>
+        </div>
+      </div>
+      <el-table :data="analytics.anomaly_distribution" row-key="name">
+        <el-table-column prop="name" label="异常类别" min-width="160" />
+        <el-table-column prop="value" label="数量" width="100" />
+      </el-table>
+    </article>
+    <article class="table-panel">
+      <div class="panel-head">
+        <div>
+          <h2>特殊工序统计</h2>
+          <p>按 A5 工序类别汇总。</p>
+        </div>
+      </div>
+      <el-table :data="analytics.process_distribution" row-key="name">
+        <el-table-column prop="name" label="工序类别" min-width="160" />
+        <el-table-column prop="value" label="数量" width="100" />
+      </el-table>
+    </article>
   </section>
 
   <section class="table-panel">
@@ -68,7 +105,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Link, Refresh } from '@element-plus/icons-vue'
-import { createA5SsoToken, getA5SyncStatus, triggerA5Sync, type A5SyncStatus } from '../api/a5'
+import { createA5SsoToken, getA5Analytics, getA5SyncStatus, triggerA5Sync, type A5Analytics, type A5SyncStatus } from '../api/a5'
 
 const syncing = ref(false)
 const ssoUrl = ref('')
@@ -78,10 +115,23 @@ const status = reactive<A5SyncStatus>({
   sync_count_today: 0,
   is_running: false
 })
+const analytics = reactive<A5Analytics>({
+  anomaly_total: 0,
+  special_process_total: 0,
+  anomaly_distribution: [],
+  process_distribution: [],
+  trend: {
+    days: [],
+    anomaly_counts: [],
+    process_counts: []
+  }
+})
 const ssoForm = reactive({ well_no: '', redirect_path: '/workorder' })
 
 async function loadStatus() {
-  Object.assign(status, await getA5SyncStatus())
+  const [syncStatus, summary] = await Promise.all([getA5SyncStatus(), getA5Analytics()])
+  Object.assign(status, syncStatus)
+  Object.assign(analytics, summary)
 }
 
 async function triggerSync() {

@@ -5,7 +5,6 @@ export type ProjectPoolStatus =
   | 'APPROVED'
   | 'REJECTED'
   | 'DISPATCHED'
-  | 'VOIDED'
 
 export interface WorkoverMeasure {
   measure_type: string

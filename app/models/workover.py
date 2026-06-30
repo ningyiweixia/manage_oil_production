@@ -16,7 +16,6 @@ class ProjectPoolStatus(str, enum.Enum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
     DISPATCHED = "DISPATCHED"
-    VOIDED = "VOIDED"
 
 
 class OperationStatus(str, enum.Enum):
@@ -140,6 +139,9 @@ class WorkoverOperationSheet(TimestampMixin, Base):
         nullable=False,
         comment="施工进度明细JSONB",
     )
+    a5_status: Mapped[str | None] = mapped_column(String(64), comment="A5工单状态")
+    a5_remark: Mapped[str | None] = mapped_column(Text, comment="A5回写备注")
+    last_a5_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="最近A5同步时间")
 
     project: Mapped[WorkoverProjectPool] = relationship(back_populates="operations")
     contractor_capacity: Mapped[ContractorCapacity | None] = relationship(back_populates="operations")

@@ -83,6 +83,9 @@ class WorkoverOperationSheetOut(BaseModel):
     actual_end_at: datetime | None = None
     progress: int
     progress_detail: dict[str, Any]
+    a5_status: str | None = None
+    a5_remark: str | None = None
+    last_a5_sync_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

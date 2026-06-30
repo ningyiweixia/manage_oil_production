@@ -14,8 +14,29 @@ export interface A5Token {
   redirect_url: string
 }
 
+export interface A5NameValue {
+  name: string
+  value: number
+}
+
+export interface A5Analytics {
+  anomaly_total: number
+  special_process_total: number
+  anomaly_distribution: A5NameValue[]
+  process_distribution: A5NameValue[]
+  trend: {
+    days: string[]
+    anomaly_counts: number[]
+    process_counts: number[]
+  }
+}
+
 export function getA5SyncStatus() {
   return unwrap<A5SyncStatus>(http.get('/a5/sync/status'))
+}
+
+export function getA5Analytics(params: { start_date?: string; end_date?: string; category?: string } = {}) {
+  return unwrap<A5Analytics>(http.get('/a5/analytics/summary', { params }))
 }
 
 export function triggerA5Sync() {

@@ -5,7 +5,8 @@
 """
 
 import logging
-from datetime import datetime, timezone
+from collections import Counter, defaultdict
+from datetime import date, datetime, timezone
 from typing import Any
 
 import httpx
@@ -15,7 +16,8 @@ from app.core.config import settings
 from app.core.exceptions import BusinessException
 from app.core.redis import cache_client
 from app.core.status_codes import A5_LINK_FAILED
-from app.models.workover import OperationStatus, WorkoverOperationSheet
+from app.models.workover import ContractorCapacityStatus, OperationStatus, ProjectPoolStatus, WorkoverOperationSheet
+from app.schemas.a5_integration import A5AnalyticsOut, A5AnalyticsQuery, A5NameValueOut, A5TrendOut
 from app.services.a5_client import A5Client
 from app.services.a5_data_cleaner import clean_daily_report, validate_operation_data
 
@@ -23,6 +25,166 @@ logger = logging.getLogger(__name__)
 
 A5_SYNC_STATUS_KEY = "a5:sync:last_status"
 A5_SYNC_COUNT_PREFIX = "a5:sync:count:"
+A5_ANOMALY_RECORDS_KEY = "a5:sync:anomaly_records"
+A5_PROCESS_RECORDS_KEY = "a5:sync:process_records"
+A5_ANOMALY_RECORDS_PREFIX = f"{A5_ANOMALY_RECORDS_KEY}:"
+A5_PROCESS_RECORDS_PREFIX = f"{A5_PROCESS_RECORDS_KEY}:"
+A5_ANOMALY_DATES_KEY = "a5:sync:anomaly_dates"
+A5_PROCESS_DATES_KEY = "a5:sync:process_dates"
+A5_ANALYTICS_CACHE_TTL = 604800
+
+
+def _normalize_a5_status(raw_status: str | None) -> OperationStatus | None:
+    if not raw_status:
+        return None
+    status = raw_status.strip().upper()
+    status_map = {
+        "通过": OperationStatus.FINISHED,
+        "办结": OperationStatus.FINISHED,
+        "完成": OperationStatus.FINISHED,
+        "已完成": OperationStatus.FINISHED,
+        "FINISHED": OperationStatus.FINISHED,
+        "DONE": OperationStatus.FINISHED,
+        "驳回": OperationStatus.WAITING_DISPATCH,
+        "退回": OperationStatus.WAITING_DISPATCH,
+        "REJECTED": OperationStatus.WAITING_DISPATCH,
+        "关闭": OperationStatus.CANCELED,
+        "取消": OperationStatus.CANCELED,
+        "CANCELED": OperationStatus.CANCELED,
+        "CANCELLED": OperationStatus.CANCELED,
+        "开工": OperationStatus.WORKING,
+        "施工中": OperationStatus.WORKING,
+        "作业中": OperationStatus.WORKING,
+        "WORKING": OperationStatus.WORKING,
+        "下发": OperationStatus.DISPATCHED,
+        "已下发": OperationStatus.DISPATCHED,
+        "审核中": OperationStatus.DISPATCHED,
+        "DISPATCHED": OperationStatus.DISPATCHED,
+    }
+    return status_map.get(status)
+
+
+def _normalize_progress(raw_progress: Any) -> int | None:
+    if raw_progress is None or raw_progress == "":
+        return None
+    if isinstance(raw_progress, str):
+        raw_progress = raw_progress.strip().rstrip("%")
+    try:
+        return max(0, min(100, int(float(raw_progress))))
+    except (TypeError, ValueError):
+        return None
+
+
+def _cache_a5_records(
+    *,
+    latest_key: str,
+    prefix: str,
+    dates_key: str,
+    sync_date: str,
+    records: list[dict[str, Any]],
+) -> None:
+    cache_client.set_json(f"{prefix}{sync_date}", records, expire_seconds=A5_ANALYTICS_CACHE_TTL)
+    cache_client.set_json(latest_key, records, expire_seconds=A5_ANALYTICS_CACHE_TTL)
+
+    raw_dates = cache_client.get_json(dates_key) or []
+    dates = {str(item) for item in raw_dates if item}
+    dates.add(sync_date)
+    cache_client.set_json(dates_key, sorted(dates)[-31:], expire_seconds=A5_ANALYTICS_CACHE_TTL)
+
+
+def _date_in_query_range(day_text: str, query: A5AnalyticsQuery) -> bool:
+    try:
+        day = datetime.strptime(day_text, "%Y-%m-%d").date()
+    except ValueError:
+        return False
+    if query.start_date and day < query.start_date:
+        return False
+    if query.end_date and day > query.end_date:
+        return False
+    return True
+
+
+def _load_cached_a5_records(
+    *,
+    latest_key: str,
+    prefix: str,
+    dates_key: str,
+    query: A5AnalyticsQuery,
+) -> list[dict[str, Any]]:
+    raw_dates = cache_client.get_json(dates_key) or []
+    dates = sorted({str(item) for item in raw_dates if item and _date_in_query_range(str(item), query)})
+
+    records: list[dict[str, Any]] = []
+    for day_text in dates:
+        day_records = cache_client.get_json(f"{prefix}{day_text}") or []
+        if isinstance(day_records, list):
+            records.extend(item for item in day_records if isinstance(item, dict))
+
+    if not records and not raw_dates:
+        legacy_records = cache_client.get_json(latest_key) or []
+        if isinstance(legacy_records, list):
+            records.extend(item for item in legacy_records if isinstance(item, dict))
+    return records
+
+
+def apply_a5_update_to_operation_sheet(
+    sheet: WorkoverOperationSheet,
+    *,
+    status: str | None,
+    remark: str | None = None,
+    progress: int | None = None,
+    detail: dict[str, Any] | None = None,
+    source: str,
+) -> OperationStatus | None:
+    """Apply A5 status/report data to an operation sheet in one consistent place."""
+    now = datetime.now(timezone.utc)
+    new_status = _normalize_a5_status(status)
+
+    sheet.a5_status = status
+    sheet.a5_remark = remark
+    sheet.last_a5_sync_at = now
+    merged_detail = dict(sheet.progress_detail or {})
+    merged_detail[f"a5_{source}"] = {
+        "status": status,
+        "remark": remark,
+        "synced_at": now.isoformat(),
+        "raw": detail or {},
+    }
+    sheet.progress_detail = merged_detail
+
+    normalized_progress = _normalize_progress(progress)
+    if normalized_progress is not None:
+        sheet.progress = normalized_progress
+
+    if new_status is None:
+        return None
+
+    contractor = sheet.contractor_capacity
+    sheet.status = new_status
+    if new_status == OperationStatus.DISPATCHED and sheet.progress < 1:
+        sheet.progress = 1
+    elif new_status == OperationStatus.WORKING:
+        if sheet.progress < 1:
+            sheet.progress = 1
+        if sheet.actual_start_at is None:
+            sheet.actual_start_at = now
+    elif new_status == OperationStatus.FINISHED:
+        sheet.progress = 100
+        if sheet.actual_start_at is None:
+            sheet.actual_start_at = now
+        sheet.actual_end_at = now
+        if contractor is not None:
+            contractor.status = ContractorCapacityStatus.AVAILABLE
+    elif new_status in {OperationStatus.WAITING_DISPATCH, OperationStatus.CANCELED}:
+        if new_status == OperationStatus.WAITING_DISPATCH:
+            sheet.contractor_capacity_id = None
+            sheet.progress = 0
+            if sheet.project is not None:
+                sheet.project.status = ProjectPoolStatus.APPROVED
+        if contractor is not None:
+            contractor.status = ContractorCapacityStatus.AVAILABLE
+
+    return new_status
 
 
 async def sync_daily_operations(db: Session, sync_date: str | None = None) -> dict[str, Any]:
@@ -58,7 +220,14 @@ async def sync_daily_operations(db: Session, sync_date: str | None = None) -> di
                 WorkoverOperationSheet.operation_no == operation_no
             ).first()
             if existing:
-                existing.status = OperationStatus.WORKING
+                apply_a5_update_to_operation_sheet(
+                    existing,
+                    status=record.get("status") or record.get("operation_status") or "施工中",
+                    remark=record.get("remark"),
+                    progress=record.get("progress"),
+                    detail=record,
+                    source="daily_report",
+                )
                 stats["updated"] += 1
         except Exception as exc:
             logger.exception(f"日报同步更新失败: {exc}")
@@ -85,8 +254,129 @@ async def sync_anomalies(db: Session, sync_date: str | None = None) -> dict[str,
         return {"total": 0, "synced": 0, "error": exc.msg}
 
     cleaned = clean_daily_report(raw_data)
+    _cache_a5_records(
+        latest_key=A5_ANOMALY_RECORDS_KEY,
+        prefix=A5_ANOMALY_RECORDS_PREFIX,
+        dates_key=A5_ANOMALY_DATES_KEY,
+        sync_date=sync_date,
+        records=cleaned,
+    )
     logger.info(f"A5 异常同步完成: {len(cleaned)} 条")
     return {"total": len(cleaned), "synced": len(cleaned)}
+
+
+async def sync_process_progress(db: Session, sync_date: str | None = None) -> dict[str, Any]:
+    """同步 A5 特殊工序/工序进度数据。"""
+    if sync_date is None:
+        sync_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    client = A5Client()
+    try:
+        raw_data = await client.fetch_process_progress(sync_date)
+    except BusinessException as exc:
+        logger.error(f"A5 工序数据拉取失败: {exc.msg}")
+        return {"total": 0, "synced": 0, "error": exc.msg}
+
+    cleaned = clean_daily_report(raw_data)
+    _cache_a5_records(
+        latest_key=A5_PROCESS_RECORDS_KEY,
+        prefix=A5_PROCESS_RECORDS_PREFIX,
+        dates_key=A5_PROCESS_DATES_KEY,
+        sync_date=sync_date,
+        records=cleaned,
+    )
+    logger.info(f"A5 工序同步完成: {len(cleaned)} 条")
+    return {"total": len(cleaned), "synced": len(cleaned)}
+
+
+def _record_day(record: dict[str, Any]) -> date | None:
+    raw = (
+        record.get("date")
+        or record.get("report_date")
+        or record.get("created_at")
+        or record.get("time")
+        or record.get("occurred_at")
+    )
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).date()
+    except ValueError:
+        try:
+            return datetime.strptime(str(raw)[:10], "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+
+def _record_category(record: dict[str, Any], keys: tuple[str, ...], fallback: str) -> str:
+    for key in keys:
+        value = record.get(key)
+        if value:
+            return str(value)
+    return fallback
+
+
+def _filter_records(records: list[dict[str, Any]], query: A5AnalyticsQuery, keys: tuple[str, ...]) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for record in records:
+        day = _record_day(record)
+        if (query.start_date or query.end_date) and day is None:
+            continue
+        if query.start_date and day and day < query.start_date:
+            continue
+        if query.end_date and day and day > query.end_date:
+            continue
+        if query.category and query.category not in _record_category(record, keys, ""):
+            continue
+        filtered.append(record)
+    return filtered
+
+
+def build_a5_analytics(query: A5AnalyticsQuery) -> A5AnalyticsOut:
+    """Build cached A5 anomaly/special-process statistics for charts and reports."""
+    anomaly_records = _load_cached_a5_records(
+        latest_key=A5_ANOMALY_RECORDS_KEY,
+        prefix=A5_ANOMALY_RECORDS_PREFIX,
+        dates_key=A5_ANOMALY_DATES_KEY,
+        query=query,
+    )
+    process_records = _load_cached_a5_records(
+        latest_key=A5_PROCESS_RECORDS_KEY,
+        prefix=A5_PROCESS_RECORDS_PREFIX,
+        dates_key=A5_PROCESS_DATES_KEY,
+        query=query,
+    )
+    anomaly_keys = ("anomaly_type", "exception_type", "type", "category")
+    process_keys = ("process_type", "procedure_type", "measure_type", "category")
+
+    anomalies = _filter_records(anomaly_records, query, anomaly_keys)
+    processes = _filter_records(process_records, query, process_keys)
+
+    anomaly_counter = Counter(_record_category(item, anomaly_keys, "未分类异常") for item in anomalies)
+    process_counter = Counter(_record_category(item, process_keys, "未分类工序") for item in processes)
+
+    trend_map: dict[str, dict[str, int]] = defaultdict(lambda: {"anomaly": 0, "process": 0})
+    for item in anomalies:
+        day = _record_day(item)
+        if day:
+            trend_map[day.isoformat()]["anomaly"] += 1
+    for item in processes:
+        day = _record_day(item)
+        if day:
+            trend_map[day.isoformat()]["process"] += 1
+
+    days = sorted(trend_map)
+    return A5AnalyticsOut(
+        anomaly_total=len(anomalies),
+        special_process_total=len(processes),
+        anomaly_distribution=[A5NameValueOut(name=name, value=count) for name, count in anomaly_counter.most_common()],
+        process_distribution=[A5NameValueOut(name=name, value=count) for name, count in process_counter.most_common()],
+        trend=A5TrendOut(
+            days=days,
+            anomaly_counts=[trend_map[day]["anomaly"] for day in days],
+            process_counts=[trend_map[day]["process"] for day in days],
+        ),
+    )
 
 
 async def full_sync(db: Session) -> dict[str, Any]:
@@ -95,16 +385,18 @@ async def full_sync(db: Session) -> dict[str, Any]:
 
     daily_stats = await sync_daily_operations(db, sync_date)
     anomaly_stats = await sync_anomalies(db, sync_date)
+    process_stats = await sync_process_progress(db, sync_date)
 
     result = {
         "sync_time": datetime.now(timezone.utc).isoformat(),
         "daily": daily_stats,
         "anomaly": anomaly_stats,
+        "process": process_stats,
         "overall": "success",
     }
 
-    # 检查是否有失败情况
-    if daily_stats.get("error") or anomaly_stats.get("error"):
+    error_message = daily_stats.get("error") or anomaly_stats.get("error") or process_stats.get("error")
+    if error_message:
         result["overall"] = "partial_failure"
 
     today_key = f"{A5_SYNC_COUNT_PREFIX}{sync_date}"
@@ -116,15 +408,20 @@ async def full_sync(db: Session) -> dict[str, Any]:
             "last_sync_time": result["sync_time"],
             "last_sync_status": result["overall"],
             "last_sync_message": (
-                daily_stats.get("error")
-                or anomaly_stats.get("error")
-                or f"日报更新 {daily_stats.get('updated', 0)} 条，异常同步 {anomaly_stats.get('synced', 0)} 条"
+                error_message
+                or (
+                    f"日报更新 {daily_stats.get('updated', 0)} 条，"
+                    f"异常同步 {anomaly_stats.get('synced', 0)} 条，"
+                    f"工序同步 {process_stats.get('synced', 0)} 条"
+                )
             ),
             "sync_count_today": int(count) + 1,
             "is_running": False,
         },
         expire_seconds=604800,
     )
+    if error_message:
+        raise BusinessException(A5_LINK_FAILED, str(error_message))
     return result
 
 
