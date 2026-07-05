@@ -18,15 +18,20 @@ export interface WorkoverProject {
   id: number
   well_no: string
   well_name?: string
+  well_type?: string
   layer?: string
   fault_description?: string
   territory_unit?: string
   block_name?: string
+  county?: string
   report_unit: string
+  initiator_name?: string
+  initiator_phone?: string
   production_priority: number
   status: ProjectPoolStatus
   reason?: string
   measures_jsonb: { measures?: WorkoverMeasure[] }
+  photo_urls?: string[]
   remark?: string
   created_by_id?: number
   created_at: string

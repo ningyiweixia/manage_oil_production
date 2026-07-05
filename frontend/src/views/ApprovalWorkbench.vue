@@ -52,7 +52,11 @@
     <el-table v-loading="loading" :data="projects" row-key="id" empty-text="暂无符合条件的项目" @selection-change="onSelectionChange">
       <el-table-column type="selection" width="48" />
       <el-table-column prop="well_no" label="井号" min-width="110" fixed />
+      <el-table-column prop="well_type" label="井别" min-width="80" />
       <el-table-column prop="block_name" label="区块" min-width="110" />
+      <el-table-column prop="county" label="县区" min-width="80" />
+      <el-table-column prop="initiator_name" label="发起人" min-width="90" />
+      <el-table-column prop="initiator_phone" label="联系电话" min-width="120" />
       <el-table-column prop="report_unit" label="提报单位" min-width="120" />
       <el-table-column prop="production_priority" label="优先级" min-width="96" sortable>
         <template #default="{ row }">
@@ -119,6 +123,16 @@
         <el-col :span="8"><el-form-item label="提报单位" prop="report_unit"><el-input v-model="projectForm.report_unit" /></el-form-item></el-col>
         <el-col :span="8"><el-form-item label="属地单位"><el-input v-model="projectForm.territory_unit" /></el-form-item></el-col>
         <el-col :span="8"><el-form-item label="区块"><el-input v-model="projectForm.block_name" /></el-form-item></el-col>
+        <el-col :span="8"><el-form-item label="井别">
+          <el-select v-model="projectForm.well_type" placeholder="请选择" clearable>
+            <el-option label="油井" value="油井" />
+            <el-option label="水井" value="水井" />
+            <el-option label="注气井" value="注气井" />
+          </el-select>
+        </el-form-item></el-col>
+        <el-col :span="8"><el-form-item label="县区"><el-input v-model="projectForm.county" /></el-form-item></el-col>
+        <el-col :span="8"><el-form-item label="发起人"><el-input v-model="projectForm.initiator_name" /></el-form-item></el-col>
+        <el-col :span="8"><el-form-item label="联系电话"><el-input v-model="projectForm.initiator_phone" /></el-form-item></el-col>
         <el-col :span="24"><el-form-item label="故障描述"><el-input v-model="projectForm.fault_description" type="textarea" :rows="2" /></el-form-item></el-col>
         <el-col :span="16"><el-form-item label="上修原因" prop="reason"><el-input v-model="projectForm.reason" /></el-form-item></el-col>
         <el-col :span="8"><el-form-item label="优先级"><el-slider v-model="projectForm.production_priority" :max="100" /></el-form-item></el-col>
@@ -149,6 +163,16 @@
         </div>
         <el-button class="measure-delete" :icon="Delete" circle @click="removeMeasure(index)" />
       </div>
+
+      <div class="form-section-title" style="margin-top:16px">附件信息</div>
+      <el-row :gutter="16">
+        <el-col :span="24"><el-form-item label="照片附件">
+          <el-input v-model="photoUrlsText" type="textarea" :rows="2" placeholder="输入照片URL，多个地址用逗号分隔" />
+          <div v-if="projectForm.photo_urls && projectForm.photo_urls.length" style="margin-top:4px;color:#909399;font-size:12px">
+            已添加 {{ projectForm.photo_urls.length }} 个附件
+          </div>
+        </el-form-item></el-col>
+      </el-row>
     </el-form>
     <template #footer>
       <el-button @click="formVisible = false">取消</el-button>
@@ -262,18 +286,28 @@ function measureLabel(value: string): string {
   return measureLabelMap.value[value] || value
 }
 
+const photoUrlsText = computed<string>({
+  get() { return (projectForm.photo_urls || []).join(', ') },
+  set(val: string) { projectForm.photo_urls = val ? val.split(',').map((s) => s.trim()).filter(Boolean) : [] }
+})
+
 const projectForm = reactive<Omit<WorkoverProject, 'id' | 'created_at' | 'updated_at'>>({
   well_no: '',
   well_name: '',
+  well_type: '',
   layer: '',
   fault_description: '',
   territory_unit: '',
   block_name: '',
+  county: '',
   report_unit: '',
+  initiator_name: '',
+  initiator_phone: '',
   production_priority: 60,
   status: 'DRAFT',
   reason: '',
   measures_jsonb: { measures: [] },
+  photo_urls: [],
   remark: ''
 })
 
@@ -373,15 +407,20 @@ function resetForm() {
   Object.assign(projectForm, {
     well_no: '',
     well_name: '',
+    well_type: '',
     layer: '',
     fault_description: '',
     territory_unit: '',
     block_name: '',
+    county: '',
     report_unit: '',
+    initiator_name: '',
+    initiator_phone: '',
     production_priority: 60,
     status: 'DRAFT',
     reason: '',
     measures_jsonb: { measures: [{ measure_type: '', process: '', construction_params: {}, duration_days: 0, estimated_cost: 0 }] },
+    photo_urls: [],
     remark: ''
   })
 }
