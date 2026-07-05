@@ -25,7 +25,11 @@ MENU_DEFINITIONS = [
     ("contractor_sheets", "contractor", "修井运行表", "contractor_sheets", "/contractor/operation-sheets", "contractor/operation-sheets/index", "document", 33),
     ("engineering", None, "工程设计管理", "engineering", "/engineering", "Layout", "edit", 40),
     ("engineering_designs", "engineering", "设计文档", "engineering_designs", "/engineering/designs", "engineering/designs/index", "document", 41),
+    ("material", None, "物料管理", "material", "/material", "Layout", "goods", 35),
+    ("material_requirements", "material", "物料需求", "material_requirements", "/material/requirements", "material/requirements/index", "list", 36),
+    ("material_delivery", "material", "物料配送", "material_delivery", "/material/delivery", "material/delivery/index", "truck", 37),
     ("a5", None, "A5 系统集成", "a5", "/a5/integration", "a5/integration", "monitor", 50),
+    ("completion", None, "完井台账", "completion", "/completion", "completion/index", "document", 45),
 ]
 
 PERMISSION_DEFINITIONS = [
@@ -76,6 +80,16 @@ PERMISSION_DEFINITIONS = [
     ("engineering:read", "查看工程设计文档", "/api/v1/engineering-designs", "GET"),
     ("engineering:generate", "生成工程设计文档", "/api/v1/engineering-designs/generate", "POST"),
     ("engineering:delete", "删除工程设计文档", "/api/v1/engineering-designs/{id}", "DELETE"),
+    # 物料管理权限
+    ("material:read", "查看物料需求", "/api/v1/materials", "GET"),
+    ("material:create", "创建物料需求", "/api/v1/materials", "POST"),
+    ("material:update", "更新物料需求", "/api/v1/materials/{req_id}", "PUT"),
+    ("material:delete", "删除物料需求", "/api/v1/materials/{req_id}", "DELETE"),
+    # 完井台账权限
+    ("completion:read", "查看完井台账", "/api/v1/well-completions", "GET"),
+    ("completion:create", "创建完井记录", "/api/v1/well-completions", "POST"),
+    ("completion:update", "更新完井记录", "/api/v1/well-completions/{record_id}", "PUT"),
+    ("completion:delete", "删除完井记录", "/api/v1/well-completions/{record_id}", "DELETE"),
 ]
 
 ROLE_DEFINITIONS = [
@@ -101,6 +115,8 @@ ROLE_PERMISSION_CODES = {
         "workover_project_pool:export",
         "approval_log:read",
         "operation-sheet:read",
+        "material:read",
+        "completion:read",
     },
     "base_entry_clerk": {
         "system:dictionary:read",
@@ -120,11 +136,16 @@ ROLE_PERMISSION_CODES = {
         "a5:read",
         "engineering:read",
         "engineering:generate",
+        "material:read",
+        "completion:read",
+        "completion:create",
     },
     "contractor_operator": {
         "system:dictionary:read",
         "contractor:read",
         "contractor:create",
+        "material:read",
+        "material:create",
     },
 }
 
@@ -219,6 +240,15 @@ DICTIONARY_DEFINITIONS = [
     ("system_menu", "承包商管理", "contractor"),
     ("system_menu", "工程设计管理", "engineering"),
     ("system_menu", "A5 系统集成", "a5"),
+    ("material_status", "待处理", "PENDING"),
+    ("material_status", "已审核", "APPROVED"),
+    ("material_status", "已计划", "PLANNED"),
+    ("material_status", "已出库", "DELIVERED"),
+    ("material_status", "已到场", "ARRIVED"),
+    ("material_status", "已使用", "USED"),
+    ("material_status", "已取消", "CANCELED"),
+    ("material_requirement_type", "正常需求", "NORMAL"),
+    ("material_requirement_type", "紧急需求", "EMERGENCY"),
     ("external_system", "A5 系统", "a5"),
     ("external_system", "防偏磨系统", "fpm"),
     ("external_system", "MinIO 对象存储", "minio"),
@@ -339,16 +369,19 @@ def seed() -> None:
 
         roles_by_code["super_admin"].menus = list(menus_by_key.values())
         roles_by_code["ops_admin"].menus = list(menus_by_key.values())
-        roles_by_code["project_pool_admin"].menus = [menus_by_key["workover_project_pool"], menus_by_key["analytics"]]
+        roles_by_code["project_pool_admin"].menus = [menus_by_key["workover_project_pool"], menus_by_key["analytics"], menus_by_key["material"], menus_by_key["material_requirements"], menus_by_key["completion"]]
         roles_by_code["base_entry_clerk"].menus = [menus_by_key["workover_project_pool"]]
         roles_by_code["business_reviewer"].menus = [
             menus_by_key["workover_project_pool"],
             menus_by_key["contractor"], menus_by_key["contractor_dispatch"], menus_by_key["contractor_sheets"],
             menus_by_key["engineering"], menus_by_key["engineering_designs"],
             menus_by_key["analytics"], menus_by_key["a5"],
+            menus_by_key["material"], menus_by_key["material_requirements"],
+            menus_by_key["completion"],
         ]
         roles_by_code["contractor_operator"].menus = [
             menus_by_key["contractor"], menus_by_key["contractor_capacity"],
+            menus_by_key["material"], menus_by_key["material_requirements"], menus_by_key["material_delivery"],
         ]
 
         admin = db.scalar(select(User).where(User.username == "admin"))

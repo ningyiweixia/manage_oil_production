@@ -30,14 +30,19 @@ class MeasuresPayload(BaseModel):
 class WorkoverProjectPoolBase(BaseModel):
     well_no: str = Field(min_length=1, max_length=64)
     well_name: str | None = Field(default=None, max_length=128)
+    well_type: str | None = Field(default=None, max_length=64)
     layer: str | None = Field(default=None, max_length=128)
     fault_description: str | None = None
     territory_unit: str | None = Field(default=None, max_length=128)
     block_name: str | None = Field(default=None, max_length=128)
+    county: str | None = Field(default=None, max_length=64)
     report_unit: str = Field(min_length=1, max_length=128)
+    initiator_name: str | None = Field(default=None, max_length=64)
+    initiator_phone: str | None = Field(default=None, max_length=32)
     production_priority: int = Field(default=0, ge=0)
     reason: str | None = None
     measures_jsonb: MeasuresPayload = Field(default_factory=MeasuresPayload)
+    photo_urls: list[str] = Field(default_factory=list)
     remark: str | None = None
 
 
@@ -120,15 +125,20 @@ class WorkoverProjectPoolOut(BaseModel):
     id: int
     well_no: str
     well_name: str | None = None
+    well_type: str | None = None
     layer: str | None = None
     fault_description: str | None = None
     territory_unit: str | None = None
     block_name: str | None = None
+    county: str | None = None
     report_unit: str
+    initiator_name: str | None = None
+    initiator_phone: str | None = None
     production_priority: int
     status: ProjectPoolStatus
     reason: str | None = None
     measures_jsonb: dict[str, Any]
+    photo_urls: list[str] = []
     remark: str | None = None
     created_by_id: int | None = None
     created_at: datetime

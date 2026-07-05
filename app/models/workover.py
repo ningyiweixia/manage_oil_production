@@ -39,17 +39,22 @@ class WorkoverProjectPool(TimestampMixin, Base):
         Index("ix_workover_project_pool_status", "status"),
         Index("ix_workover_project_pool_block_name", "block_name"),
         Index("ix_workover_project_pool_measures_gin", "measures_jsonb", postgresql_using="gin"),
+        Index("ix_workover_project_pool_report_unit", "report_unit"),
         {"comment": "上修项目池表"},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="项目池ID")
     well_no: Mapped[str] = mapped_column(String(64), nullable=False, comment="井号")
-    well_name: Mapped[str | None] = mapped_column(String(128), comment="Well name")
-    layer: Mapped[str | None] = mapped_column(String(128), comment="Layer")
-    fault_description: Mapped[str | None] = mapped_column(Text, comment="Fault description")
-    territory_unit: Mapped[str | None] = mapped_column(String(128), comment="Territory unit")
+    well_name: Mapped[str | None] = mapped_column(String(128), comment="井名")
+    well_type: Mapped[str | None] = mapped_column(String(64), comment="井别（油井/水井/注气井等）")
+    layer: Mapped[str | None] = mapped_column(String(128), comment="层位")
+    fault_description: Mapped[str | None] = mapped_column(Text, comment="故障描述")
+    territory_unit: Mapped[str | None] = mapped_column(String(128), comment="作业区")
     block_name: Mapped[str | None] = mapped_column(String(128), comment="区块")
+    county: Mapped[str | None] = mapped_column(String(64), comment="县区")
     report_unit: Mapped[str] = mapped_column(String(128), nullable=False, comment="提报单位")
+    initiator_name: Mapped[str | None] = mapped_column(String(64), comment="发起人")
+    initiator_phone: Mapped[str | None] = mapped_column(String(32), comment="发起人联系电话")
     production_priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="产量优先级")
     status: Mapped[ProjectPoolStatus] = mapped_column(
         SQLEnum(ProjectPoolStatus, native_enum=False, length=64),
@@ -64,10 +69,16 @@ class WorkoverProjectPool(TimestampMixin, Base):
         default=dict,
         comment="修井措施JSONB",
     )
-    remark: Mapped[str | None] = mapped_column(Text, comment="Remark")
+    photo_urls: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        comment="照片附件URL列表JSONB",
+    )
+    remark: Mapped[str | None] = mapped_column(Text, comment="备注")
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="审批通过时间")
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("sys_user.id", ondelete="SET NULL"), comment="创建人ID")
-    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="Logical delete flag")
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="逻辑删除标记")
 
     operations: Mapped[list["WorkoverOperationSheet"]] = relationship(
         back_populates="project",
