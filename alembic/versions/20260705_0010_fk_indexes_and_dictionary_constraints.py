@@ -28,24 +28,28 @@ def upgrade() -> None:
     op.create_index("ix_workover_operation_sheet_contractor_capacity_id", "workover_operation_sheet", ["contractor_capacity_id"])
     op.create_index("ix_workover_project_pool_created_by_id", "workover_project_pool", ["created_by_id"])
 
-    # 添加数据字典 item_label 唯一约束 (同 dict_type 内 label 唯一)
-    op.create_unique_constraint(
-        "uq_data_dictionary_type_label",
-        "data_dictionary",
-        ["dict_type", "item_label"],
-    )
-
-    # 添加承包商运力每日唯一约束 (同一队伍每天只能报备一次)
-    op.create_unique_constraint(
-        "uq_contractor_capacity_team_daily",
-        "contractor_capacity",
-        ["contractor_name", "team_name", "report_date"],
-    )
+    # SQLite 不支持 ALTER TABLE ADD CONSTRAINT，只在 PostgreSQL 下执行
+    dialect = op.get_context().dialect.name
+    if dialect != "sqlite":
+        # 添加数据字典 item_label 唯一约束 (同 dict_type 内 label 唯一)
+        op.create_unique_constraint(
+            "uq_data_dictionary_type_label",
+            "data_dictionary",
+            ["dict_type", "item_label"],
+        )
+        # 添加承包商运力每日唯一约束 (同一队伍每天只能报备一次)
+        op.create_unique_constraint(
+            "uq_contractor_capacity_team_daily",
+            "contractor_capacity",
+            ["contractor_name", "team_name", "report_date"],
+        )
 
 
 def downgrade() -> None:
-    op.drop_constraint("uq_contractor_capacity_team_daily", "contractor_capacity", type_="unique")
-    op.drop_constraint("uq_data_dictionary_type_label", "data_dictionary", type_="unique")
+    dialect = op.get_context().dialect.name
+    if dialect != "sqlite":
+        op.drop_constraint("uq_contractor_capacity_team_daily", "contractor_capacity", type_="unique")
+        op.drop_constraint("uq_data_dictionary_type_label", "data_dictionary", type_="unique")
     op.drop_index("ix_workover_project_pool_created_by_id", table_name="workover_project_pool")
     op.drop_index("ix_workover_operation_sheet_contractor_capacity_id", table_name="workover_operation_sheet")
     op.drop_index("ix_workover_operation_sheet_project_id", table_name="workover_operation_sheet")

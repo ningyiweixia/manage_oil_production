@@ -34,7 +34,7 @@ def upgrade() -> None:
         sa.Column("arrived_at", sa.DateTime(timezone=True), nullable=True, comment="到场确认时间"),
         sa.Column("used_at", sa.DateTime(timezone=True), nullable=True, comment="使用完毕时间"),
         sa.Column("remark", sa.Text(), nullable=True, comment="备注"),
-        sa.Column("extra_info", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb"), comment="扩展信息JSONB"),
+        sa.Column("extra_info", JSONB, nullable=False, server_default=sa.text("'{}'"), comment="扩展信息JSONB"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now(), nullable=False),
         sa.PrimaryKeyConstraint("id"),

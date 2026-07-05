@@ -22,7 +22,7 @@ def upgrade() -> None:
     op.add_column("workover_project_pool", sa.Column("county", sa.String(64), nullable=True, comment="县区"))
     op.add_column("workover_project_pool", sa.Column("initiator_name", sa.String(64), nullable=True, comment="发起人"))
     op.add_column("workover_project_pool", sa.Column("initiator_phone", sa.String(32), nullable=True, comment="发起人联系电话"))
-    op.add_column("workover_project_pool", sa.Column("photo_urls", JSONB, nullable=False, server_default=sa.text("'[]'::jsonb"), comment="照片附件URL列表JSONB"))
+    op.add_column("workover_project_pool", sa.Column("photo_urls", JSONB, nullable=False, server_default=sa.text("'[]'"), comment="照片附件URL列表JSONB"))
     op.create_index("ix_workover_project_pool_report_unit", "workover_project_pool", ["report_unit"])
 
 
