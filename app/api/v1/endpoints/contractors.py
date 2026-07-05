@@ -7,6 +7,7 @@ from app.crud.contractor import (
     create_operation_sheet,
     dispatch_operation,
     get_contractor_capacity,
+    get_operation_analytics,
     get_operation_sheet,
     list_contractor_capacities,
     list_operation_sheets,
@@ -153,6 +154,15 @@ def update_progress(
         db, sheet_id, payload, operator_id=current_user.id, operator_ip=_client_ip(request)
     )
     return success(WorkoverOperationSheetOut.model_validate(sheet), msg="进度已更新")
+
+
+@router.get("/analytics/summary", response_model=ApiResponse[dict])
+def operation_analytics(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("operation-sheet:read")),
+) -> ApiResponse[dict]:
+    """修井运行基础统计：运行状态分布、派工完成率、队伍工作量、措施类型分布。"""
+    return success(get_operation_analytics(db))
 
 
 @router.get("/{contractor_id}", response_model=ApiResponse[ContractorCapacityOut])

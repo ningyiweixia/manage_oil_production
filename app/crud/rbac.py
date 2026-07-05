@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models.rbac import Menu, OperationLog, Permission, Role, User
@@ -58,3 +58,14 @@ def list_permissions(db: Session) -> list[Permission]:
 
 def list_operation_logs(db: Session, limit: int = 100) -> list[OperationLog]:
     return list(db.scalars(select(OperationLog).order_by(OperationLog.id.desc()).limit(limit)).all())
+
+
+def paginate_operation_logs(db: Session, page: int = 1, page_size: int = 20) -> tuple[list[OperationLog], int]:
+    total = db.scalar(select(func.count()).select_from(select(OperationLog).subquery())) or 0
+    rows = db.scalars(
+        select(OperationLog)
+        .order_by(OperationLog.id.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+    return list(rows), total

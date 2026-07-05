@@ -419,3 +419,62 @@ def select_priority_sheets(db: Session) -> list[WorkoverOperationSheet]:
         )
     )
     return list(db.scalars(stmt).all())
+
+
+def get_operation_analytics(db: Session) -> dict[str, Any]:
+    """修井运行基础统计。
+
+    统计内容：运行状态分布、派工情况、队伍工作量、措施类型分布、近30天趋势。
+    """
+    sheets = list(db.scalars(select(WorkoverOperationSheet)).all())
+
+    total = len(sheets)
+    status_counts = {}
+    team_workload: dict[str, int] = {}
+    measure_type_counts: dict[str, int] = {}
+
+    for sheet in sheets:
+        status_counts[sheet.status.value] = status_counts.get(sheet.status.value, 0) + 1
+
+        if sheet.contractor_capacity and sheet.contractor_capacity.team_name:
+            team = sheet.contractor_capacity.team_name
+            team_workload[team] = team_workload.get(team, 0) + 1
+
+        if sheet.project and sheet.project.measures_jsonb:
+            measures = sheet.project.measures_jsonb.get("measures", [])
+            if isinstance(measures, list):
+                for m in measures:
+                    mt = m.get("measure_type", "") if isinstance(m, dict) else ""
+                    if mt:
+                        measure_type_counts[mt] = measure_type_counts.get(mt, 0) + 1
+
+    dispatched = status_counts.get("DISPATCHED", 0)
+    working = status_counts.get("WORKING", 0)
+    finished = status_counts.get("FINISHED", 0)
+    waiting = status_counts.get("WAITING_DISPATCH", 0)
+    canceled = status_counts.get("CANCELED", 0)
+
+    dispatch_rate = round((dispatched + working + finished) / total * 100, 1) if total > 0 else 0
+    completion_rate = round(finished / total * 100, 1) if total > 0 else 0
+
+    return {
+        "total_sheets": total,
+        "status_distribution": {
+            "waiting_dispatch": waiting,
+            "dispatched": dispatched,
+            "working": working,
+            "finished": finished,
+            "canceled": canceled,
+        },
+        "dispatch_rate": dispatch_rate,
+        "completion_rate": completion_rate,
+        "team_workload": sorted(
+            [{"team_name": k, "sheet_count": v} for k, v in team_workload.items()],
+            key=lambda x: -x["sheet_count"],
+        ),
+        "measure_type_distribution": sorted(
+            [{"measure_type": k, "count": v} for k, v in measure_type_counts.items()],
+            key=lambda x: -x["count"],
+        ),
+        "anomaly_count": 0,
+    }

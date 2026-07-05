@@ -5,10 +5,11 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_permission
 from app.core.exceptions import BusinessException
 from app.core.status_codes import BAD_REQUEST
-from app.crud.rbac import list_operation_logs
+from app.crud.rbac import list_operation_logs, paginate_operation_logs
 from app.db.session import get_db
 from app.models.approval import ApprovalLog
 from app.models.rbac import User
+from app.schemas.pagination import PageResult
 from app.schemas.rbac import (
     ApprovalLogOut,
     IdsPayload,
@@ -222,12 +223,16 @@ def delete_permission(
     return success(msg="已删除")
 
 
-@router.get("/operation-logs", response_model=ApiResponse[list[OperationLogOut]])
+@router.get("/operation-logs", response_model=ApiResponse[PageResult[OperationLogOut]])
 def operation_logs(
+    page: int = 1,
+    page_size: int = 20,
     db: Session = Depends(get_db),
     _: User = Depends(require_permission("system:operation_log:read")),
-) -> ApiResponse[list[OperationLogOut]]:
-    return success([OperationLogOut.model_validate(row) for row in list_operation_logs(db)])
+) -> ApiResponse[PageResult[OperationLogOut]]:
+    rows, total = paginate_operation_logs(db, page=page, page_size=page_size)
+    items = [OperationLogOut.model_validate(row) for row in rows]
+    return success(PageResult(items=items, total=total, page=page, page_size=page_size))
 
 
 @router.get("/approval-logs", response_model=ApiResponse[list[ApprovalLogOut]])

@@ -2,7 +2,7 @@ import enum
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -90,6 +90,7 @@ class ContractorCapacity(TimestampMixin, Base):
     __tablename__ = "contractor_capacity"
     __table_args__ = (
         Index("ix_contractor_capacity_report_date", "report_date"),
+        UniqueConstraint("contractor_name", "team_name", "report_date", name="uq_contractor_capacity_team_daily"),
         {"comment": "承包商运力表"},
     )
 
