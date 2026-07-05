@@ -19,6 +19,33 @@
     </el-form>
   </section>
 
+  <section class="stats-bar">
+    <div class="stats-card">
+      <span class="stats-label">运行表总数</span>
+      <strong class="stats-value">{{ analytics?.total_sheets || 0 }}</strong>
+    </div>
+    <div class="stats-card">
+      <span class="stats-label">待派工</span>
+      <strong class="stats-value warn">{{ analytics?.status_distribution?.waiting_dispatch || 0 }}</strong>
+    </div>
+    <div class="stats-card">
+      <span class="stats-label">施工中</span>
+      <strong class="stats-value primary">{{ analytics?.status_distribution?.working || 0 }}</strong>
+    </div>
+    <div class="stats-card">
+      <span class="stats-label">已完工</span>
+      <strong class="stats-value success">{{ analytics?.status_distribution?.finished || 0 }}</strong>
+    </div>
+    <div class="stats-card">
+      <span class="stats-label">派工完成率</span>
+      <strong class="stats-value">{{ analytics?.dispatch_rate || 0 }}%</strong>
+    </div>
+    <div class="stats-card">
+      <span class="stats-label">完工率</span>
+      <strong class="stats-value">{{ analytics?.completion_rate || 0 }}%</strong>
+    </div>
+  </section>
+
   <section class="split-grid">
     <article class="table-panel">
       <div class="panel-head">
@@ -190,12 +217,14 @@ import {
   createContractor,
   createOperationSheet,
   dispatchOperation,
+  getOperationAnalytics,
   listContractors,
   listOperationSheets,
   listPrioritySheets,
   updateOperationProgress,
   type ContractorCapacity,
   type ContractorQuery,
+  type OperationAnalytics,
   type OperationSheet
 } from '../api/contractor'
 
@@ -215,6 +244,7 @@ const dispatchTarget = ref<OperationSheet | null>(null)
 const progressTarget = ref<OperationSheet | null>(null)
 const dispatchContractorId = ref<number>()
 const progressValue = ref(0)
+const analytics = ref<OperationAnalytics | null>(null)
 const majorRepair = ref(false)
 const contractorForm = reactive({
   contractor_name: '',
@@ -270,6 +300,11 @@ async function loadAll() {
       prioritySheets.value = priorityResult.value
     } else {
       ElMessage.error('待派工运行表加载失败')
+    }
+    try {
+      analytics.value = await getOperationAnalytics()
+    } catch {
+      // statistics are optional
     }
   } finally {
     loading.value = false
@@ -355,3 +390,36 @@ async function saveProgress() {
 
 onMounted(loadAll)
 </script>
+
+<style scoped>
+.stats-bar {
+  display: flex;
+  gap: 12px;
+  padding: 12px 0;
+  flex-wrap: wrap;
+}
+.stats-card {
+  background: #fff;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  padding: 14px 20px;
+  min-width: 120px;
+  flex: 1;
+  text-align: center;
+}
+.stats-label {
+  display: block;
+  color: #667085;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.stats-value {
+  display: block;
+  font-size: 26px;
+  font-weight: 700;
+  color: #17202a;
+}
+.stats-value.warn { color: #b7791f; }
+.stats-value.primary { color: #409eff; }
+.stats-value.success { color: #168a4a; }
+</style>

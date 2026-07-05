@@ -86,3 +86,23 @@ export function dispatchOperation(payload: { operation_sheet_id: number; contrac
 export function updateOperationProgress(id: number, payload: { progress: number; progress_detail: Record<string, unknown> }) {
   return unwrap<OperationSheet>(http.patch(`/contractors/operation-sheets/${id}/progress`, payload))
 }
+
+export interface OperationAnalytics {
+  total_sheets: number
+  status_distribution: {
+    waiting_dispatch: number
+    dispatched: number
+    working: number
+    finished: number
+    canceled: number
+  }
+  dispatch_rate: number
+  completion_rate: number
+  team_workload: { team_name: string; sheet_count: number }[]
+  measure_type_distribution: { measure_type: string; count: number }[]
+  anomaly_count: number
+}
+
+export function getOperationAnalytics() {
+  return unwrap<OperationAnalytics>(http.get('/contractors/analytics/summary'))
+}
