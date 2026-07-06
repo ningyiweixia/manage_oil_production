@@ -28,7 +28,7 @@
 |------|------|------|
 | 系统底层搭建 | 已完成 | PostgreSQL JSONB 模型、Alembic 迁移、统一异常处理、操作日志中间件、Prometheus 指标暴露、本地降级运行 |
 | 上修项目池管理 | 已完成 | 项目池 CRUD、复杂 JSONB 措施字段、审批状态机、驳回重提智能路由、删除归档、Excel 导入导出 |
-| RBAC 与统一认证 | 已完成 | JWT 双令牌（access + refresh）、登出吊销、用户/角色/菜单/权限全 CRUD、用户物理删除保护、动态菜单与权限按钮守卫 |
+| RBAC 与统一认证 | 已完成 | JWT 双令牌（access + refresh）、登出吊销、用户/角色/菜单/权限全 CRUD、用户物理删除保护、动态菜单与权限按钮守卫、系统管理页按需加载与日志/权限/字典分页 |
 | 前端业务界面 | 已完成 | Vue 3 + Element Plus 9 个视图、审批工作台、WebSocket 实时待办提醒 |
 | 数据统计分析 | 已完成 | ECharts KPI 卡片、柱状图、饼图、热力图、趋势图、图表 PNG 导出、Pandas DSL 查询引擎 |
 | 承包商调度 | 已完成 | 运力报备、修井运行表、审批入库自动建运行表、优先派工排序、Redis 分布式锁防重复派工、进度自动推进 |
@@ -337,13 +337,15 @@ POST   /api/v1/menus                   新增菜单
 PUT    /api/v1/menus/{menu_id}         编辑菜单
 DELETE /api/v1/menus/{menu_id}         删除菜单
 
-GET    /api/v1/permissions             权限列表
+GET    /api/v1/permissions             权限列表（前端分页展示）
 POST   /api/v1/permissions             新增权限
 PUT    /api/v1/permissions/{perm_id}   编辑权限
 DELETE /api/v1/permissions/{perm_id}   删除权限
 
 GET    /api/v1/operation-logs          操作日志查询（分页）
 GET    /api/v1/approval-logs           审批日志查询
+
+GET    /api/v1/dictionaries/           数据字典列表（前端分页展示，支持类型筛选）
 ```
 
 ### 内置角色

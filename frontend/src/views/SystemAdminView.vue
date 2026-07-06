@@ -1,6 +1,6 @@
 <template>
   <el-tabs v-model="activeTab" class="admin-tabs" @tab-change="changeTab">
-    <el-tab-pane label="账号设置" name="account">
+    <el-tab-pane label="账号设置" name="account" lazy>
       <section class="account-page">
         <div class="account-hero">
           <div class="account-avatar">
@@ -52,7 +52,7 @@
       </section>
     </el-tab-pane>
 
-    <el-tab-pane label="用户管理" name="users">
+    <el-tab-pane label="用户管理" name="users" lazy>
       <section class="table-panel">
         <div class="panel-head">
           <div>
@@ -87,7 +87,7 @@
       </section>
     </el-tab-pane>
 
-    <el-tab-pane label="角色管理" name="roles">
+    <el-tab-pane label="角色管理" name="roles" lazy>
       <section class="table-panel">
         <div class="panel-head">
           <div>
@@ -116,7 +116,7 @@
       </section>
     </el-tab-pane>
 
-    <el-tab-pane label="菜单管理" name="menus">
+    <el-tab-pane label="菜单管理" name="menus" lazy>
       <section class="table-panel">
         <div class="panel-head">
           <div>
@@ -143,7 +143,7 @@
       </section>
     </el-tab-pane>
 
-    <el-tab-pane label="权限管理" name="permissions">
+    <el-tab-pane label="权限管理" name="permissions" lazy>
       <section class="table-panel">
         <div class="panel-head">
           <div>
@@ -151,7 +151,7 @@
             <p>查看接口权限点、请求方法和资源路径。</p>
           </div>
         </div>
-        <el-table v-loading="loading" :data="permissions" row-key="id">
+        <el-table v-loading="loading" :data="pagedPermissions" row-key="id">
           <el-table-column prop="name" label="权限名称" min-width="180" />
           <el-table-column prop="code" label="权限编码" min-width="220" show-overflow-tooltip />
           <el-table-column prop="method" label="方法" width="90" />
@@ -162,14 +162,23 @@
             </template>
           </el-table-column>
         </el-table>
+        <el-pagination
+          v-model:current-page="permissionQuery.page"
+          v-model:page-size="permissionQuery.page_size"
+          class="pager"
+          layout="total, sizes, prev, pager, next"
+          :page-sizes="[20, 50, 100]"
+          :total="permissions.length"
+          @size-change="handlePermissionPageSizeChange"
+        />
       </section>
     </el-tab-pane>
 
-    <el-tab-pane label="数据字典" name="dictionaries">
+    <el-tab-pane label="数据字典" name="dictionaries" lazy>
       <DictionaryManageView />
     </el-tab-pane>
 
-    <el-tab-pane label="操作日志" name="logs">
+    <el-tab-pane label="操作日志" name="logs" lazy>
       <section class="table-panel">
         <div class="panel-head">
           <div>
@@ -185,6 +194,16 @@
           <el-table-column prop="status_code" label="业务码" width="100" />
           <el-table-column prop="response_message" label="结果" min-width="180" />
         </el-table>
+        <el-pagination
+          v-model:current-page="logQuery.page"
+          v-model:page-size="logQuery.page_size"
+          class="pager"
+          layout="total, sizes, prev, pager, next"
+          :page-sizes="[20, 50, 100]"
+          :total="logTotal"
+          @current-change="loadLogsData"
+          @size-change="handleLogPageSizeChange"
+        />
       </section>
     </el-tab-pane>
   </el-tabs>
@@ -317,6 +336,10 @@ const roles = ref<RoleItem[]>([])
 const menus = ref<MenuItem[]>([])
 const permissions = ref<PermissionItem[]>([])
 const logs = ref<OperationLogItem[]>([])
+const permissionQuery = reactive({ page: 1, page_size: 20 })
+const logTotal = ref(0)
+const logQuery = reactive({ page: 1, page_size: 20 })
+const loadedTabs = reactive<Record<string, boolean>>({})
 const userVisible = ref(false)
 const roleAssignVisible = ref(false)
 const permissionAssignVisible = ref(false)
@@ -398,6 +421,10 @@ const userRules: FormRules<typeof userForm> = {
   full_name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
   role_id: [{ required: true, message: '请选择一个角色', trigger: 'change' }]
 }
+const pagedPermissions = computed(() => {
+  const start = (permissionQuery.page - 1) * permissionQuery.page_size
+  return permissions.value.slice(start, start + permissionQuery.page_size)
+})
 
 function clearAuthState() {
   localStorage.removeItem('access_token')
@@ -409,7 +436,9 @@ function clearAuthState() {
 }
 
 async function loadAccount() {
+  if (loadedTabs.account) return
   accountInfo.value = await getCurrentUser()
+  loadedTabs.account = true
 }
 
 function roleName(id: number) {
@@ -478,24 +507,107 @@ async function confirmCancelAccount() {
   }
 }
 
-async function loadAll() {
+async function loadUsersData() {
   loading.value = true
   try {
-    const [userRows, roleRows, menuRows, permissionRows, logRows] = await Promise.all([
+    const [userRows, roleRows, currentUser] = await Promise.all([
       listUsers(),
       listRoles(),
-      listMenus(),
-      listPermissions(),
-      listOperationLogs()
+      loadedTabs.account ? Promise.resolve(accountInfo.value) : getCurrentUser()
     ])
     users.value = userRows
     roles.value = roleRows
-    menus.value = menuRows
-    permissions.value = permissionRows
-    logs.value = logRows
+    accountInfo.value = currentUser
+    loadedTabs.account = true
+    loadedTabs.users = true
   } finally {
     loading.value = false
   }
+}
+
+async function loadRolesData() {
+  loading.value = true
+  try {
+    roles.value = await listRoles()
+    loadedTabs.roles = true
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadMenusData() {
+  loading.value = true
+  try {
+    menus.value = await listMenus()
+    loadedTabs.menus = true
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadPermissionsData() {
+  loading.value = true
+  try {
+    permissions.value = await listPermissions()
+    if ((permissionQuery.page - 1) * permissionQuery.page_size >= permissions.value.length) {
+      permissionQuery.page = 1
+    }
+    loadedTabs.permissions = true
+  } finally {
+    loading.value = false
+  }
+}
+
+function handlePermissionPageSizeChange() {
+  permissionQuery.page = 1
+}
+
+async function loadLogsData() {
+  loading.value = true
+  try {
+    const page = await listOperationLogs(logQuery)
+    logs.value = page.items
+    logTotal.value = page.total
+    logQuery.page = page.page
+    logQuery.page_size = page.page_size
+    loadedTabs.logs = true
+  } finally {
+    loading.value = false
+  }
+}
+
+function handleLogPageSizeChange() {
+  logQuery.page = 1
+  loadLogsData()
+}
+
+async function ensureTabData(tabName = activeTab.value) {
+  switch (tabName) {
+    case 'account':
+      await loadAccount()
+      break
+    case 'users':
+      if (!loadedTabs.users) await loadUsersData()
+      break
+    case 'roles':
+      if (!loadedTabs.roles) await loadRolesData()
+      break
+    case 'menus':
+      if (!loadedTabs.menus) await loadMenusData()
+      break
+    case 'permissions':
+      if (!loadedTabs.permissions) await loadPermissionsData()
+      break
+    case 'logs':
+      if (!loadedTabs.logs) await loadLogsData()
+      break
+  }
+}
+
+async function refreshCurrentAdminData() {
+  const tabName = activeTab.value
+  loadedTabs[tabName] = false
+  await ensureTabData(tabName)
 }
 
 async function saveUser() {
@@ -513,7 +625,7 @@ async function saveUser() {
     })
     ElMessage.success('用户已创建')
     userVisible.value = false
-    await loadAll()
+    await refreshCurrentAdminData()
   } catch (error) {
     ElMessage.error(getErrorMessage(error, '用户创建失败，请检查账号、密码和角色配置'))
   } finally {
@@ -535,7 +647,7 @@ function resetUserForm() {
 
 async function changeUserActive(id: number, isActive: boolean) {
   await setUserActive(id, isActive)
-  await loadAll()
+  await refreshCurrentAdminData()
 }
 
 async function deleteUserRow(row: UserItem) {
@@ -552,7 +664,7 @@ async function deleteUserRow(row: UserItem) {
     )
     await deleteUser(row.id)
     ElMessage.success('用户已删除')
-    await loadAll()
+    await refreshCurrentAdminData()
   } catch (error) {
     if (error === 'cancel' || error === 'close') return
     ElMessage.error(getErrorMessage(error, '删除用户失败'))
@@ -572,7 +684,7 @@ async function saveRoleAssign() {
     await assignUserRoles(editingUser.value.id, selectedRoleId.value ? [selectedRoleId.value] : [])
     ElMessage.success('角色已更新')
     roleAssignVisible.value = false
-    await loadAll()
+    await refreshCurrentAdminData()
   } catch (error) {
     ElMessage.error(getErrorMessage(error, '角色更新失败'))
   } finally {
@@ -584,6 +696,9 @@ function openPermissionAssign(row: RoleItem) {
   editingRole.value = row
   selectedPermissionIds.value = [...row.permission_ids]
   permissionAssignVisible.value = true
+  if (!loadedTabs.permissions) {
+    loadPermissionsData()
+  }
 }
 
 async function savePermissionAssign() {
@@ -593,7 +708,7 @@ async function savePermissionAssign() {
     await assignRolePermissions(editingRole.value.id, selectedPermissionIds.value)
     ElMessage.success('权限已更新')
     permissionAssignVisible.value = false
-    await loadAll()
+    await refreshCurrentAdminData()
   } finally {
     saving.value = false
   }
@@ -621,12 +736,12 @@ watch(
   () => route.path,
   (path) => {
     activeTab.value = routeToTab[path] || 'account'
+    ensureTabData(activeTab.value)
   }
 )
 
 onMounted(() => {
-  loadAccount()
-  loadAll()
+  ensureTabData()
 })
 </script>
 

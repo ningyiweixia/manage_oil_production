@@ -1,4 +1,5 @@
 import { http, unwrap } from './http'
+import type { PageResult } from '../types/workover'
 
 export interface UserItem {
   id: number
@@ -106,6 +107,6 @@ export function assignRolePermissions(id: number, permissionIds: number[]) {
   return unwrap<RoleItem>(http.patch(`/roles/${id}/permissions`, { ids: permissionIds }))
 }
 
-export function listOperationLogs() {
-  return unwrap<OperationLogItem[]>(http.get('/operation-logs'))
+export function listOperationLogs(query: { page?: number; page_size?: number } = {}) {
+  return unwrap<PageResult<OperationLogItem>>(http.get('/operation-logs', { params: query }))
 }

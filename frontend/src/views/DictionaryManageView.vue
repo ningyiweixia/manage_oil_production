@@ -7,7 +7,7 @@
         </el-select>
       </el-form-item>
       <el-form-item>
-        <el-button type="primary" :icon="Search" @click="loadItems">查询</el-button>
+        <el-button type="primary" :icon="Search" @click="searchItems">查询</el-button>
         <el-button :icon="Plus" @click="openCreate">新增字典项</el-button>
       </el-form-item>
     </el-form>
@@ -20,7 +20,7 @@
         <p>维护全库通用枚举、业务状态、系统角色、菜单编码和外部系统等动态选项。</p>
       </div>
     </div>
-    <el-table v-loading="loading" :data="filteredItems" row-key="id">
+    <el-table v-loading="loading" :data="pagedItems" row-key="id">
       <el-table-column label="类型" min-width="180">
         <template #default="{ row }">{{ typeLabel(row.dict_type) }}</template>
       </el-table-column>
@@ -40,6 +40,15 @@
         </template>
       </el-table-column>
     </el-table>
+    <el-pagination
+      v-model:current-page="pageQuery.page"
+      v-model:page-size="pageQuery.page_size"
+      class="pager"
+      layout="total, sizes, prev, pager, next"
+      :page-sizes="[20, 50, 100]"
+      :total="filteredItems.length"
+      @size-change="handlePageSizeChange"
+    />
   </section>
 
   <el-dialog v-model="visible" :title="editing ? '编辑字典项' : '新增字典项'" width="520px">
@@ -61,7 +70,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import {
@@ -79,10 +88,15 @@ const visible = ref(false)
 const editing = ref<DictionaryItem | null>(null)
 const items = ref<DictionaryItem[]>([])
 const query = reactive({ dict_type: '' })
+const pageQuery = reactive({ page: 1, page_size: 20 })
 const form = reactive({ dict_type: '', item_label: '', item_value: '', is_active: true })
 const filteredItems = computed(() => {
   if (!query.dict_type) return items.value
   return items.value.filter((item) => item.dict_type.includes(query.dict_type))
+})
+const pagedItems = computed(() => {
+  const start = (pageQuery.page - 1) * pageQuery.page_size
+  return filteredItems.value.slice(start, start + pageQuery.page_size)
 })
 const dictionaryTypes = computed(() => {
   const typeItems = items.value.filter((item) => item.dict_type === 'dictionary_type')
@@ -109,9 +123,21 @@ async function loadItems() {
   loading.value = true
   try {
     items.value = await listAllDictionaryItems(false)
+    if ((pageQuery.page - 1) * pageQuery.page_size >= filteredItems.value.length) {
+      pageQuery.page = 1
+    }
   } finally {
     loading.value = false
   }
+}
+
+async function searchItems() {
+  pageQuery.page = 1
+  await loadItems()
+}
+
+function handlePageSizeChange() {
+  pageQuery.page = 1
 }
 
 function openCreate() {
@@ -167,6 +193,13 @@ async function changeActive(id: number, isActive: boolean) {
   await setDictionaryActive(id, isActive)
   await loadItems()
 }
+
+watch(
+  () => query.dict_type,
+  () => {
+    pageQuery.page = 1
+  }
+)
 
 onMounted(loadItems)
 </script>
