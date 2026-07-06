@@ -62,17 +62,23 @@ class OperationLogMiddleware(BaseHTTPMiddleware):
         ):
             return response
 
-        try:
-            body = b""
-            async for chunk in response.body_iterator:
-                body += chunk
-            status_code: int | None = None
-            response_message: str | None = None
-            if body:
+        body = b""
+        async for chunk in response.body_iterator:
+            body += chunk
+
+        status_code: int | None = None
+        response_message: str | None = None
+        content_type = response.headers.get("content-type", "")
+        if body and "application/json" in content_type:
+            try:
                 payload = json.loads(body.decode("utf-8"))
                 status_code = payload.get("code")
                 response_message = payload.get("msg")
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                status_code = response.status_code
+                response_message = None
 
+        try:
             with SessionLocal() as db:
                 db.add(
                     OperationLog(
@@ -88,11 +94,12 @@ class OperationLogMiddleware(BaseHTTPMiddleware):
                     )
                 )
                 db.commit()
-            return Response(
-                content=body,
-                status_code=response.status_code,
-                headers=dict(response.headers),
-                media_type=response.media_type,
-            )
         except Exception:
-            return response
+            pass
+
+        return Response(
+            content=body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type=response.media_type,
+        )

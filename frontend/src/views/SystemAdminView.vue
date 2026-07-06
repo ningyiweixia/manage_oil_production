@@ -61,29 +61,61 @@
           </div>
           <el-button type="primary" :icon="Plus" @click="userVisible = true">新增用户</el-button>
         </div>
-        <el-table v-loading="loading" :data="users" row-key="id">
-          <el-table-column prop="username" label="账号" width="130" />
-          <el-table-column prop="full_name" label="姓名" width="130" />
-          <el-table-column prop="department" label="部门" min-width="140" />
-          <el-table-column label="角色" min-width="220">
-            <template #default="{ row }">
-              <el-tag v-for="roleId in row.role_ids" :key="roleId" class="tag-gap">{{ roleName(roleId) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="90">
-            <template #default="{ row }">
-              <el-switch :model-value="row.is_active" @change="(value: string | number | boolean) => changeUserActive(row.id, Boolean(value))" />
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="170">
-            <template #default="{ row }">
-              <div class="table-actions">
-                <el-button text type="primary" @click="openRoleAssign(row)">分配角色</el-button>
-                <el-button text type="danger" :disabled="isDeleteDisabled(row)" @click="deleteUserRow(row)">删除</el-button>
+        <section class="system-admin-summary" aria-label="系统管理信息总览">
+          <div v-for="item in systemAdminStats" :key="item.label" class="system-admin-stat">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+          </div>
+        </section>
+        <div class="user-group-toolbar">
+          <strong>按角色分组</strong>
+          <span>组内排序</span>
+          <el-select v-model="userSortMode" style="width: 180px">
+            <el-option v-for="option in userSortOptions" :key="option.value" :label="option.label" :value="option.value" />
+          </el-select>
+        </div>
+        <el-empty v-if="!loading && !userRoleGroups.length" description="暂无用户" />
+        <div v-else v-loading="loading" class="role-user-groups">
+          <section v-for="group in userRoleGroups" :key="group.role.id" class="role-user-group">
+            <div class="role-user-group-head">
+              <div>
+                <h3>{{ group.role.name }}</h3>
+                <p>
+                  {{ group.role.description || '该角色下的系统用户' }}
+                  <span v-if="group.role.id">菜单 {{ group.role.menu_ids.length }} 项 / 权限 {{ group.role.permission_ids.length }} 项</span>
+                </p>
               </div>
-            </template>
-          </el-table-column>
-        </el-table>
+              <span class="role-count">{{ group.users.length }} 人</span>
+            </div>
+            <el-table :data="sortUsersForRole(group.users)" row-key="id">
+              <el-table-column prop="username" label="账号" width="130" />
+              <el-table-column label="首字母" width="80">
+                <template #default="{ row }">{{ userInitialLabel(row) }}</template>
+              </el-table-column>
+              <el-table-column prop="full_name" label="姓名" width="130" />
+              <el-table-column prop="department" label="部门" min-width="140" />
+              <el-table-column label="角色" min-width="220">
+                <template #default="{ row }">
+                  <el-tag v-for="roleId in row.role_ids" :key="roleId" class="tag-gap">{{ roleName(roleId) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="created_at" label="录入时间" min-width="170" show-overflow-tooltip />
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }">
+                  <el-switch :model-value="row.is_active" @change="(value: string | number | boolean) => changeUserActive(row.id, Boolean(value))" />
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="170">
+                <template #default="{ row }">
+                  <div class="table-actions">
+                    <el-button text type="primary" @click="openRoleAssign(row)">分配角色</el-button>
+                    <el-button text type="danger" :disabled="isDeleteDisabled(row)" @click="deleteUserRow(row)">删除</el-button>
+                  </div>
+                </template>
+              </el-table-column>
+            </el-table>
+          </section>
+        </div>
       </section>
     </el-tab-pane>
 
@@ -95,6 +127,12 @@
             <p>维护角色信息，并查看菜单与权限绑定数量。</p>
           </div>
         </div>
+        <section class="system-admin-summary" aria-label="角色信息总览">
+          <div v-for="item in roleStats" :key="item.label" class="system-admin-stat">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+          </div>
+        </section>
         <el-table v-loading="loading" :data="roles" row-key="id">
           <el-table-column prop="name" label="角色" width="160" />
           <el-table-column prop="code" label="编码" width="180" />
@@ -124,6 +162,12 @@
             <p>查看系统菜单、路由地址和启用状态。</p>
           </div>
         </div>
+        <section class="system-admin-summary" aria-label="菜单信息总览">
+          <div v-for="item in menuStats" :key="item.label" class="system-admin-stat">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+          </div>
+        </section>
         <el-table v-loading="loading" :data="menus" row-key="id" default-expand-all>
           <el-table-column prop="title" label="菜单名称" min-width="170" />
           <el-table-column prop="route_path" label="路由" min-width="220" show-overflow-tooltip />
@@ -151,17 +195,28 @@
             <p>查看接口权限点、请求方法和资源路径。</p>
           </div>
         </div>
-        <el-table v-loading="loading" :data="permissions" row-key="id">
-          <el-table-column prop="name" label="权限名称" min-width="180" />
-          <el-table-column prop="code" label="权限编码" min-width="220" show-overflow-tooltip />
-          <el-table-column prop="method" label="方法" width="90" />
-          <el-table-column prop="path" label="接口路径" min-width="260" show-overflow-tooltip />
-          <el-table-column label="状态" width="90">
-            <template #default="{ row }">
-              <el-tag :type="row.is_active ? 'success' : 'danger'">{{ row.is_active ? '启用' : '停用' }}</el-tag>
-            </template>
-          </el-table-column>
-        </el-table>
+        <section class="system-admin-summary" aria-label="权限信息总览">
+          <div v-for="item in permissionStats" :key="item.label" class="system-admin-stat">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+          </div>
+        </section>
+        <h3 class="detail-title">权限明细</h3>
+        <div v-loading="loading">
+          <el-empty v-if="!loading && !permissions.length" description="暂无权限数据" />
+          <el-table v-else :data="permissions" row-key="id">
+            <el-table-column prop="name" label="权限名称" min-width="180" />
+            <el-table-column prop="code" label="权限编码" min-width="220" show-overflow-tooltip />
+            <el-table-column prop="method" label="方法" width="90" />
+            <el-table-column prop="path" label="接口路径" min-width="260" show-overflow-tooltip />
+            <el-table-column prop="description" label="说明" min-width="180" show-overflow-tooltip />
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag :type="row.is_active ? 'success' : 'danger'">{{ row.is_active ? '启用' : '停用' }}</el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
       </section>
     </el-tab-pane>
 
@@ -376,6 +431,68 @@ const logQuery = reactive({
   method: ''
 })
 
+type UserSortMode = 'default' | 'initial_asc' | 'initial_desc' | 'created_desc' | 'created_asc'
+type UserRoleGroup = {
+  role: RoleItem
+  users: UserItem[]
+}
+
+const userSortMode = ref<UserSortMode>('default')
+const userSortOptions: { label: string; value: UserSortMode }[] = [
+  { label: '默认排序', value: 'default' },
+  { label: '首字母升序', value: 'initial_asc' },
+  { label: '首字母降序', value: 'initial_desc' },
+  { label: '录入时间从新到旧', value: 'created_desc' },
+  { label: '录入时间从旧到新', value: 'created_asc' }
+]
+const unassignedRole: UserRoleGroup['role'] = {
+  id: 0,
+  name: '未分配角色',
+  code: 'unassigned',
+  description: '尚未绑定角色的用户',
+  is_active: true,
+  menu_ids: [],
+  permission_ids: []
+}
+const systemAdminStats = computed(() => [
+  { label: '人员总数', value: users.value.length },
+  { label: '角色总数', value: roles.value.length },
+  { label: '权限总数', value: permissions.value.length },
+  { label: '菜单总数', value: flatMenus.value.length }
+])
+const flatMenus = computed(() => flattenMenus(menus.value))
+const roleStats = computed(() => [
+  { label: '角色总数', value: roles.value.length },
+  { label: '启用角色', value: roles.value.filter((role) => role.is_active).length },
+  { label: '绑定菜单', value: roles.value.reduce((total, role) => total + role.menu_ids.length, 0) },
+  { label: '绑定权限', value: roles.value.reduce((total, role) => total + role.permission_ids.length, 0) }
+])
+const menuStats = computed(() => [
+  { label: '菜单总数', value: flatMenus.value.length },
+  { label: '可见菜单', value: flatMenus.value.filter((menu) => menu.is_visible).length },
+  { label: '启用菜单', value: flatMenus.value.filter((menu) => menu.is_active).length },
+  { label: '一级菜单', value: menus.value.length }
+])
+const permissionStats = computed(() => [
+  { label: '权限总数', value: permissions.value.length },
+  { label: '启用权限', value: permissions.value.filter((permission) => permission.is_active).length },
+  { label: '接口方法', value: new Set(permissions.value.map((permission) => permission.method)).size },
+  { label: '资源路径', value: new Set(permissions.value.map((permission) => permission.path)).size }
+])
+const userRoleGroups = computed<UserRoleGroup[]>(() => {
+  const groups = roles.value
+    .map((role) => ({
+      role,
+      users: users.value.filter((user) => user.role_ids.includes(role.id))
+    }))
+    .filter((group) => group.users.length > 0)
+  const unassignedUsers = users.value.filter((user) => !user.role_ids.length)
+  if (unassignedUsers.length) {
+    groups.push({ role: unassignedRole, users: unassignedUsers })
+  }
+  return groups
+})
+
 const passwordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,128}$/
 const passwordMessage = '密码需 8-128 位，且包含大写字母、小写字母、数字和特殊字符'
 const passwordRules: FormRules<typeof passwordForm> = {
@@ -446,6 +563,39 @@ function roleName(id: number) {
   return roles.value.find((role) => role.id === id)?.name || `角色${id}`
 }
 
+function flattenMenus(items: MenuItem[]): MenuItem[] {
+  return items.flatMap((item) => [item, ...flattenMenus(item.children || [])])
+}
+
+function userInitialValue(user: UserItem) {
+  return (user.username || user.full_name || '').trim().toLocaleLowerCase('zh-CN')
+}
+
+function userInitialLabel(user: UserItem) {
+  return userInitialValue(user).charAt(0).toLocaleUpperCase('zh-CN') || '-'
+}
+
+function userCreatedValue(user: UserItem) {
+  return new Date(user.created_at).getTime() || 0
+}
+
+function sortUsersForRole(items: UserItem[]) {
+  const sorted = [...items]
+  if (userSortMode.value === 'initial_asc') {
+    return sorted.sort((a, b) => userInitialValue(a).localeCompare(userInitialValue(b), 'zh-CN'))
+  }
+  if (userSortMode.value === 'initial_desc') {
+    return sorted.sort((a, b) => userInitialValue(b).localeCompare(userInitialValue(a), 'zh-CN'))
+  }
+  if (userSortMode.value === 'created_desc') {
+    return sorted.sort((a, b) => userCreatedValue(b) - userCreatedValue(a))
+  }
+  if (userSortMode.value === 'created_asc') {
+    return sorted.sort((a, b) => userCreatedValue(a) - userCreatedValue(b))
+  }
+  return sorted
+}
+
 function isCurrentOpsAdmin() {
   return Boolean(accountInfo.value?.roles?.some((role) => role.code === 'ops_admin'))
 }
@@ -511,21 +661,42 @@ async function confirmCancelAccount() {
 async function loadAll() {
   loading.value = true
   try {
-    const [userRows, roleRows, menuRows, permissionRows, logPage] = await Promise.all([
-      listUsers(),
-      listRoles(),
-      listMenus(),
-      listPermissions(),
-      listOperationLogs(logQuery)
+    const results = await Promise.allSettled([
+      loadSystemResource('用户', listUsers, (value) => {
+        users.value = value
+      }),
+      loadSystemResource('角色', listRoles, (value) => {
+        roles.value = value
+      }),
+      loadSystemResource('菜单', listMenus, (value) => {
+        menus.value = value
+      }),
+      loadSystemResource('权限', listPermissions, (value) => {
+        permissions.value = value
+      }),
+      loadSystemResource('操作日志', () => listOperationLogs(logQuery), (value) => {
+        logs.value = value.items
+        logTotal.value = value.total
+      })
     ])
-    users.value = userRows
-    roles.value = roleRows
-    menus.value = menuRows
-    permissions.value = permissionRows
-    logs.value = logPage.items
-    logTotal.value = logPage.total
+    const failedLabels = results
+      .filter((result): result is PromiseFulfilledResult<string | null> => result.status === 'fulfilled' && Boolean(result.value))
+      .map((result) => result.value)
+    if (failedLabels.length) {
+      ElMessage.warning(`${failedLabels.join('、')}加载失败，其余系统管理信息已正常显示`)
+    }
   } finally {
     loading.value = false
+  }
+}
+
+async function loadSystemResource<T>(label: string, request: () => Promise<T>, apply: (value: T) => void) {
+  try {
+    apply(await request())
+    return null
+  } catch (error) {
+    console.warn(`${label}加载失败`, error)
+    return label
   }
 }
 
@@ -809,6 +980,88 @@ onMounted(() => {
   line-height: 1.4;
 }
 
+.system-admin-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.system-admin-stat {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  background: #f8fbff;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+}
+
+.system-admin-stat span {
+  color: #667085;
+  font-size: 13px;
+}
+
+.system-admin-stat strong {
+  color: #172033;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.user-group-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  color: #667085;
+}
+
+.user-group-toolbar strong {
+  color: #172033;
+}
+
+.role-user-groups {
+  display: grid;
+  gap: 16px;
+}
+
+.role-user-group {
+  padding-top: 14px;
+  border-top: 1px solid #d8e0eb;
+}
+
+.role-user-group:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.role-user-group-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.role-user-group-head h3 {
+  margin: 0;
+  color: #172033;
+  font-size: 16px;
+}
+
+.role-user-group-head p {
+  margin: 4px 0 0;
+  color: #667085;
+  font-size: 13px;
+}
+
+.role-count {
+  flex: 0 0 auto;
+  color: #667085;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 @media (max-width: 900px) {
   .account-hero,
   .account-setting-row {
@@ -822,6 +1075,10 @@ onMounted(() => {
 
   .account-facts {
     grid-template-columns: 1fr;
+  }
+
+  .system-admin-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

@@ -34,6 +34,29 @@ class RemainingOptimizationContractsTest(unittest.TestCase):
         self.assertEqual(summary["materials"]["emergency_count"], 1)
         self.assertEqual(summary["completions"]["total"], 3)
 
+    def test_report_exports_are_non_empty_office_documents(self):
+        from app.services import report_service
+
+        project_analytics = Mock()
+        project_analytics.kpis.total_projects = 8
+        project_analytics.kpis.pending_approvals = 2
+        project_analytics.kpis.approval_rate = 75.0
+        project_analytics.kpis.estimated_cost = 120.5
+
+        with (
+            patch.object(report_service, "build_workover_analytics", return_value=project_analytics),
+            patch.object(report_service, "get_operation_analytics", return_value={"total_sheets": 5, "dispatch_rate": 60.0, "completion_rate": 20.0, "team_workload": []}),
+            patch.object(report_service, "get_material_analytics", return_value={"total": 4, "delivered": 2, "arrived": 1, "used": 1, "emergency_count": 1}),
+            patch.object(report_service, "get_completion_analytics", return_value={"total": 3, "by_measure_type": []}),
+        ):
+            excel = report_service.export_delivery_summary_excel(Mock())
+            word = report_service.export_delivery_summary_word(Mock())
+
+        self.assertGreater(len(excel), 1024)
+        self.assertGreater(len(word), 1024)
+        self.assertEqual(excel[:4], b"PK\x03\x04")
+        self.assertEqual(word[:4], b"PK\x03\x04")
+
     def test_project_pool_scope_limits_non_privileged_users_to_department_or_owner(self):
         from app.services.data_scope_service import project_pool_scope_predicate
 
