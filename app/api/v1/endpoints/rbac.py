@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -227,10 +229,26 @@ def delete_permission(
 def operation_logs(
     page: int = 1,
     page_size: int = 20,
+    trace_id: str | None = None,
+    method: str | None = None,
+    path: str | None = None,
+    status_code: int | None = None,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(require_permission("system:operation_log:read")),
 ) -> ApiResponse[PageResult[OperationLogOut]]:
-    rows, total = paginate_operation_logs(db, page=page, page_size=page_size)
+    rows, total = paginate_operation_logs(
+        db,
+        page=page,
+        page_size=page_size,
+        trace_id=trace_id,
+        method=method,
+        path=path,
+        status_code=status_code,
+        start_at=start_at,
+        end_at=end_at,
+    )
     items = [OperationLogOut.model_validate(row) for row in rows]
     return success(PageResult(items=items, total=total, page=page, page_size=page_size))
 

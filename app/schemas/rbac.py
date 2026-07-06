@@ -143,6 +143,7 @@ class PermissionOut(BaseModel):
 
 class OperationLogOut(BaseModel):
     id: int
+    trace_id: str | None = None
     user_id: int | None = None
     username: str | None = None
     ip_address: str | None = None

@@ -51,9 +51,9 @@ def _client_ip(request: Request) -> str | None:
 def list_items(
     query: WorkoverProjectPoolQuery = Depends(),
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("workover_project_pool:read")),
+    current_user: User = Depends(require_permission("workover_project_pool:read")),
 ) -> ApiResponse[PageResult[WorkoverProjectPoolOut]]:
-    rows, total = list_project_pools(db, query)
+    rows, total = list_project_pools(db, query, current_user=current_user)
 
     # 批量查询所有 REJECTED 项目的前一个状态，避免 N+1 查询
     rejected_ids = [row.id for row in rows if row.status == ProjectPoolStatus.REJECTED]

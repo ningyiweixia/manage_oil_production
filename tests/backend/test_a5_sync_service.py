@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from app.core.exceptions import BusinessException
 from app.core.status_codes import A5_LINK_FAILED
+from app.models.workover import OperationStatus, WorkoverOperationSheet
 from app.schemas.a5_integration import A5AnalyticsQuery
 from app.services import a5_sync_service as service
 
@@ -27,6 +28,18 @@ class MemoryCache:
 
 
 class A5SyncServiceTest(unittest.TestCase):
+    def test_local_daily_report_simulation_advances_dispatched_sheets(self):
+        sheet = WorkoverOperationSheet(project_id=1, operation_no="OP-LOCAL")
+        sheet.status = OperationStatus.DISPATCHED
+        sheet.progress = 0
+
+        reports = service.build_local_daily_reports([sheet], "2026-07-06")
+
+        self.assertEqual(reports[0]["operation_no"], "OP-LOCAL")
+        self.assertEqual(reports[0]["status"], "WORKING")
+        self.assertEqual(reports[0]["progress"], 35)
+        self.assertEqual(reports[0]["report_date"], "2026-07-06")
+
     def test_analytics_uses_date_bucket_cache_and_excludes_undated_records(self):
         cache = MemoryCache()
         cache.values.update(

@@ -177,14 +177,35 @@
             <p>查看最近接口访问记录和业务处理结果。</p>
           </div>
         </div>
+        <div class="toolbar-row">
+          <el-input v-model="logQuery.trace_id" clearable placeholder="Trace ID" style="width: 220px" />
+          <el-input v-model="logQuery.path" clearable placeholder="接口路径" style="width: 220px" />
+          <el-select v-model="logQuery.method" clearable placeholder="方法" style="width: 120px">
+            <el-option label="GET" value="GET" />
+            <el-option label="POST" value="POST" />
+            <el-option label="PUT" value="PUT" />
+            <el-option label="PATCH" value="PATCH" />
+            <el-option label="DELETE" value="DELETE" />
+          </el-select>
+          <el-button type="primary" @click="searchLogs">查询</el-button>
+        </div>
         <el-table v-loading="loading" :data="logs" row-key="id">
           <el-table-column prop="created_at" label="时间" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="trace_id" label="Trace ID" min-width="180" show-overflow-tooltip />
           <el-table-column prop="method" label="方法" width="90" />
           <el-table-column prop="path" label="路径" min-width="240" show-overflow-tooltip />
           <el-table-column prop="operation" label="权限点" min-width="180" />
           <el-table-column prop="status_code" label="业务码" width="100" />
           <el-table-column prop="response_message" label="结果" min-width="180" />
         </el-table>
+        <el-pagination
+          v-model:current-page="logQuery.page"
+          v-model:page-size="logQuery.page_size"
+          class="pager"
+          layout="total, sizes, prev, pager, next"
+          :total="logTotal"
+          @change="loadLogs"
+        />
       </section>
     </el-tab-pane>
   </el-tabs>
@@ -275,6 +296,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import { Lock, Plus, UserFilled, Warning } from '@element-plus/icons-vue'
 import { cancelCurrentAccount, changeCurrentPassword, getCurrentUser, type CurrentUser } from '../api/auth'
+import { clearSessionMenus } from '../utils/menuCache'
 import DictionaryManageView from './DictionaryManageView.vue'
 import {
   assignRolePermissions,
@@ -317,6 +339,7 @@ const roles = ref<RoleItem[]>([])
 const menus = ref<MenuItem[]>([])
 const permissions = ref<PermissionItem[]>([])
 const logs = ref<OperationLogItem[]>([])
+const logTotal = ref(0)
 const userVisible = ref(false)
 const roleAssignVisible = ref(false)
 const permissionAssignVisible = ref(false)
@@ -344,6 +367,13 @@ const userForm = reactive({
   department: '',
   is_active: true,
   role_id: undefined as number | undefined
+})
+const logQuery = reactive({
+  page: 1,
+  page_size: 20,
+  trace_id: '',
+  path: '',
+  method: ''
 })
 
 const passwordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,128}$/
@@ -404,7 +434,7 @@ function clearAuthState() {
   localStorage.removeItem('refresh_token')
   localStorage.removeItem('current_user')
   localStorage.removeItem('permissions')
-  localStorage.removeItem('menus')
+  clearSessionMenus()
   router.push('/login')
 }
 
@@ -481,21 +511,33 @@ async function confirmCancelAccount() {
 async function loadAll() {
   loading.value = true
   try {
-    const [userRows, roleRows, menuRows, permissionRows, logRows] = await Promise.all([
+    const [userRows, roleRows, menuRows, permissionRows, logPage] = await Promise.all([
       listUsers(),
       listRoles(),
       listMenus(),
       listPermissions(),
-      listOperationLogs()
+      listOperationLogs(logQuery)
     ])
     users.value = userRows
     roles.value = roleRows
     menus.value = menuRows
     permissions.value = permissionRows
-    logs.value = logRows
+    logs.value = logPage.items
+    logTotal.value = logPage.total
   } finally {
     loading.value = false
   }
+}
+
+async function loadLogs() {
+  const page = await listOperationLogs(logQuery)
+  logs.value = page.items
+  logTotal.value = page.total
+}
+
+async function searchLogs() {
+  logQuery.page = 1
+  await loadLogs()
 }
 
 async function saveUser() {

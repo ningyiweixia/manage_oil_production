@@ -16,6 +16,8 @@
     <el-input v-model="blockFilter" clearable placeholder="区块" style="width: 160px" />
     <el-button type="primary" :icon="Refresh" @click="loadDashboard">刷新</el-button>
     <el-button :icon="Download" @click="exportSummary">导出摘要</el-button>
+    <el-button :icon="Download" @click="downloadAcceptanceExcel">导出 Excel</el-button>
+    <el-button :icon="Download" @click="downloadAcceptanceWord">导出 Word</el-button>
   </section>
 
   <section v-loading="loading" class="kpi-grid">
@@ -70,6 +72,7 @@ import * as echarts from 'echarts'
 import type { ECharts, EChartsOption } from 'echarts'
 import { getProjectAnalytics } from '../api/workover'
 import { listDictionaryItems, type DictionaryItem } from '../api/dictionary'
+import { downloadReport, getDeliverySummary, type DeliverySummary } from '../api/reports'
 import { useProjectDataChanged } from '../composables/useProjectSync'
 import { statusLabels } from '../utils/status'
 import type { AnalyticsQuery, ProjectPoolStatus, WorkoverAnalytics } from '../types/workover'
@@ -78,6 +81,7 @@ const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const analytics = ref<WorkoverAnalytics | null>(null)
+const deliverySummary = ref<DeliverySummary | null>(null)
 const measureDictionary = ref<DictionaryItem[]>([])
 const dateRange = ref<[Date, Date] | null>(null)
 const measureFilter = ref('')
@@ -111,18 +115,23 @@ const measureOptions = computed(() => (analytics.value?.measure_types || []).map
 
 const kpis = computed(() => {
   const summary = analytics.value?.kpis
+  const delivery = deliverySummary.value
   if (!summary) {
     return [
       { label: '项目池总量', value: 0, hint: '当前筛选范围' },
       { label: '待办审批', value: 0, hint: '地质/工艺核实' },
-      { label: '通过率', value: '0%', hint: '已通过与已派工' },
+      { label: '运行表工单', value: 0, hint: '审批通过后自动入库' },
+      { label: '物料需求', value: 0, hint: '配送与到场跟踪' },
+      { label: '完井记录', value: 0, hint: '分类台账沉淀' },
       { label: '预计费用', value: '0.0 万', hint: '措施费用汇总' }
     ]
   }
   return [
     { label: '项目池总量', value: summary.total_projects, hint: '当前筛选范围' },
     { label: '待办审批', value: summary.pending_approvals, hint: '地质/工艺核实' },
-    { label: '通过率', value: `${Math.round(summary.approval_rate)}%`, hint: '已通过与已派工' },
+    { label: '运行表工单', value: delivery?.operations.total_sheets ?? 0, hint: `派工率 ${Math.round(delivery?.operations.dispatch_rate ?? 0)}%` },
+    { label: '物料需求', value: delivery?.materials.total ?? 0, hint: `紧急 ${delivery?.materials.emergency_count ?? 0} 项` },
+    { label: '完井记录', value: delivery?.completions.total ?? 0, hint: '按措施类型统计' },
     { label: '预计费用', value: `${summary.estimated_cost.toFixed(1)} 万`, hint: `平均优先级 ${summary.average_priority.toFixed(1)}` }
   ]
 })
@@ -248,7 +257,12 @@ async function loadMeasureDictionary() {
 async function loadDashboard() {
   loading.value = true
   try {
-    analytics.value = await getProjectAnalytics(currentQuery())
+    const [projectAnalytics, summary] = await Promise.all([
+      getProjectAnalytics(currentQuery()),
+      getDeliverySummary()
+    ])
+    analytics.value = projectAnalytics
+    deliverySummary.value = summary
     await nextTick()
     renderCharts()
   } finally {
@@ -292,6 +306,14 @@ function exportSummary() {
   link.click()
   window.setTimeout(() => URL.revokeObjectURL(link.href), 0)
   ElMessage.success('摘要已导出')
+}
+
+async function downloadAcceptanceExcel() {
+  await downloadReport('/reports/delivery-summary.xlsx', '试运行验收摘要.xlsx')
+}
+
+async function downloadAcceptanceWord() {
+  await downloadReport('/reports/delivery-summary.docx', '试运行验收摘要.docx')
 }
 
 function resizeCharts() {

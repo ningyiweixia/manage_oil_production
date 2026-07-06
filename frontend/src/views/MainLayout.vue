@@ -86,12 +86,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { Bell, Tickets, TrendCharts, User, Setting, Monitor, Document, DataAnalysis, Edit, List, Key, Menu, OfficeBuilding, Promotion, Files } from '@element-plus/icons-vue'
 import { useApprovalSocket } from '../composables/useApprovalSocket'
 import { PROJECT_NOTIFICATION, normalizeNotificationMessage, type ProjectNotification } from '../composables/useProjectSync'
-import type { MenuNode } from '../api/auth'
+import { getCurrentUser, type MenuNode } from '../api/auth'
+import { clearSessionMenus, loadCachedMenus, refreshSessionMenus } from '../utils/menuCache'
 
 const iconMap: Record<string, any> = {
   Tickets, TrendCharts, Setting, Monitor, Document, DataAnalysis, Bell, User,
   settings: Setting, database: DataAnalysis, table: Tickets, team: OfficeBuilding,
-  list: List, send: Promotion, edit: Edit, key: Key, menu: Menu,
+  list: List, send: Promotion, edit: Edit, key: Key, menu: Menu, goods: List, truck: Promotion,
   user: User, shield: Key, document: Document, monitor: Monitor, 'file-text': Files,
   'trend-charts': TrendCharts
 }
@@ -108,7 +109,9 @@ const routeIconMap: Record<string, any> = {
   '/contractor/capacity': OfficeBuilding,
   '/contractor/dispatch': Promotion,
   '/contractor/operation-sheets': Document,
-  '/engineering/designs': Edit,
+  '/material/requirements': List,
+  '/material/delivery': Promotion,
+  '/completion': Document,
   '/a5/integration': Monitor,
   '/dashboard': TrendCharts,
   '/approval': Tickets
@@ -123,6 +126,7 @@ const router = useRouter()
 const { connect } = useApprovalSocket()
 const notificationCount = ref(0)
 const notifications = ref<Array<ProjectNotification & { id: number; title: string; message: string; time: string }>>([])
+const cachedMenus = ref<MenuNode[]>(loadCachedMenus())
 const user = computed(() => {
   try { return JSON.parse(localStorage.getItem('current_user') || '{}') } catch { return {} }
 })
@@ -160,6 +164,9 @@ function withAccountSettingsMenu(items: MenuNode[]): MenuNode[] {
 
 function normalizeDeprecatedMenus(items: MenuNode[]): MenuNode[] {
   return items.flatMap((item) => {
+    if (item.route_name === 'engineering' || item.route_name === 'engineering_designs' || item.route_path?.startsWith('/engineering')) {
+      return []
+    }
     const children = normalizeDeprecatedMenus(item.children || [])
     if (item.route_name === 'workover' || item.route_path === '/workover') {
       return children.map((child) => ({
@@ -174,18 +181,16 @@ function normalizeDeprecatedMenus(items: MenuNode[]): MenuNode[] {
 
 /** Build sidebar menus from backend RBAC menus, with a static fallback */
 const sidebarMenus = computed<MenuNode[]>(() => {
-  try {
-    const stored = JSON.parse(localStorage.getItem('menus') || '[]') as MenuNode[]
-    if (stored && stored.length) {
-      // Filter invisible menus and recursively filter children
-      const filterVisible = (items: MenuNode[]): MenuNode[] =>
-        items
-          .filter((m) => m.is_visible !== false && m.is_active !== false)
-          .map((m) => ({ ...m, children: filterVisible(m.children || []) }))
-          .sort((a, b) => a.sort_order - b.sort_order)
-      return withAccountSettingsMenu(normalizeDeprecatedMenus(filterVisible(stored))).sort((a, b) => a.sort_order - b.sort_order)
-    }
-  } catch { /* fall through to fallback */ }
+  const stored = cachedMenus.value
+  if (stored && stored.length) {
+    // Filter invisible menus and recursively filter children
+    const filterVisible = (items: MenuNode[]): MenuNode[] =>
+      items
+        .filter((m) => m.is_visible !== false && m.is_active !== false)
+        .map((m) => ({ ...m, children: filterVisible(m.children || []) }))
+        .sort((a, b) => a.sort_order - b.sort_order)
+    return withAccountSettingsMenu(normalizeDeprecatedMenus(filterVisible(stored))).sort((a, b) => a.sort_order - b.sort_order)
+  }
   return [
     {
       id: 1, title: '审核审批工作台', route_name: 'approval', route_path: '/approval',
@@ -203,27 +208,68 @@ const sidebarMenus = computed<MenuNode[]>(() => {
       is_visible: true, is_active: true, meta: {}, children: []
     },
     {
-      id: 4, title: '工程设计管理', route_name: 'engineering_designs', route_path: '/engineering/designs',
-      component: null, icon: 'Document', parent_id: null, sort_order: 4,
-      is_visible: true, is_active: true, meta: {}, children: []
-    },
-    {
-      id: 5, title: 'A5 系统集成', route_name: 'a5', route_path: '/a5/integration',
-      component: null, icon: 'Monitor', parent_id: null, sort_order: 5,
-      is_visible: true, is_active: true, meta: {}, children: []
-    },
-    {
-      id: 6, title: '系统管理', route_name: 'system_users', route_path: '/system/users',
-      component: null, icon: 'Setting', parent_id: null, sort_order: 6,
+      id: 4, title: '物料管理', route_name: 'material', route_path: '/material',
+      component: null, icon: 'goods', parent_id: null, sort_order: 4,
       is_visible: true, is_active: true, meta: {}, children: [
         {
-          id: 61, title: '账号设置', route_name: 'system_account', route_path: '/system/account',
-          component: null, icon: 'user', parent_id: 6, sort_order: 1,
+          id: 41, title: '物料需求', route_name: 'material_requirements', route_path: '/material/requirements',
+          component: null, icon: 'list', parent_id: 4, sort_order: 1,
           is_visible: true, is_active: true, meta: {}, children: []
         },
         {
-          id: 62, title: '用户管理', route_name: 'system_users', route_path: '/system/users',
-          component: null, icon: 'user', parent_id: 6, sort_order: 2,
+          id: 42, title: '物料配送', route_name: 'material_delivery', route_path: '/material/delivery',
+          component: null, icon: 'truck', parent_id: 4, sort_order: 2,
+          is_visible: true, is_active: true, meta: {}, children: []
+        }
+      ]
+    },
+    {
+      id: 6, title: '完井台账', route_name: 'completion', route_path: '/completion',
+      component: null, icon: 'document', parent_id: null, sort_order: 5,
+      is_visible: true, is_active: true, meta: {}, children: []
+    },
+    {
+      id: 7, title: 'A5 系统集成', route_name: 'a5', route_path: '/a5/integration',
+      component: null, icon: 'Monitor', parent_id: null, sort_order: 6,
+      is_visible: true, is_active: true, meta: {}, children: []
+    },
+    {
+      id: 8, title: '系统管理', route_name: 'system_users', route_path: '/system/users',
+      component: null, icon: 'Setting', parent_id: null, sort_order: 7,
+      is_visible: true, is_active: true, meta: {}, children: [
+        {
+          id: 81, title: '账号设置', route_name: 'system_account', route_path: '/system/account',
+          component: null, icon: 'user', parent_id: 8, sort_order: 1,
+          is_visible: true, is_active: true, meta: {}, children: []
+        },
+        {
+          id: 82, title: '用户管理', route_name: 'system_users', route_path: '/system/users',
+          component: null, icon: 'user', parent_id: 8, sort_order: 2,
+          is_visible: true, is_active: true, meta: {}, children: []
+        },
+        {
+          id: 83, title: '角色管理', route_name: 'system_roles', route_path: '/system/roles',
+          component: null, icon: 'shield', parent_id: 8, sort_order: 3,
+          is_visible: true, is_active: true, meta: {}, children: []
+        },
+        {
+          id: 84, title: '菜单管理', route_name: 'system_menus', route_path: '/system/menus',
+          component: null, icon: 'menu', parent_id: 8, sort_order: 4,
+          is_visible: true, is_active: true, meta: {}, children: []
+        },
+        {
+          id: 85, title: '权限管理', route_name: 'system_permissions', route_path: '/system/permissions',
+          component: null, icon: 'key', parent_id: 8, sort_order: 5,
+          is_visible: true, is_active: true, meta: {}, children: []
+        },
+        {
+          id: 86, title: '操作日志', route_name: 'system_logs', route_path: '/system/operation-logs',
+          component: null, icon: 'file-text', parent_id: 8, sort_order: 6,
+          is_visible: true, is_active: true, meta: {}, children: []
+        },
+        {
+          id: 87, title: '数据字典', route_name: 'system_dictionaries', route_path: '/system/dictionaries',
+          component: null, icon: 'list', parent_id: 8, sort_order: 7,
           is_visible: true, is_active: true, meta: {}, children: []
         }
       ]
@@ -236,8 +282,18 @@ function logout() {
   localStorage.removeItem('refresh_token')
   localStorage.removeItem('current_user')
   localStorage.removeItem('permissions')
-  localStorage.removeItem('menus')
+  clearSessionMenus()
   router.push('/login')
+}
+
+async function refreshMenusFromServer() {
+  try {
+    const currentUser = await getCurrentUser()
+    refreshSessionMenus(currentUser)
+    cachedMenus.value = loadCachedMenus()
+  } catch {
+    cachedMenus.value = loadCachedMenus()
+  }
 }
 
 function openAccountSettings() {
@@ -274,6 +330,7 @@ function handleProjectNotification(event: Event) {
 }
 
 onMounted(() => {
+  void refreshMenusFromServer()
   connect()
   window.addEventListener('auth-expired', handleAuthExpired)
   window.addEventListener(PROJECT_NOTIFICATION, handleProjectNotification)

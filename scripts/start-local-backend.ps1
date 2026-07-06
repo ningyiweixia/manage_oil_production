@@ -15,9 +15,11 @@ $env:REDIS_URL = if ($env:REDIS_URL) { $env:REDIS_URL } else { "" }
 from app import models  # noqa: F401
 from app.db.base import Base
 from app.db.session import engine
+from app.db.local_schema import ensure_sqlite_columns
 from app.db.seed import seed
 
 Base.metadata.create_all(bind=engine)
+ensure_sqlite_columns(engine)
 seed()
 print("Local database initialized")
 "@ | python -

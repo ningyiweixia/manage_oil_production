@@ -187,6 +187,36 @@ def apply_a5_update_to_operation_sheet(
     return new_status
 
 
+def build_local_daily_reports(
+    sheets: list[WorkoverOperationSheet],
+    sync_date: str,
+) -> list[dict[str, Any]]:
+    reports: list[dict[str, Any]] = []
+    for sheet in sheets:
+        if sheet.status == OperationStatus.DISPATCHED:
+            reports.append(
+                {
+                    "operation_no": sheet.operation_no,
+                    "status": "WORKING",
+                    "progress": max(sheet.progress or 0, 35),
+                    "report_date": sync_date,
+                    "remark": "本地演示模拟：A5 已接收派工并进入施工",
+                }
+            )
+        elif sheet.status == OperationStatus.WORKING:
+            next_progress = 100 if (sheet.progress or 0) >= 80 else max(sheet.progress or 0, 65)
+            reports.append(
+                {
+                    "operation_no": sheet.operation_no,
+                    "status": "FINISHED" if next_progress == 100 else "WORKING",
+                    "progress": next_progress,
+                    "report_date": sync_date,
+                    "remark": "本地演示模拟：A5 日报同步更新施工进度",
+                }
+            )
+    return reports
+
+
 async def sync_daily_operations(db: Session, sync_date: str | None = None) -> dict[str, Any]:
     """同步 A5 日报数据到修井运行表。
 
@@ -200,12 +230,22 @@ async def sync_daily_operations(db: Session, sync_date: str | None = None) -> di
     if sync_date is None:
         sync_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    client = A5Client()
-    try:
-        raw_data = await client.fetch_daily_reports(sync_date)
-    except BusinessException as exc:
-        logger.error(f"A5 日报拉取失败: {exc.msg}")
-        return {"total": 0, "updated": 0, "failed": 0, "error": exc.msg}
+    if not settings.a5_base_url:
+        raw_data = build_local_daily_reports(
+            list(
+                db.query(WorkoverOperationSheet)
+                .filter(WorkoverOperationSheet.status.in_([OperationStatus.DISPATCHED, OperationStatus.WORKING]))
+                .all()
+            ),
+            sync_date,
+        )
+    else:
+        client = A5Client()
+        try:
+            raw_data = await client.fetch_daily_reports(sync_date)
+        except BusinessException as exc:
+            logger.error(f"A5 日报拉取失败: {exc.msg}")
+            return {"total": 0, "updated": 0, "failed": 0, "error": exc.msg}
 
     cleaned = clean_daily_report(raw_data)
     stats = {"total": len(cleaned), "updated": 0, "failed": 0}

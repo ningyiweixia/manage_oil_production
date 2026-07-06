@@ -1,4 +1,5 @@
 import json
+import uuid
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -51,7 +52,9 @@ class OperationLogMiddleware(BaseHTTPMiddleware):
     """Best-effort operation log; failures never block business APIs."""
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        request.state.trace_id = request.headers.get("X-Trace-Id") or uuid.uuid4().hex
         response = await call_next(request)
+        response.headers["X-Trace-Id"] = request.state.trace_id
         if (
             request.method == "OPTIONS"
             or request.url.path in settings.auth_whitelist_paths
@@ -74,6 +77,7 @@ class OperationLogMiddleware(BaseHTTPMiddleware):
                 db.add(
                     OperationLog(
                         user_id=getattr(request.state, "user_id", None),
+                        trace_id=getattr(request.state, "trace_id", None),
                         username=None,
                         ip_address=request.client.host if request.client else None,
                         method=request.method,

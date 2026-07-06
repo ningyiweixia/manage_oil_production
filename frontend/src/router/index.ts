@@ -4,9 +4,11 @@ import LoginView from '../views/LoginView.vue'
 import ApprovalWorkbench from '../views/ApprovalWorkbench.vue'
 import AnalyticsDashboard from '../views/AnalyticsDashboard.vue'
 import ContractorDispatchView from '../views/ContractorDispatchView.vue'
-import EngineeringDesignView from '../views/EngineeringDesignView.vue'
 import A5IntegrationView from '../views/A5IntegrationView.vue'
 import SystemAdminView from '../views/SystemAdminView.vue'
+import MaterialManageView from '../views/MaterialManageView.vue'
+import CompletionLedgerView from '../views/CompletionLedgerView.vue'
+import { clearSessionMenus } from '../utils/menuCache'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -23,7 +25,9 @@ const router = createRouter({
         { path: '/contractor/capacity', component: ContractorDispatchView, meta: { title: '承包商运力报备' } },
         { path: '/contractor/dispatch', component: ContractorDispatchView, meta: { title: '智能派工' } },
         { path: '/contractor/operation-sheets', component: ContractorDispatchView, meta: { title: '修井运行表' } },
-        { path: '/engineering/designs', component: EngineeringDesignView, meta: { title: '工程设计管理' } },
+        { path: '/material/requirements', component: MaterialManageView, meta: { title: '物料需求台账' } },
+        { path: '/material/delivery', component: MaterialManageView, meta: { title: '物料配送跟踪' } },
+        { path: '/completion', component: CompletionLedgerView, meta: { title: '完井分类台账' } },
         { path: '/a5/integration', component: A5IntegrationView, meta: { title: 'A5 系统集成' } },
         { path: '/system/account', component: SystemAdminView, meta: { title: '账号设置' } },
         { path: '/system/users', component: SystemAdminView, meta: { title: '系统用户管理' } },
@@ -56,7 +60,7 @@ router.beforeEach((to) => {
     localStorage.removeItem('refresh_token')
     localStorage.removeItem('current_user')
     localStorage.removeItem('permissions')
-    localStorage.removeItem('menus')
+    clearSessionMenus()
     return { path: '/login', query: { redirect: to.fullPath } }
   }
   if (to.path === '/login' && isTokenValid(localStorage.getItem('access_token'))) {

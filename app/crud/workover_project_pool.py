@@ -15,6 +15,7 @@ from app.schemas.workover_project_pool import (
     WorkoverProjectPoolUpdate,
 )
 from app.services.audit_service import write_approval_log
+from app.services.data_scope_service import apply_project_pool_scope
 from app.services.dictionary_service import ensure_dictionary_values
 from app.utils.jsonb import measure_type_filter
 
@@ -83,8 +84,10 @@ def _apply_filters(stmt: Select[tuple[WorkoverProjectPool]], query: WorkoverProj
     return stmt
 
 
-def list_project_pools(db: Session, query: WorkoverProjectPoolQuery) -> tuple[list[WorkoverProjectPool], int]:
+def list_project_pools(db: Session, query: WorkoverProjectPoolQuery, current_user=None) -> tuple[list[WorkoverProjectPool], int]:
     base_stmt = _apply_filters(select(WorkoverProjectPool), query)
+    if current_user is not None:
+        base_stmt = apply_project_pool_scope(base_stmt, current_user)
     total = db.scalar(select(func.count()).select_from(base_stmt.subquery())) or 0
     rows = db.scalars(
         base_stmt.order_by(WorkoverProjectPool.created_at.desc())

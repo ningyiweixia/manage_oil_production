@@ -122,6 +122,14 @@
           <el-progress :percentage="row.progress" />
         </template>
       </el-table-column>
+      <el-table-column label="物料状态" min-width="150">
+        <template #default="{ row }">
+          <el-tag :type="materialTag(materialInfo(row).status)" effect="plain">
+            {{ materialStatusLabel(materialInfo(row).status) }}
+          </el-tag>
+          <span class="muted-text material-count">共 {{ materialInfo(row).total }} 项</span>
+        </template>
+      </el-table-column>
       <el-table-column label="A5状态" width="120">
         <template #default="{ row }">
           <el-tag v-if="row.a5_status" effect="plain">{{ row.a5_status }}</el-tag>
@@ -230,6 +238,16 @@ import {
 
 const contractorStatusText = { AVAILABLE: '可用', BUSY: '忙碌', OFFLINE: '离线' }
 const sheetStatusText = { WAITING_DISPATCH: '待派工', DISPATCHED: '已派工', WORKING: '施工中', FINISHED: '已完成', CANCELED: '已取消' }
+const materialStatusText = {
+  NONE: '无需求',
+  PENDING: '待处理',
+  APPROVED: '已审核',
+  PLANNED: '已计划',
+  DELIVERED: '已出库',
+  ARRIVED: '已到场',
+  USED: '已使用',
+  CANCELED: '已取消'
+}
 const loading = ref(false)
 const saving = ref(false)
 const contractors = ref<ContractorCapacity[]>([])
@@ -271,6 +289,28 @@ function contractorStatusLabel(status: keyof typeof contractorStatusText) {
 
 function sheetStatusLabel(status: keyof typeof sheetStatusText) {
   return sheetStatusText[status] || status
+}
+
+function materialInfo(row: OperationSheet) {
+  const raw = row.progress_detail?.material
+  if (!raw || typeof raw !== 'object') return { status: 'NONE', total: 0 }
+  const material = raw as { status?: string; total?: number }
+  return {
+    status: material.status || 'NONE',
+    total: Number(material.total || 0)
+  }
+}
+
+function materialStatusLabel(status: string) {
+  return materialStatusText[status as keyof typeof materialStatusText] || status
+}
+
+function materialTag(status: string) {
+  if (status === 'USED' || status === 'ARRIVED') return 'success'
+  if (status === 'DELIVERED' || status === 'PLANNED') return 'primary'
+  if (status === 'PENDING' || status === 'APPROVED') return 'warning'
+  if (status === 'CANCELED') return 'danger'
+  return 'info'
 }
 
 function formatDateTime(value?: string | null) {
@@ -422,4 +462,5 @@ onMounted(loadAll)
 .stats-value.warn { color: #b7791f; }
 .stats-value.primary { color: #409eff; }
 .stats-value.success { color: #168a4a; }
+.material-count { margin-left: 8px; }
 </style>
