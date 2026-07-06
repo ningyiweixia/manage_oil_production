@@ -167,9 +167,25 @@
       <div class="form-section-title" style="margin-top:16px">附件信息</div>
       <el-row :gutter="16">
         <el-col :span="24"><el-form-item label="照片附件">
-          <el-input v-model="photoUrlsText" type="textarea" :rows="2" placeholder="输入照片URL，多个地址用逗号分隔" />
-          <div v-if="projectForm.photo_urls && projectForm.photo_urls.length" style="margin-top:4px;color:#909399;font-size:12px">
-            已添加 {{ projectForm.photo_urls.length }} 个附件
+          <div class="photo-attachment-box">
+            <el-upload
+              :auto-upload="false"
+              :show-file-list="false"
+              multiple
+              accept=".jpg,.jpeg,.png,.gif,.webp,.bmp,image/jpeg,image/png,image/gif,image/webp,image/bmp"
+              :on-change="handlePhotoSelected"
+            >
+              <el-button :icon="Plus">添加照片</el-button>
+            </el-upload>
+            <span class="attachment-help">支持 jpg、jpeg、png、gif、webp、bmp，单张不超过 5MB</span>
+          </div>
+          <el-input v-model="photoUrlsText" type="textarea" :rows="2" placeholder="可粘贴照片URL，多个地址用逗号分隔；也可点击上方按钮选择本地照片" />
+          <div v-if="projectForm.photo_urls && projectForm.photo_urls.length" class="photo-preview-grid">
+            <div v-for="(url, index) in projectForm.photo_urls" :key="`${index}-${url.slice(0, 24)}`" class="photo-preview-card">
+              <el-image v-if="isPreviewablePhoto(url)" :src="url" fit="cover" class="photo-preview-image" :preview-src-list="projectForm.photo_urls" />
+              <div v-else class="photo-preview-placeholder">URL</div>
+              <el-button class="photo-remove" :icon="Delete" circle size="small" @click="removePhotoAttachment(index)" />
+            </div>
           </div>
         </el-form-item></el-col>
       </el-row>
@@ -214,7 +230,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import type { FormInstance, FormRules } from 'element-plus'
+import type { FormInstance, FormRules, UploadFile } from 'element-plus'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { Delete, Plus, Promotion, Refresh, Search, TrendCharts } from '@element-plus/icons-vue'
 import { createProject, deleteProject, getProjectAnalytics, listProjects, patchProjectStatus, submitProjects, updateProject } from '../api/workover'
@@ -222,6 +238,7 @@ import { listDictionaryItems, type DictionaryItem } from '../api/dictionary'
 import { approvalFlowNodes, approvalNodeClass, canApprove, nextApprovedStatus, rejectedAtLabel, showApprovalFlow, statusLabels, statusTagType } from '../utils/status'
 import { emitProjectDataChanged, useProjectDataChanged } from '../composables/useProjectSync'
 import type { ProjectPoolStatus, ProjectQuery, WorkoverProject } from '../types/workover'
+import { readPhotoAttachmentAsDataUrl, validatePhotoAttachment } from '../utils/photoAttachments'
 
 const statusOptions = (Object.keys(statusLabels) as ProjectPoolStatus[]).map((value) => ({
   label: statusLabels[value],
@@ -290,6 +307,31 @@ const photoUrlsText = computed<string>({
   get() { return (projectForm.photo_urls || []).join(', ') },
   set(val: string) { projectForm.photo_urls = val ? val.split(',').map((s) => s.trim()).filter(Boolean) : [] }
 })
+
+function isPreviewablePhoto(url: string) {
+  return url.startsWith('data:image/') || /\.(jpg|jpeg|png|gif|webp|bmp)(\?.*)?$/i.test(url)
+}
+
+async function handlePhotoSelected(uploadFile: UploadFile) {
+  const raw = uploadFile.raw
+  if (!raw) return
+  const validationMessage = validatePhotoAttachment(raw)
+  if (validationMessage) {
+    ElMessage.warning(validationMessage)
+    return
+  }
+  try {
+    const dataUrl = await readPhotoAttachmentAsDataUrl(raw)
+    projectForm.photo_urls = [...(projectForm.photo_urls || []), dataUrl]
+    ElMessage.success('照片已添加')
+  } catch (error: any) {
+    ElMessage.error(error?.message || '照片读取失败')
+  }
+}
+
+function removePhotoAttachment(index: number) {
+  projectForm.photo_urls = (projectForm.photo_urls || []).filter((_, itemIndex) => itemIndex !== index)
+}
 
 const projectForm = reactive<Omit<WorkoverProject, 'id' | 'created_at' | 'updated_at'>>({
   well_no: '',
@@ -627,3 +669,54 @@ onMounted(() => {
   void reloadWorkbenchData()
 })
 </script>
+
+<style scoped>
+.photo-attachment-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.attachment-help {
+  color: #667085;
+  font-size: 12px;
+}
+
+.photo-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 10px;
+  width: 100%;
+  margin-top: 10px;
+}
+
+.photo-preview-card {
+  position: relative;
+  height: 96px;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f7f9fc;
+}
+
+.photo-preview-image,
+.photo-preview-placeholder {
+  width: 100%;
+  height: 100%;
+}
+
+.photo-preview-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #667085;
+  font-size: 13px;
+}
+
+.photo-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+</style>
