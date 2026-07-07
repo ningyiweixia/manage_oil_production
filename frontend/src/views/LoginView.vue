@@ -26,6 +26,7 @@ import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { login } from '../api/auth'
+import type { MenuNode } from '../api/auth'
 
 const route = useRoute()
 const router = useRouter()
@@ -38,6 +39,15 @@ const rules: FormRules = {
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
 }
 
+const removedMenuRouteNames = new Set(['engineering', 'engineering_designs'])
+const removedMenuRoutePaths = new Set(['/engineering', '/engineering/designs'])
+
+function filterRemovedMenus(items: MenuNode[]): MenuNode[] {
+  return items
+    .filter((item) => !removedMenuRouteNames.has(item.route_name) && !removedMenuRoutePaths.has(item.route_path))
+    .map((item) => ({ ...item, children: filterRemovedMenus(item.children || []) }))
+}
+
 async function handleLogin() {
   await formRef.value?.validate()
   loading.value = true
@@ -47,7 +57,7 @@ async function handleLogin() {
     localStorage.setItem('refresh_token', result.token.refresh_token)
     localStorage.setItem('current_user', JSON.stringify(result.user))
     localStorage.setItem('permissions', JSON.stringify(result.permissions || []))
-    localStorage.setItem('menus', JSON.stringify(result.menus || []))
+    localStorage.setItem('menus', JSON.stringify(filterRemovedMenus(result.menus || [])))
     ElMessage.success('登录成功')
     router.push(typeof route.query.redirect === 'string' ? route.query.redirect : '/approval')
   } catch {

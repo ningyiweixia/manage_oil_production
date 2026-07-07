@@ -4,7 +4,6 @@ import LoginView from '../views/LoginView.vue'
 import ApprovalWorkbench from '../views/ApprovalWorkbench.vue'
 import AnalyticsDashboard from '../views/AnalyticsDashboard.vue'
 import ContractorDispatchView from '../views/ContractorDispatchView.vue'
-import EngineeringDesignView from '../views/EngineeringDesignView.vue'
 import A5IntegrationView from '../views/A5IntegrationView.vue'
 import SystemAdminView from '../views/SystemAdminView.vue'
 
@@ -23,7 +22,6 @@ const router = createRouter({
         { path: '/contractor/capacity', component: ContractorDispatchView, meta: { title: '承包商运力报备' } },
         { path: '/contractor/dispatch', component: ContractorDispatchView, meta: { title: '智能派工' } },
         { path: '/contractor/operation-sheets', component: ContractorDispatchView, meta: { title: '修井运行表' } },
-        { path: '/engineering/designs', component: EngineeringDesignView, meta: { title: '工程设计管理' } },
         { path: '/a5/integration', component: A5IntegrationView, meta: { title: 'A5 系统集成' } },
         { path: '/system/account', component: SystemAdminView, meta: { title: '账号设置' } },
         { path: '/system/users', component: SystemAdminView, meta: { title: '系统用户管理' } },

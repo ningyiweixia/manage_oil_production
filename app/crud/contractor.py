@@ -334,6 +334,8 @@ def dispatch_operation(
         contractor = get_contractor_capacity(db, contractor_capacity_id)
         if contractor.status != ContractorCapacityStatus.AVAILABLE:
             raise BusinessException(CONFLICT, f"承包商 {contractor.contractor_name} 当前状态不可用")
+        if contractor.available_count <= 0:
+            raise BusinessException(CONFLICT, f"承包商 {contractor.contractor_name} 今日可用队伍数不足")
 
         # 4. 执行派工
         before = _sheet_snapshot(sheet)
@@ -342,8 +344,10 @@ def dispatch_operation(
         sheet.project.status = ProjectPoolStatus.DISPATCHED
         db.flush()
 
-        # 5. 更新承包商状态为忙碌
-        contractor.status = ContractorCapacityStatus.BUSY
+        # 5. 按日报可用队伍数扣减，剩余为 0 时才标记忙碌
+        contractor.available_count -= 1
+        if contractor.available_count == 0:
+            contractor.status = ContractorCapacityStatus.BUSY
         db.flush()
 
         # 6. 写审计日志
@@ -381,14 +385,18 @@ def update_sheet_progress(
     before = _sheet_snapshot(sheet)
     sheet.progress = payload.progress
     sheet.progress_detail = payload.progress_detail
+    now = datetime.now(timezone.utc)
 
-    # 自动推进状态（两个独立 if，允许 DISPATCHED→WORKING→FINISHED 连续推进）
-    if payload.progress == 100 and sheet.status == OperationStatus.DISPATCHED:
+    if 0 < payload.progress < 100 and sheet.status == OperationStatus.DISPATCHED:
         sheet.status = OperationStatus.WORKING
-        sheet.actual_start_at = datetime.now(timezone.utc)
-    if payload.progress == 100 and sheet.status == OperationStatus.WORKING:
+        sheet.actual_start_at = sheet.actual_start_at or now
+    elif payload.progress == 100 and sheet.status in {OperationStatus.DISPATCHED, OperationStatus.WORKING}:
         sheet.status = OperationStatus.FINISHED
-        sheet.actual_end_at = datetime.now(timezone.utc)
+        sheet.actual_start_at = sheet.actual_start_at or now
+        sheet.actual_end_at = now
+        if sheet.contractor_capacity is not None:
+            sheet.contractor_capacity.available_count += 1
+            sheet.contractor_capacity.status = ContractorCapacityStatus.AVAILABLE
 
     db.flush()
     write_approval_log(

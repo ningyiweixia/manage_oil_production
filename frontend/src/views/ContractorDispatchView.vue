@@ -84,7 +84,7 @@
       </div>
       <el-table v-loading="loading" :data="prioritySheets" row-key="id">
         <el-table-column prop="operation_no" label="作业编号" min-width="180" />
-        <el-table-column prop="project_id" label="项目ID" width="90" />
+        <el-table-column prop="project_well_no" label="井号" width="110" />
         <el-table-column label="进度" width="120">
           <template #default="{ row }">
             <el-progress :percentage="row.progress" :stroke-width="8" />
@@ -110,7 +110,7 @@
     </div>
     <el-table v-loading="loading" :data="sheets" row-key="id">
       <el-table-column prop="operation_no" label="作业编号" min-width="180" />
-      <el-table-column prop="project_id" label="项目ID" width="90" />
+      <el-table-column prop="project_well_no" label="井号" width="110" />
       <el-table-column prop="contractor_capacity_id" label="队伍ID" width="90" />
       <el-table-column label="状态" width="120">
         <template #default="{ row }">
@@ -134,10 +134,12 @@
           {{ formatDateTime(row.last_a5_sync_at) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="150">
+      <el-table-column label="操作" width="250">
         <template #default="{ row }">
           <div class="table-actions">
             <el-button text type="primary" @click="openProgress(row)">更新进度</el-button>
+            <el-button text type="success" @click="openA5(row, '/measure-review')">A5审核</el-button>
+            <el-button text type="warning" @click="openA5(row, '/measure-issue')">A5下发</el-button>
           </div>
         </template>
       </el-table-column>
@@ -188,7 +190,7 @@
           <el-option
             v-for="item in availableContractors"
             :key="item.id"
-            :label="`${item.contractor_name} / ${item.team_name}`"
+            :label="`${item.contractor_name} / ${item.team_name}（可用${item.available_count}）`"
             :value="item.id"
           />
         </el-select>
@@ -227,6 +229,7 @@ import {
   type OperationAnalytics,
   type OperationSheet
 } from '../api/contractor'
+import { createA5SsoToken as createA5Token } from '../api/a5'
 
 const contractorStatusText = { AVAILABLE: '可用', BUSY: '忙碌', OFFLINE: '离线' }
 const sheetStatusText = { WAITING_DISPATCH: '待派工', DISPATCHED: '已派工', WORKING: '施工中', FINISHED: '已完成', CANCELED: '已取消' }
@@ -255,7 +258,7 @@ const contractorForm = reactive({
   capability_tags: {}
 })
 const sheetForm = reactive<{ project_id: number; planned_start_at?: string; planned_end_at?: string }>({ project_id: 1 })
-const availableContractors = computed(() => contractors.value.filter((item) => item.status === 'AVAILABLE'))
+const availableContractors = computed(() => contractors.value.filter((item) => item.status === 'AVAILABLE' && item.available_count > 0))
 
 function contractorTag(status: string) {
   return status === 'AVAILABLE' ? 'success' : status === 'BUSY' ? 'warning' : 'info'
@@ -386,6 +389,15 @@ async function saveProgress() {
   } finally {
     saving.value = false
   }
+}
+
+async function openA5(row: OperationSheet, redirectPath: string) {
+  if (!row.project_well_no) {
+    ElMessage.warning('运行表缺少井号，无法生成 A5 跳转')
+    return
+  }
+  const token = await createA5Token(row.project_well_no, redirectPath)
+  window.open(token.redirect_url, '_blank')
 }
 
 onMounted(loadAll)

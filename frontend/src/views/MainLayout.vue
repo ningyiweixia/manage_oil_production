@@ -83,7 +83,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Bell, Tickets, TrendCharts, User, Setting, Monitor, Document, DataAnalysis, Edit, List, Key, Menu, OfficeBuilding, Promotion, Files } from '@element-plus/icons-vue'
+import { Bell, Tickets, TrendCharts, User, Setting, Monitor, Document, DataAnalysis, List, Key, Menu, OfficeBuilding, Promotion, Files } from '@element-plus/icons-vue'
 import { useApprovalSocket } from '../composables/useApprovalSocket'
 import { PROJECT_NOTIFICATION, normalizeNotificationMessage, type ProjectNotification } from '../composables/useProjectSync'
 import type { MenuNode } from '../api/auth'
@@ -91,7 +91,7 @@ import type { MenuNode } from '../api/auth'
 const iconMap: Record<string, any> = {
   Tickets, TrendCharts, Setting, Monitor, Document, DataAnalysis, Bell, User,
   settings: Setting, database: DataAnalysis, table: Tickets, team: OfficeBuilding,
-  list: List, send: Promotion, edit: Edit, key: Key, menu: Menu,
+  list: List, send: Promotion, key: Key, menu: Menu,
   user: User, shield: Key, document: Document, monitor: Monitor, 'file-text': Files,
   'trend-charts': TrendCharts
 }
@@ -108,10 +108,16 @@ const routeIconMap: Record<string, any> = {
   '/contractor/capacity': OfficeBuilding,
   '/contractor/dispatch': Promotion,
   '/contractor/operation-sheets': Document,
-  '/engineering/designs': Edit,
   '/a5/integration': Monitor,
   '/dashboard': TrendCharts,
   '/approval': Tickets
+}
+
+const removedMenuRouteNames = new Set(['engineering', 'engineering_designs'])
+const removedMenuRoutePaths = new Set(['/engineering', '/engineering/designs'])
+
+function isRemovedMenu(menu: MenuNode) {
+  return removedMenuRouteNames.has(menu.route_name) || removedMenuRoutePaths.has(menu.route_path)
 }
 
 function resolveMenuIcon(menu: MenuNode) {
@@ -159,7 +165,7 @@ function withAccountSettingsMenu(items: MenuNode[]): MenuNode[] {
 }
 
 function normalizeDeprecatedMenus(items: MenuNode[]): MenuNode[] {
-  return items.flatMap((item) => {
+  return items.filter((item) => !isRemovedMenu(item)).flatMap((item) => {
     const children = normalizeDeprecatedMenus(item.children || [])
     if (item.route_name === 'workover' || item.route_path === '/workover') {
       return children.map((child) => ({
@@ -200,11 +206,6 @@ const sidebarMenus = computed<MenuNode[]>(() => {
     {
       id: 3, title: '承包商调度', route_name: 'contractor_dispatch', route_path: '/contractor/dispatch',
       component: null, icon: 'team', parent_id: null, sort_order: 3,
-      is_visible: true, is_active: true, meta: {}, children: []
-    },
-    {
-      id: 4, title: '工程设计管理', route_name: 'engineering_designs', route_path: '/engineering/designs',
-      component: null, icon: 'Document', parent_id: null, sort_order: 4,
       is_visible: true, is_active: true, meta: {}, children: []
     },
     {

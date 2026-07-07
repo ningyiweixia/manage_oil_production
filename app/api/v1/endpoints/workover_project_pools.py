@@ -216,6 +216,9 @@ async def patch_status(
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
         comment=payload.comment,
+        geology_verified_daily_oil=payload.geology_verified_daily_oil,
+        process_well_condition=payload.process_well_condition,
+        process_can_workover=payload.process_can_workover,
     )
     await push_status_changed(
         {

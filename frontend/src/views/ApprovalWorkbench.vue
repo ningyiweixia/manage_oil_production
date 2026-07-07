@@ -63,6 +63,19 @@
           <el-progress :percentage="row.production_priority" :stroke-width="8" :show-text="false" />
         </template>
       </el-table-column>
+      <el-table-column label="核实产量" min-width="110">
+        <template #default="{ row }">
+          <span>{{ row.geology_verified_daily_oil ?? '-' }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="工艺结论" min-width="160" show-overflow-tooltip>
+        <template #default="{ row }">
+          <el-tag v-if="row.process_can_workover === true" type="success" effect="plain">可上修</el-tag>
+          <el-tag v-else-if="row.process_can_workover === false" type="danger" effect="plain">不可上修</el-tag>
+          <span v-else class="muted-text">待核实</span>
+          <span v-if="row.process_well_condition" class="condition-text">{{ row.process_well_condition }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="措施内容" min-width="190">
         <template #default="{ row }">
           <el-tag v-for="measure in row.measures_jsonb.measures || []" :key="measure.measure_type" class="tag-gap" effect="plain">
@@ -136,6 +149,9 @@
         <el-col :span="24"><el-form-item label="故障描述"><el-input v-model="projectForm.fault_description" type="textarea" :rows="2" /></el-form-item></el-col>
         <el-col :span="16"><el-form-item label="上修原因" prop="reason"><el-input v-model="projectForm.reason" /></el-form-item></el-col>
         <el-col :span="8"><el-form-item label="优先级"><el-slider v-model="projectForm.production_priority" :max="100" /></el-form-item></el-col>
+        <el-col :span="8"><el-form-item label="核实日产油"><el-input-number v-model="projectForm.geology_verified_daily_oil" :min="0" :precision="2" :controls="false" /></el-form-item></el-col>
+        <el-col :span="8"><el-form-item label="可上修"><el-switch v-model="projectForm.process_can_workover" /></el-form-item></el-col>
+        <el-col :span="24"><el-form-item label="井况结论"><el-input v-model="projectForm.process_well_condition" type="textarea" :rows="2" /></el-form-item></el-col>
       </el-row>
 
       <div class="measure-head">
@@ -182,6 +198,17 @@
 
   <el-dialog v-model="approvalDialogVisible" title="审批处理" width="520px">
     <el-form label-position="top">
+      <el-form-item v-if="approvalTargetStatus === 'PENDING_PROCESS_VERIFY'" label="核实日产油">
+        <el-input-number v-model="approvalExtra.geology_verified_daily_oil" :min="0" :precision="2" :controls="false" style="width: 220px" />
+      </el-form-item>
+      <template v-if="approvalTargetStatus === 'APPROVED' || approvalTargetStatus === 'REJECTED'">
+        <el-form-item label="井况核实结论">
+          <el-input v-model="approvalExtra.process_well_condition" type="textarea" :rows="3" placeholder="填写井筒、管柱、套损、施工风险等核实结论" />
+        </el-form-item>
+        <el-form-item label="是否可以上修">
+          <el-switch v-model="approvalExtra.process_can_workover" />
+        </el-form-item>
+      </template>
       <el-form-item label="处理意见">
         <el-input v-model="approvalComment" type="textarea" :rows="4" placeholder="请填写核实结论、退回原因或补充说明" />
       </el-form-item>
@@ -256,8 +283,18 @@ const submitDialogVisible = ref(false)
 const approvalDialogVisible = ref(false)
 const editingProject = ref<WorkoverProject | null>(null)
 const pendingApproval = ref<{ id: number; status: ProjectPoolStatus } | null>(null)
+const approvalTarget = ref<WorkoverProject | null>(null)
 const submitComment = ref('')
 const approvalComment = ref('')
+const approvalExtra = reactive<{
+  geology_verified_daily_oil?: number | string | null
+  process_well_condition?: string | null
+  process_can_workover?: boolean | null
+}>({
+  geology_verified_daily_oil: null,
+  process_well_condition: '',
+  process_can_workover: true
+})
 const deleteDialogVisible = ref(false)
 const deleteTarget = ref<WorkoverProject | null>(null)
 const projectFormRef = ref<FormInstance>()
@@ -304,12 +341,17 @@ const projectForm = reactive<Omit<WorkoverProject, 'id' | 'created_at' | 'update
   initiator_name: '',
   initiator_phone: '',
   production_priority: 60,
+  geology_verified_daily_oil: null,
+  process_well_condition: '',
+  process_can_workover: null,
   status: 'DRAFT',
   reason: '',
   measures_jsonb: { measures: [] },
   photo_urls: [],
   remark: ''
 })
+
+const approvalTargetStatus = computed(() => pendingApproval.value?.status || '')
 
 const projectRules: FormRules = {
   well_no: [{ required: true, message: '请输入井号', trigger: 'blur' }],
@@ -417,6 +459,9 @@ function resetForm() {
     initiator_name: '',
     initiator_phone: '',
     production_priority: 60,
+    geology_verified_daily_oil: null,
+    process_well_condition: '',
+    process_can_workover: null,
     status: 'DRAFT',
     reason: '',
     measures_jsonb: { measures: [{ measure_type: '', process: '', construction_params: {}, duration_days: 0, estimated_cost: 0 }] },
@@ -522,6 +567,10 @@ async function confirmSubmit() {
 function openApproval(row: WorkoverProject, status: ProjectPoolStatus) {
   const nextStatus = status === 'APPROVED' ? nextApprovedStatus(row.status) : status
   pendingApproval.value = { id: row.id, status: nextStatus }
+  approvalTarget.value = row
+  approvalExtra.geology_verified_daily_oil = row.geology_verified_daily_oil ?? null
+  approvalExtra.process_well_condition = row.process_well_condition || ''
+  approvalExtra.process_can_workover = nextStatus === 'REJECTED' ? (row.process_can_workover ?? false) : true
   approvalComment.value = status === 'APPROVED'
     ? nextStatus === 'APPROVED'
       ? '核实通过，同意通过审批，进入运行库。'
@@ -532,9 +581,28 @@ function openApproval(row: WorkoverProject, status: ProjectPoolStatus) {
 
 async function confirmApproval() {
   if (!pendingApproval.value) return
+  const verifiedDailyOil = approvalExtra.geology_verified_daily_oil ?? approvalTarget.value?.geology_verified_daily_oil ?? null
+  const normalizedDailyOil =
+    verifiedDailyOil === null || verifiedDailyOil === ''
+      ? null
+      : Number(verifiedDailyOil)
+  if (
+    pendingApproval.value.status === 'PENDING_PROCESS_VERIFY'
+    && (normalizedDailyOil === null || Number.isNaN(normalizedDailyOil))
+  ) {
+    ElMessage.warning('请填写核实日产油')
+    return
+  }
+  if (pendingApproval.value.status === 'APPROVED' && !approvalExtra.process_well_condition) {
+    ElMessage.warning('请填写井况核实结论')
+    return
+  }
   saving.value = true
   try {
-    await patchProjectStatus(pendingApproval.value.id, pendingApproval.value.status, approvalComment.value)
+    await patchProjectStatus(pendingApproval.value.id, pendingApproval.value.status, approvalComment.value, {
+      ...approvalExtra,
+      geology_verified_daily_oil: normalizedDailyOil
+    })
     ElMessage.success('审批状态已更新')
     approvalDialogVisible.value = false
     emitProjectDataChanged()
@@ -627,3 +695,10 @@ onMounted(() => {
   void reloadWorkbenchData()
 })
 </script>
+
+<style scoped>
+.condition-text {
+  margin-left: 8px;
+  color: #667085;
+}
+</style>

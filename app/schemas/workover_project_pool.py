@@ -40,6 +40,9 @@ class WorkoverProjectPoolBase(BaseModel):
     initiator_name: str | None = Field(default=None, max_length=64)
     initiator_phone: str | None = Field(default=None, max_length=32)
     production_priority: int = Field(default=0, ge=0)
+    geology_verified_daily_oil: Decimal | None = Field(default=None, ge=0)
+    process_well_condition: str | None = None
+    process_can_workover: bool | None = None
     reason: str | None = None
     measures_jsonb: MeasuresPayload = Field(default_factory=MeasuresPayload)
     photo_urls: list[str] = Field(default_factory=list)
@@ -57,6 +60,9 @@ class WorkoverProjectPoolUpdate(WorkoverProjectPoolBase):
 class WorkoverProjectPoolStatusPatch(BaseModel):
     status: ProjectPoolStatus
     comment: str | None = None
+    geology_verified_daily_oil: Decimal | None = Field(default=None, ge=0)
+    process_well_condition: str | None = None
+    process_can_workover: bool | None = None
 
 
 class WorkoverProjectPoolSubmit(BaseModel):
@@ -135,6 +141,11 @@ class WorkoverProjectPoolOut(BaseModel):
     initiator_name: str | None = None
     initiator_phone: str | None = None
     production_priority: int
+    geology_verified_daily_oil: Decimal | None = None
+    geology_verified_at: datetime | None = None
+    process_well_condition: str | None = None
+    process_can_workover: bool | None = None
+    process_verified_at: datetime | None = None
     status: ProjectPoolStatus
     reason: str | None = None
     measures_jsonb: dict[str, Any]

@@ -45,6 +45,11 @@ def _project_snapshot(project: WorkoverProjectPool) -> dict[str, Any]:
         "initiator_name": project.initiator_name,
         "initiator_phone": project.initiator_phone,
         "production_priority": project.production_priority,
+        "geology_verified_daily_oil": float(project.geology_verified_daily_oil) if project.geology_verified_daily_oil is not None else None,
+        "geology_verified_at": project.geology_verified_at.isoformat() if project.geology_verified_at else None,
+        "process_well_condition": project.process_well_condition,
+        "process_can_workover": project.process_can_workover,
+        "process_verified_at": project.process_verified_at.isoformat() if project.process_verified_at else None,
         "status": project.status.value if isinstance(project.status, ProjectPoolStatus) else project.status,
         "reason": project.reason,
         "measures_jsonb": project.measures_jsonb,
@@ -316,6 +321,9 @@ def patch_project_status(
     operator_id: int,
     operator_ip: str | None,
     comment: str | None,
+    geology_verified_daily_oil: Any | None = None,
+    process_well_condition: str | None = None,
+    process_can_workover: bool | None = None,
 ) -> WorkoverProjectPool:
     project = get_project_pool(db, project_id)
     # 从驳回状态重新提报时，自动路由到驳回前的审批节点
@@ -328,9 +336,40 @@ def patch_project_status(
             status = previous
     _ensure_status_transition(project.status, status)
     before = _project_snapshot(project)
+    now = datetime.now(timezone.utc)
+
+    if project.status == ProjectPoolStatus.PENDING_GEOLOGY_VERIFY and status == ProjectPoolStatus.PENDING_PROCESS_VERIFY:
+        verified_daily_oil = (
+            geology_verified_daily_oil
+            if geology_verified_daily_oil is not None
+            else project.geology_verified_daily_oil
+        )
+        if verified_daily_oil is None:
+            raise BusinessException(BAD_REQUEST, "地质所/生产指挥中心核实通过前，请填写核实日产油")
+        project.geology_verified_daily_oil = verified_daily_oil
+        project.geology_verified_at = now
+
+    if project.status == ProjectPoolStatus.PENDING_PROCESS_VERIFY and status == ProjectPoolStatus.APPROVED:
+        can_workover = process_can_workover if process_can_workover is not None else project.process_can_workover
+        well_condition = process_well_condition or project.process_well_condition
+        if can_workover is not True:
+            raise BusinessException(BAD_REQUEST, "工艺所通过前必须确认该井可以上修")
+        if not well_condition:
+            raise BusinessException(BAD_REQUEST, "工艺所通过前，请填写井况核实结论")
+        project.process_can_workover = True
+        project.process_well_condition = well_condition
+        project.process_verified_at = now
+
+    if project.status == ProjectPoolStatus.PENDING_PROCESS_VERIFY and status == ProjectPoolStatus.REJECTED:
+        if process_can_workover is not None:
+            project.process_can_workover = process_can_workover
+        if process_well_condition:
+            project.process_well_condition = process_well_condition
+        project.process_verified_at = now
+
     project.status = status
     if status == ProjectPoolStatus.APPROVED:
-        project.approved_at = datetime.now(timezone.utc)
+        project.approved_at = now
     elif status in {ProjectPoolStatus.REJECTED}:
         project.approved_at = None
     db.flush()

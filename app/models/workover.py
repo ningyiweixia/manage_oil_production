@@ -2,7 +2,7 @@ import enum
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Enum as SQLEnum, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -56,6 +56,11 @@ class WorkoverProjectPool(TimestampMixin, Base):
     initiator_name: Mapped[str | None] = mapped_column(String(64), comment="发起人")
     initiator_phone: Mapped[str | None] = mapped_column(String(32), comment="发起人联系电话")
     production_priority: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="产量优先级")
+    geology_verified_daily_oil: Mapped[float | None] = mapped_column(Numeric(12, 2), comment="地质/生产核实日产油")
+    geology_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="地质/生产核实时间")
+    process_well_condition: Mapped[str | None] = mapped_column(Text, comment="工艺核实井况")
+    process_can_workover: Mapped[bool | None] = mapped_column(Boolean, comment="工艺确认是否可以上修")
+    process_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="工艺核实时间")
     status: Mapped[ProjectPoolStatus] = mapped_column(
         SQLEnum(ProjectPoolStatus, native_enum=False, length=64),
         default=ProjectPoolStatus.DRAFT,
@@ -157,3 +162,7 @@ class WorkoverOperationSheet(TimestampMixin, Base):
 
     project: Mapped[WorkoverProjectPool] = relationship(back_populates="operations")
     contractor_capacity: Mapped[ContractorCapacity | None] = relationship(back_populates="operations")
+
+    @property
+    def project_well_no(self) -> str | None:
+        return self.project.well_no if self.project is not None else None

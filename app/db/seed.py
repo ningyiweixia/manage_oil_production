@@ -23,8 +23,6 @@ MENU_DEFINITIONS = [
     ("contractor_capacity", "contractor", "运力报备", "contractor_capacity", "/contractor/capacity", "contractor/capacity/index", "list", 31),
     ("contractor_dispatch", "contractor", "智能派工", "contractor_dispatch", "/contractor/dispatch", "contractor/dispatch/index", "send", 32),
     ("contractor_sheets", "contractor", "修井运行表", "contractor_sheets", "/contractor/operation-sheets", "contractor/operation-sheets/index", "document", 33),
-    ("engineering", None, "工程设计管理", "engineering", "/engineering", "Layout", "edit", 40),
-    ("engineering_designs", "engineering", "设计文档", "engineering_designs", "/engineering/designs", "engineering/designs/index", "document", 41),
     ("material", None, "物料管理", "material", "/material", "Layout", "goods", 35),
     ("material_requirements", "material", "物料需求", "material_requirements", "/material/requirements", "material/requirements/index", "list", 36),
     ("material_delivery", "material", "物料配送", "material_delivery", "/material/delivery", "material/delivery/index", "truck", 37),
@@ -76,10 +74,6 @@ PERMISSION_DEFINITIONS = [
     ("a5:sso", "生成A5 SSO令牌", "/api/v1/a5/sso-token", "POST"),
     ("a5:read", "查看A5同步状态", "/api/v1/a5/sync/status", "GET"),
     ("a5:sync", "触发A5数据同步", "/api/v1/a5/sync/trigger", "POST"),
-    # 工程设计管理权限
-    ("engineering:read", "查看工程设计文档", "/api/v1/engineering-designs", "GET"),
-    ("engineering:generate", "生成工程设计文档", "/api/v1/engineering-designs/generate", "POST"),
-    ("engineering:delete", "删除工程设计文档", "/api/v1/engineering-designs/{id}", "DELETE"),
     # 物料管理权限
     ("material:read", "查看物料需求", "/api/v1/materials", "GET"),
     ("material:create", "创建物料需求", "/api/v1/materials", "POST"),
@@ -134,8 +128,6 @@ ROLE_PERMISSION_CODES = {
         "operation-sheet:dispatch",
         "a5:sso",
         "a5:read",
-        "engineering:read",
-        "engineering:generate",
         "material:read",
         "completion:read",
         "completion:create",
@@ -202,7 +194,6 @@ DICTIONARY_DEFINITIONS = [
     ("business_type", "上修项目池", "workover_project_pool"),
     ("business_type", "承包商运力", "contractor_capacity"),
     ("business_type", "修井运行表", "workover_operation_sheet"),
-    ("business_type", "工程设计文档", "engineering_design_doc"),
     ("business_type", "A5 系统集成", "a5_integration"),
     ("production_priority", "低优先级", "1"),
     ("production_priority", "中优先级", "3"),
@@ -221,7 +212,6 @@ DICTIONARY_DEFINITIONS = [
     ("business_status_code", "请求过于频繁", "42900"),
     ("business_status_code", "数据库不可用", "50300"),
     ("business_status_code", "A5 系统连接失败", "60001"),
-    ("business_status_code", "防偏磨系统连接失败", "60002"),
     ("system_role", "超级管理员", "super_admin"),
     ("system_role", "项目池管理员", "project_pool_admin"),
     ("system_role", "基层录入员", "base_entry_clerk"),
@@ -238,7 +228,6 @@ DICTIONARY_DEFINITIONS = [
     ("system_menu", "项目池台账", "workover_project_pool"),
     ("system_menu", "统计分析", "analytics"),
     ("system_menu", "承包商管理", "contractor"),
-    ("system_menu", "工程设计管理", "engineering"),
     ("system_menu", "A5 系统集成", "a5"),
     ("material_status", "待处理", "PENDING"),
     ("material_status", "已审核", "APPROVED"),
@@ -250,8 +239,6 @@ DICTIONARY_DEFINITIONS = [
     ("material_requirement_type", "正常需求", "NORMAL"),
     ("material_requirement_type", "紧急需求", "EMERGENCY"),
     ("external_system", "A5 系统", "a5"),
-    ("external_system", "防偏磨系统", "fpm"),
-    ("external_system", "MinIO 对象存储", "minio"),
     ("external_system", "企业微信告警", "wecom_alert"),
 ]
 
@@ -269,7 +256,15 @@ MEASURE_TYPE_VALUE_ALIASES = {
 
 STALE_DICTIONARY_ITEMS = [
     ("system_menu", "workover"),
+    ("system_menu", "engineering"),
+    ("business_type", "engineering_design_doc"),
+    ("business_status_code", "60002"),
+    ("external_system", "fpm"),
+    ("external_system", "minio"),
 ]
+
+STALE_MENU_ROUTE_NAMES = {"workover", "engineering", "engineering_designs"}
+STALE_PERMISSION_CODES = {"engineering:read", "engineering:generate", "engineering:delete"}
 
 
 def seed() -> None:
@@ -290,9 +285,10 @@ def seed() -> None:
             menu.is_active = True
             menus_by_key[key] = menu
 
-        deprecated_workover_menu = db.scalar(select(Menu).where(Menu.route_name == "workover"))
-        if deprecated_workover_menu is not None:
-            db.delete(deprecated_workover_menu)
+        stale_menus = db.scalars(select(Menu).where(Menu.route_name.in_(STALE_MENU_ROUTE_NAMES))).all()
+        for menu in stale_menus:
+            menu.roles.clear()
+            db.delete(menu)
 
         permissions_by_code: dict[str, Permission] = {}
         for code, name, path, method in PERMISSION_DEFINITIONS:
@@ -305,6 +301,10 @@ def seed() -> None:
             permission.method = method
             permission.is_active = True
             permissions_by_code[code] = permission
+        stale_permissions = db.scalars(select(Permission).where(Permission.code.in_(STALE_PERMISSION_CODES))).all()
+        for permission in stale_permissions:
+            permission.roles.clear()
+            db.delete(permission)
 
         for dict_type, item_label, item_value in DICTIONARY_DEFINITIONS:
             item = db.scalar(
@@ -374,7 +374,6 @@ def seed() -> None:
         roles_by_code["business_reviewer"].menus = [
             menus_by_key["workover_project_pool"],
             menus_by_key["contractor"], menus_by_key["contractor_dispatch"], menus_by_key["contractor_sheets"],
-            menus_by_key["engineering"], menus_by_key["engineering_designs"],
             menus_by_key["analytics"], menus_by_key["a5"],
             menus_by_key["material"], menus_by_key["material_requirements"],
             menus_by_key["completion"],

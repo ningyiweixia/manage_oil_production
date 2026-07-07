@@ -38,8 +38,28 @@
         <h2>A5 系统集成</h2>
         <p>查看同步状态、手动触发数据拉取，并生成单点登录跳转。</p>
       </div>
-      <el-button type="primary" :loading="syncing" :icon="Refresh" @click="triggerSync">触发同步</el-button>
+      <div class="panel-actions">
+        <el-button :icon="Download" @click="exportReport">导出报告</el-button>
+        <el-button type="primary" :loading="syncing" :icon="Refresh" @click="triggerSync">触发同步</el-button>
+      </div>
     </div>
+    <el-form :model="analyticsQuery" inline>
+      <el-form-item label="开始日期">
+        <el-date-picker v-model="analyticsQuery.start_date" value-format="YYYY-MM-DD" />
+      </el-form-item>
+      <el-form-item label="结束日期">
+        <el-date-picker v-model="analyticsQuery.end_date" value-format="YYYY-MM-DD" />
+      </el-form-item>
+      <el-form-item label="类别">
+        <el-input v-model="analyticsQuery.category" clearable placeholder="异常或工序类别" />
+      </el-form-item>
+      <el-form-item label="模板">
+        <el-input v-model="analyticsQuery.template_name" clearable placeholder="默认统计模板" />
+      </el-form-item>
+      <el-form-item>
+        <el-button type="primary" :icon="Search" @click="loadStatus">统计</el-button>
+      </el-form-item>
+    </el-form>
     <el-descriptions border :column="2">
       <el-descriptions-item label="最近状态">{{ status.last_sync_status }}</el-descriptions-item>
       <el-descriptions-item label="最近时间">{{ status.last_sync_time || '-' }}</el-descriptions-item>
@@ -104,8 +124,8 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Link, Refresh } from '@element-plus/icons-vue'
-import { createA5SsoToken, getA5Analytics, getA5SyncStatus, triggerA5Sync, type A5Analytics, type A5SyncStatus } from '../api/a5'
+import { Download, Link, Refresh, Search } from '@element-plus/icons-vue'
+import { createA5SsoToken, exportA5AnalyticsReport, getA5Analytics, getA5SyncStatus, triggerA5Sync, type A5Analytics, type A5SyncStatus } from '../api/a5'
 
 const syncing = ref(false)
 const ssoUrl = ref('')
@@ -126,10 +146,11 @@ const analytics = reactive<A5Analytics>({
     process_counts: []
   }
 })
+const analyticsQuery = reactive<{ start_date?: string; end_date?: string; category?: string; template_name?: string }>({})
 const ssoForm = reactive({ well_no: '', redirect_path: '/workorder' })
 
 async function loadStatus() {
-  const [syncStatus, summary] = await Promise.all([getA5SyncStatus(), getA5Analytics()])
+  const [syncStatus, summary] = await Promise.all([getA5SyncStatus(), getA5Analytics(compactQuery(analyticsQuery))])
   Object.assign(status, syncStatus)
   Object.assign(analytics, summary)
 }
@@ -148,6 +169,23 @@ async function triggerSync() {
 async function createToken() {
   const result = await createA5SsoToken(ssoForm.well_no, ssoForm.redirect_path)
   ssoUrl.value = result.redirect_url
+}
+
+function compactQuery<T extends object>(query: T) {
+  return Object.fromEntries(Object.entries(query).filter(([, value]) => value !== '' && value !== undefined && value !== null))
+}
+
+async function exportReport() {
+  const file = await exportA5AnalyticsReport(compactQuery(analyticsQuery))
+  const binary = atob(file.content_base64)
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+  const url = URL.createObjectURL(new Blob([bytes], { type: file.content_type }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = file.filename
+  link.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success('报告已导出')
 }
 
 onMounted(loadStatus)

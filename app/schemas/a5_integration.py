@@ -66,3 +66,9 @@ class A5AnalyticsOut(BaseModel):
     anomaly_distribution: list[A5NameValueOut] = Field(default_factory=list)
     process_distribution: list[A5NameValueOut] = Field(default_factory=list)
     trend: A5TrendOut = Field(default_factory=A5TrendOut)
+
+
+class A5AnalyticsReportOut(BaseModel):
+    filename: str
+    content_base64: str
+    content_type: str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

@@ -89,8 +89,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_healthy
     volumes:
       - ./logs/backend:/var/log/manage_factory
     networks:
@@ -132,45 +130,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-    networks:
-      - db_net
-
-  minio-init:
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-04-22T22-12-26Z}
-    container_name: manage_factory_minio_init
-    user: "0:0"
-    entrypoint: ["/bin/sh", "-c", "chown -R 1000:1000 /data"]
-    volumes:
-      - minio_data:/data
-    restart: "no"
-    networks:
-      - db_net
-
-  minio:
-    <<: *common-security
-    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-04-22T22-12-26Z}
-    container_name: manage_factory_minio_db
-    user: "1000:1000"
-    command: ["server", "/data", "--console-address", ":9001"]
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
-    depends_on:
-      minio-init:
-        condition: service_completed_successfully
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
     networks:
       - db_net
 
@@ -273,6 +232,5 @@ networks:
 volumes:
   postgres_data:
   redis_data:
-  minio_data:
   prometheus_data:
   grafana_data:

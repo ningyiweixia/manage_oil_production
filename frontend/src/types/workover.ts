@@ -28,6 +28,11 @@ export interface WorkoverProject {
   initiator_name?: string
   initiator_phone?: string
   production_priority: number
+  geology_verified_daily_oil?: number | null
+  geology_verified_at?: string | null
+  process_well_condition?: string | null
+  process_can_workover?: boolean | null
+  process_verified_at?: string | null
   status: ProjectPoolStatus
   reason?: string
   measures_jsonb: { measures?: WorkoverMeasure[] }

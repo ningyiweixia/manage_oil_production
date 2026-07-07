@@ -25,6 +25,7 @@ from app.models.workover import WorkoverOperationSheet
 from app.schemas.a5_integration import (
     A5AnalyticsOut,
     A5AnalyticsQuery,
+    A5AnalyticsReportOut,
     A5CallbackPayload,
     A5SyncStatusOut,
     A5SyncTriggerOut,
@@ -37,6 +38,7 @@ from app.services.a5_sync_service import (
     A5_SYNC_STATUS_KEY,
     apply_a5_update_to_operation_sheet,
     build_a5_analytics,
+    export_a5_analytics_report,
     full_sync,
 )
 from app.tasks.a5_tasks import sync_a5_data_task
@@ -135,6 +137,16 @@ def analytics_summary(
 ) -> ApiResponse[A5AnalyticsOut]:
     """按时间和类别统计 A5 异常情况、特殊工序等关键信息。"""
     return success(build_a5_analytics(query))
+
+
+@router.get("/analytics/report", response_model=ApiResponse[A5AnalyticsReportOut])
+def analytics_report(
+    query: A5AnalyticsQuery = Depends(),
+    template_name: str | None = None,
+    _: User = Depends(require_permission("a5:read")),
+) -> ApiResponse[A5AnalyticsReportOut]:
+    """按当前统计条件生成 A5 关键情况 Excel 报告。"""
+    return success(export_a5_analytics_report(query, template_name=template_name), msg="报告已生成")
 
 
 @router.post("/sync/trigger", response_model=ApiResponse[A5SyncTriggerOut])

@@ -19,6 +19,7 @@ export interface ContractorCapacity {
 export interface OperationSheet {
   id: number
   project_id: number
+  project_well_no?: string | null
   contractor_capacity_id: number | null
   operation_no: string
   status: OperationStatus

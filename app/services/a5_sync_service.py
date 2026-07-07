@@ -5,8 +5,10 @@
 """
 
 import logging
+import base64
 from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
+from io import BytesIO
 from typing import Any
 
 import httpx
@@ -17,7 +19,7 @@ from app.core.exceptions import BusinessException
 from app.core.redis import cache_client
 from app.core.status_codes import A5_LINK_FAILED
 from app.models.workover import ContractorCapacityStatus, OperationStatus, ProjectPoolStatus, WorkoverOperationSheet
-from app.schemas.a5_integration import A5AnalyticsOut, A5AnalyticsQuery, A5NameValueOut, A5TrendOut
+from app.schemas.a5_integration import A5AnalyticsOut, A5AnalyticsQuery, A5NameValueOut, A5TrendOut, A5AnalyticsReportOut
 from app.services.a5_client import A5Client
 from app.services.a5_data_cleaner import clean_daily_report, validate_operation_data
 
@@ -139,6 +141,7 @@ def apply_a5_update_to_operation_sheet(
     """Apply A5 status/report data to an operation sheet in one consistent place."""
     now = datetime.now(timezone.utc)
     new_status = _normalize_a5_status(status)
+    old_status = sheet.status
 
     sheet.a5_status = status
     sheet.a5_remark = remark
@@ -173,7 +176,8 @@ def apply_a5_update_to_operation_sheet(
         if sheet.actual_start_at is None:
             sheet.actual_start_at = now
         sheet.actual_end_at = now
-        if contractor is not None:
+        if contractor is not None and old_status != OperationStatus.FINISHED:
+            contractor.available_count += 1
             contractor.status = ContractorCapacityStatus.AVAILABLE
     elif new_status in {OperationStatus.WAITING_DISPATCH, OperationStatus.CANCELED}:
         if new_status == OperationStatus.WAITING_DISPATCH:
@@ -181,7 +185,8 @@ def apply_a5_update_to_operation_sheet(
             sheet.progress = 0
             if sheet.project is not None:
                 sheet.project.status = ProjectPoolStatus.APPROVED
-        if contractor is not None:
+        if contractor is not None and old_status not in {OperationStatus.WAITING_DISPATCH, OperationStatus.CANCELED}:
+            contractor.available_count += 1
             contractor.status = ContractorCapacityStatus.AVAILABLE
 
     return new_status
@@ -376,6 +381,73 @@ def build_a5_analytics(query: A5AnalyticsQuery) -> A5AnalyticsOut:
             anomaly_counts=[trend_map[day]["anomaly"] for day in days],
             process_counts=[trend_map[day]["process"] for day in days],
         ),
+    )
+
+
+def export_a5_analytics_report(query: A5AnalyticsQuery, template_name: str | None = None) -> A5AnalyticsReportOut:
+    """Export A5 anomaly and special-process statistics as an Excel report."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    summary = build_a5_analytics(query)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "A5统计报告"
+
+    title = "A5异常与特殊工序统计报告"
+    ws.merge_cells("A1:D1")
+    ws["A1"] = title
+    ws["A1"].font = Font(bold=True, size=16)
+    ws["A1"].alignment = Alignment(horizontal="center")
+
+    ws.append(["统计起始", query.start_date.isoformat() if query.start_date else "不限", "统计截止", query.end_date.isoformat() if query.end_date else "不限"])
+    ws.append(["类别条件", query.category or "全部", "模板", template_name or "默认统计模板"])
+    ws.append(["异常总数", summary.anomaly_total, "特殊工序总数", summary.special_process_total])
+    ws.append([])
+
+    header_fill = PatternFill("solid", fgColor="D9EAF7")
+    ws.append(["异常类别", "数量", "特殊工序类别", "数量"])
+    for cell in ws[6]:
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+
+    max_rows = max(len(summary.anomaly_distribution), len(summary.process_distribution))
+    for index in range(max_rows):
+        anomaly = summary.anomaly_distribution[index] if index < len(summary.anomaly_distribution) else None
+        process = summary.process_distribution[index] if index < len(summary.process_distribution) else None
+        ws.append([
+            anomaly.name if anomaly else "",
+            anomaly.value if anomaly else "",
+            process.name if process else "",
+            process.value if process else "",
+        ])
+
+    trend_start = ws.max_row + 2
+    ws.cell(row=trend_start, column=1, value="日期")
+    ws.cell(row=trend_start, column=2, value="异常数量")
+    ws.cell(row=trend_start, column=3, value="特殊工序数量")
+    for cell in ws[trend_start]:
+        cell.font = Font(bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+    for day, anomaly_count, process_count in zip(
+        summary.trend.days,
+        summary.trend.anomaly_counts,
+        summary.trend.process_counts,
+    ):
+        ws.append([day, anomaly_count, process_count])
+
+    for column in ("A", "B", "C", "D"):
+        ws.column_dimensions[column].width = 22
+
+    output = BytesIO()
+    wb.save(output)
+    output.seek(0)
+    filename = f"a5_analytics_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.xlsx"
+    return A5AnalyticsReportOut(
+        filename=filename,
+        content_base64=base64.b64encode(output.read()).decode("ascii"),
     )
 
 

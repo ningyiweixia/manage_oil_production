@@ -273,8 +273,17 @@ export async function submitProjects(projectIds: number[], comment: string): Pro
   return unwrap<WorkoverProject[]>(http.patch('/workover-project-pools/submit', { project_ids: projectIds, comment }))
 }
 
-export async function patchProjectStatus(id: number, status: ProjectPoolStatus, comment: string): Promise<WorkoverProject> {
-  return unwrap<WorkoverProject>(http.patch(`/workover-project-pools/${id}/status`, { status, comment }))
+export async function patchProjectStatus(
+  id: number,
+  status: ProjectPoolStatus,
+  comment: string,
+  extra: {
+    geology_verified_daily_oil?: number | null
+    process_well_condition?: string | null
+    process_can_workover?: boolean | null
+  } = {}
+): Promise<WorkoverProject> {
+  return unwrap<WorkoverProject>(http.patch(`/workover-project-pools/${id}/status`, { status, comment, ...extra }))
 }
 
 export function demoProjectDataset(): WorkoverProject[] {

@@ -20,7 +20,7 @@ deploy/
 | --- | --- | --- | --- |
 | DMZ 前端接入域 | `manage_factory_dmz_net` | `nginx` | 仅暴露宿主机 `80/443`，负责 HTTPS、反向代理、限流、安全拦截 |
 | APP 应用逻辑域 | `manage_factory_app_net` | `backend`、`frontend`、`prometheus`、`grafana` | `internal: true`，不向宿主机直接暴露 |
-| DB 核心数据域 | `manage_factory_db_net` | `postgres`、`redis`、`minio` | `internal: true`，禁止外部直接访问 |
+| DB 核心数据域 | `manage_factory_db_net` | `postgres`、`redis` | `internal: true`，禁止外部直接访问 |
 | 监控采集域 | `manage_factory_monitor_net` | `cadvisor`、`node-exporter` | 仅 Prometheus 访问，用于容器和主机指标采集 |
 
 ## 端口说明
@@ -30,7 +30,7 @@ deploy/
 | `80` | Nginx DMZ | HTTP 自动跳转 HTTPS |
 | `443` | Nginx DMZ | 统一生产访问入口 |
 
-内部端口不直接暴露：FastAPI `8000`、Vue 静态服务 `8080`、PostgreSQL `5432`、Redis `6379`、MinIO `9000/9001`、Prometheus `9090`、Grafana `3000`、Cadvisor `8080`、Node Exporter `9100`。
+内部端口不直接暴露：FastAPI `8000`、Vue 静态服务 `8080`、PostgreSQL `5432`、Redis `6379`、Prometheus `9090`、Grafana `3000`、Cadvisor `8080`、Node Exporter `9100`。
 
 ## 首次部署
 
@@ -68,12 +68,11 @@ docker pull python:3.12-slim
 docker pull nginx:1.27-alpine
 docker pull postgres:15
 docker pull redis:7.4-alpine
-docker pull minio/minio:RELEASE.2025-04-22T22-12-26Z
 docker pull prom/prometheus:v3.3.0
 docker pull grafana/grafana:12.0.0
 docker pull gcr.io/cadvisor/cadvisor:v0.52.1
 docker pull prom/node-exporter:v1.9.1
-docker save -o manage_factory_images.tar python:3.12-slim nginx:1.27-alpine postgres:15 redis:7.4-alpine minio/minio:RELEASE.2025-04-22T22-12-26Z prom/prometheus:v3.3.0 grafana/grafana:12.0.0 gcr.io/cadvisor/cadvisor:v0.52.1 prom/node-exporter:v1.9.1
+docker save -o manage_factory_images.tar python:3.12-slim nginx:1.27-alpine postgres:15 redis:7.4-alpine prom/prometheus:v3.3.0 grafana/grafana:12.0.0 gcr.io/cadvisor/cadvisor:v0.52.1 prom/node-exporter:v1.9.1
 ```
 
 在内网服务器导入：
@@ -126,7 +125,6 @@ GRAFANA_ADMIN_PASSWORD=ChangeMe_Grafana_123456
 | --- | --- |
 | PostgreSQL | Docker volume `postgres_data` |
 | Redis AOF/RDB | Docker volume `redis_data` |
-| MinIO 对象数据 | Docker volume `minio_data` |
 | Prometheus TSDB | Docker volume `prometheus_data` |
 | Grafana 配置数据 | Docker volume `grafana_data` |
 | Nginx 日志 | `logs/nginx` |
@@ -138,10 +136,10 @@ GRAFANA_ADMIN_PASSWORD=ChangeMe_Grafana_123456
 ## 安全规范
 
 - 仅 DMZ Nginx 暴露宿主端口，APP/DB/监控网络均为内部网络。
-- 后端、前端、Redis、PostgreSQL、MinIO、Prometheus、Grafana 均指定非 root 用户或镜像内置低权限用户。
+- 后端、前端、Redis、PostgreSQL、Prometheus、Grafana 均指定非 root 用户或镜像内置低权限用户。
 - 通用容器启用 `no-new-privileges`、`cap_drop: ALL`；DMZ Nginx 仅增加 `NET_BIND_SERVICE` 用于绑定 `80/443`。
 - Nginx 启用 HTTPS、HSTS、安全响应头、方法白名单、API 限流、连接数限制。
-- `.env` 不提交仓库，生产必须替换 JWT、数据库、MinIO、Grafana 默认口令。
+- `.env` 不提交仓库，生产必须替换 JWT、数据库、Grafana 默认口令。
 - DB 区服务不得通过 `ports` 暴露到宿主机。
 
 ## 常用运维命令

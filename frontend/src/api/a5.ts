@@ -31,12 +31,22 @@ export interface A5Analytics {
   }
 }
 
+export interface A5ReportFile {
+  filename: string
+  content_base64: string
+  content_type: string
+}
+
 export function getA5SyncStatus() {
   return unwrap<A5SyncStatus>(http.get('/a5/sync/status'))
 }
 
 export function getA5Analytics(params: { start_date?: string; end_date?: string; category?: string } = {}) {
   return unwrap<A5Analytics>(http.get('/a5/analytics/summary', { params }))
+}
+
+export function exportA5AnalyticsReport(params: { start_date?: string; end_date?: string; category?: string; template_name?: string } = {}) {
+  return unwrap<A5ReportFile>(http.get('/a5/analytics/report', { params }))
 }
 
 export function triggerA5Sync() {

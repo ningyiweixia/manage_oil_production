@@ -15,6 +15,8 @@ from app.schemas.rbac import MenuOut, PermissionOut, RoleOut
 
 ACCESS_REVOKE_PREFIX = "auth:access:revoked:"
 REFRESH_TOKEN_PREFIX = "auth:refresh:"
+REMOVED_MENU_ROUTE_NAMES = {"engineering", "engineering_designs"}
+REMOVED_MENU_ROUTE_PATHS = {"/engineering", "/engineering/designs"}
 
 
 def _role_out(role: Role) -> RoleOut:
@@ -33,7 +35,12 @@ def build_menu_tree(menus: list[Menu]) -> list[MenuOut]:
     nodes = {
         menu.id: MenuOut.model_validate(menu).model_copy(update={"children": []})
         for menu in sorted(menus, key=lambda item: (item.sort_order, item.id))
-        if menu.is_active and menu.is_visible
+        if (
+            menu.is_active
+            and menu.is_visible
+            and menu.route_name not in REMOVED_MENU_ROUTE_NAMES
+            and menu.route_path not in REMOVED_MENU_ROUTE_PATHS
+        )
     }
     roots: list[MenuOut] = []
     for menu in sorted(menus, key=lambda item: (item.sort_order, item.id)):
@@ -64,7 +71,11 @@ def user_menus(user: User) -> list[Menu]:
         for role in user.roles
         if role.is_active
         for menu in role.menus
-        if menu.is_active
+        if (
+            menu.is_active
+            and menu.route_name not in REMOVED_MENU_ROUTE_NAMES
+            and menu.route_path not in REMOVED_MENU_ROUTE_PATHS
+        )
     }
     return sorted(menus.values(), key=lambda item: (item.sort_order, item.id))
 

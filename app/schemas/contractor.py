@@ -74,6 +74,7 @@ class WorkoverOperationSheetQuery(BaseModel):
 class WorkoverOperationSheetOut(BaseModel):
     id: int
     project_id: int
+    project_well_no: str | None = None
     contractor_capacity_id: int | None = None
     operation_no: str
     status: OperationStatus

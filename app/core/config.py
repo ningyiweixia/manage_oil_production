@@ -36,15 +36,6 @@ class Settings(BaseSettings):
     a5_api_secret: str = ""
     a5_ip_whitelist: str = ""
     alert_webhook_url: str = ""
-    # MinIO 对象存储配置
-    minio_endpoint: str = "127.0.0.1:9000"
-    minio_access_key: str = "minioadmin"
-    minio_secret_key: str = "minioadmin"
-    minio_bucket_engineering: str = "engineering-designs"
-    minio_bucket_templates: str = "design-templates"
-    # 防偏磨系统配置
-    fpm_base_url: str = ""
-
     @computed_field
     @property
     def database_url(self) -> str:

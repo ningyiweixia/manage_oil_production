@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import unittest
 from datetime import date
 from unittest.mock import patch
@@ -79,6 +80,30 @@ class A5SyncServiceTest(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, A5_LINK_FAILED)
         self.assertEqual(cache.values[service.A5_SYNC_STATUS_KEY]["last_sync_status"], "partial_failure")
+
+    def test_export_a5_analytics_report_returns_xlsx_payload(self):
+        cache = MemoryCache()
+        cache.values.update(
+            {
+                service.A5_ANOMALY_DATES_KEY: ["2026-06-30"],
+                f"{service.A5_ANOMALY_RECORDS_PREFIX}2026-06-30": [
+                    {"date": "2026-06-30", "anomaly_type": "井口异常"},
+                ],
+                service.A5_PROCESS_DATES_KEY: ["2026-06-30"],
+                f"{service.A5_PROCESS_RECORDS_PREFIX}2026-06-30": [
+                    {"date": "2026-06-30", "process_type": "压裂"},
+                ],
+            }
+        )
+
+        with patch.object(service, "cache_client", cache):
+            result = service.export_a5_analytics_report(
+                A5AnalyticsQuery(start_date=date(2026, 6, 30), end_date=date(2026, 6, 30)),
+                template_name="专项模板",
+            )
+
+        self.assertTrue(result.filename.endswith(".xlsx"))
+        self.assertTrue(base64.b64decode(result.content_base64).startswith(b"PK"))
 
 
 if __name__ == "__main__":
