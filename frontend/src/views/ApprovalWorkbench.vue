@@ -2,102 +2,76 @@
   <section class="toolbar">
     <el-form :model="query" inline>
       <el-form-item label="井号">
-        <el-input v-model="query.well_no" clearable placeholder="CY2-136" />
-      </el-form-item>
-      <el-form-item label="区块">
-        <el-input v-model="query.block_name" clearable placeholder="北一区" />
-      </el-form-item>
-      <el-form-item label="状态">
-        <el-select v-model="query.status" clearable placeholder="全部" style="width: 190px">
-          <el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="措施">
-        <el-select v-model="query.measure_type" clearable filterable placeholder="全部措施类型" style="width: 180px">
-          <el-option v-for="opt in measureTypeOptions" :key="opt.item_value" :label="opt.item_label" :value="opt.item_value" />
-        </el-select>
+        <el-input v-model="query.well_no" clearable placeholder="CY2-136" @keyup.enter="loadTasks" />
       </el-form-item>
       <el-form-item>
-        <el-button type="primary" :icon="Search" @click="loadProjects">查询</el-button>
+        <el-button type="primary" :icon="Search" @click="loadTasks">查询</el-button>
         <el-button :icon="Refresh" @click="resetQuery">重置</el-button>
-        <el-button v-if="hasPermission('workover_project_pool:create')" :icon="Plus" @click="openCreate">新增提报</el-button>
-        <el-button :icon="TrendCharts" @click="openDashboard">查看大屏</el-button>
       </el-form-item>
     </el-form>
   </section>
 
   <section class="workflow-strip">
-    <div
-      v-for="node in workflowNodes"
-      :key="node.code || 'ALL'"
-      class="workflow-node clickable"
-      :class="{ active: (query.status || '') === node.code }"
-      @click="filterByStatus(node.code)"
-    >
-      <span>{{ node.count }}</span>
-      <strong>{{ node.label }}</strong>
-      <small>{{ node.desc }}</small>
+    <div v-for="item in scopeCards" :key="item.name" class="workflow-node clickable" :class="{ active: activeScope === item.name }" @click="switchScope(item.name)">
+      <span>{{ item.count }}</span>
+      <strong>{{ item.label }}</strong>
+      <small>{{ item.desc }}</small>
     </div>
   </section>
 
   <section class="table-panel">
     <div class="panel-head">
       <div>
-        <h2>项目池与审批流转</h2>
-        <p>勾选草稿可批量提交；待审核节点可在线通过、驳回或退回补充。</p>
+        <h2>审核审批工作台</h2>
+        <p>按审批节点和处理角色聚合待办、已处理、已驳回与已通过事项。</p>
       </div>
-      <el-button v-if="hasPermission('workover_project_pool:submit')" type="success" :disabled="!selectedIds.length" :icon="Promotion" @click="submitDialogVisible = true">批量提交</el-button>
     </div>
 
-    <el-table v-loading="loading" :data="projects" row-key="id" empty-text="暂无符合条件的项目" @selection-change="onSelectionChange">
-      <el-table-column type="selection" width="48" />
-      <el-table-column prop="well_no" label="井号" min-width="110" fixed />
-      <el-table-column prop="well_type" label="井别" min-width="80" />
-      <el-table-column prop="block_name" label="区块" min-width="110" />
-      <el-table-column prop="county" label="县区" min-width="80" />
-      <el-table-column prop="initiator_name" label="发起人" min-width="90" />
-      <el-table-column prop="initiator_phone" label="联系电话" min-width="120" />
-      <el-table-column prop="report_unit" label="提报单位" min-width="120" />
-      <el-table-column prop="production_priority" label="优先级" min-width="96" sortable>
+    <el-tabs v-model="activeScope" class="approval-tabs" @tab-change="switchScope">
+      <el-tab-pane label="我的待办" name="pending" />
+      <el-tab-pane label="已处理" name="processed" />
+      <el-tab-pane label="已驳回" name="rejected" />
+      <el-tab-pane label="已通过" name="approved" />
+    </el-tabs>
+
+    <el-table v-loading="loading" :data="tasks" row-key="business_id" empty-text="暂无审批任务">
+      <el-table-column label="井号" min-width="110" fixed>
         <template #default="{ row }">
-          <el-progress :percentage="row.production_priority" :stroke-width="8" :show-text="false" />
+          <strong>{{ row.project.well_no }}</strong>
         </template>
       </el-table-column>
-      <el-table-column label="措施内容" min-width="190">
+      <el-table-column label="提报单位" min-width="130">
+        <template #default="{ row }">{{ row.project.report_unit }}</template>
+      </el-table-column>
+      <el-table-column label="原因分类" min-width="120">
+        <template #default="{ row }">{{ row.project.reason_category || '-' }}</template>
+      </el-table-column>
+      <el-table-column label="措施摘要" min-width="190" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.measure_summary || row.project.reason || '-' }}</template>
+      </el-table-column>
+      <el-table-column label="资料完整性" min-width="115">
         <template #default="{ row }">
-          <el-tag v-for="measure in row.measures_jsonb.measures || []" :key="measure.measure_type" class="tag-gap" effect="plain">
-            {{ measureLabel(measure.measure_type) }}
-          </el-tag>
+          <el-tag :type="completenessTag(row.project.completeness_status)">{{ completenessLabel(row.project.completeness_status) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="审批状态" min-width="340">
+      <el-table-column label="当前节点" min-width="130">
         <template #default="{ row }">
-          <div class="approval-status-cell">
-            <el-tag :type="statusTagType(row.status)" effect="light" round>
-              {{ row.status === 'REJECTED' ? rejectedAtLabel(row.rejected_from_status) : statusLabel(row.status) }}
-            </el-tag>
-            <div v-if="showApprovalFlow(row.status)" class="approval-flow">
-              <span
-                v-for="node in approvalFlowNodes"
-                :key="node.status"
-                class="approval-flow-node"
-                :class="approvalNodeClass(row.status, node.status, row.rejected_from_status)"
-              >
-                <i></i>
-                <b>{{ node.label }}</b>
-              </span>
-            </div>
-          </div>
+          <el-tag :type="statusTagType(row.project.status)" effect="light">{{ row.node_label }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" min-width="260" fixed="right">
+      <el-table-column label="停留时长" min-width="105">
+        <template #default="{ row }">{{ row.stay_hours }} 小时</template>
+      </el-table-column>
+      <el-table-column label="最近意见" min-width="180" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.last_comment || '-' }}</template>
+      </el-table-column>
+      <el-table-column label="操作" min-width="250" fixed="right">
         <template #default="{ row }">
           <div class="table-actions">
-            <el-button v-if="hasPermission('workover_project_pool:update')" text type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button v-if="row.status === 'REJECTED' && hasPermission('workover_project_pool:submit')" text type="success" @click="resubmitRejected(row)">重新提报</el-button>
-            <el-button v-else-if="hasPermission('workover_project_pool:approve')" text type="success" :disabled="!canApprove(row.status)" @click="openApproval(row, 'APPROVED')">通过</el-button>
-            <el-button v-if="row.status !== 'REJECTED' && hasPermission('workover_project_pool:approve')" text type="warning" :disabled="!canApprove(row.status)" @click="openApproval(row, 'REJECTED')">驳回</el-button>
-            <el-button v-if="hasPermission('workover_project_pool:delete')" text type="danger" @click="confirmDelete(row)">删除</el-button>
+            <el-button text type="primary" @click="openTimeline(row)">审批轨迹</el-button>
+            <el-button v-if="canProcess(row, 'APPROVE')" text type="success" @click="openApproval(row, 'APPROVE')">通过</el-button>
+            <el-button v-if="canProcess(row, 'REJECT')" text type="warning" @click="openApproval(row, 'REJECT')">驳回</el-button>
+            <el-button v-if="canProcess(row, 'RESUBMIT')" text type="success" @click="resubmitRejected(row)">重新提报</el-button>
           </div>
         </template>
       </el-table-column>
@@ -109,614 +83,222 @@
       class="pager"
       layout="total, sizes, prev, pager, next"
       :total="total"
-      @change="loadProjects"
+      @current-change="loadTasks"
+      @size-change="loadTasks"
     />
   </section>
 
-  <el-dialog v-model="formVisible" :title="dialogTitle" width="960px" class="project-dialog">
-    <el-form ref="projectFormRef" :model="projectForm" :rules="projectRules" label-width="96px">
-      <div class="form-section-title">基础信息</div>
-      <el-row :gutter="16">
-        <el-col :span="8"><el-form-item label="井号" prop="well_no"><el-input v-model="projectForm.well_no" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item label="井名"><el-input v-model="projectForm.well_name" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item label="层位"><el-input v-model="projectForm.layer" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item label="提报单位" prop="report_unit"><el-input v-model="projectForm.report_unit" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item label="属地单位"><el-input v-model="projectForm.territory_unit" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item label="区块"><el-input v-model="projectForm.block_name" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item label="井别">
-          <el-select v-model="projectForm.well_type" placeholder="请选择" clearable>
-            <el-option label="油井" value="油井" />
-            <el-option label="水井" value="水井" />
-            <el-option label="注气井" value="注气井" />
-          </el-select>
-        </el-form-item></el-col>
-        <el-col :span="8"><el-form-item label="县区"><el-input v-model="projectForm.county" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item label="发起人"><el-input v-model="projectForm.initiator_name" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item label="联系电话"><el-input v-model="projectForm.initiator_phone" /></el-form-item></el-col>
-        <el-col :span="24"><el-form-item label="故障描述"><el-input v-model="projectForm.fault_description" type="textarea" :rows="2" /></el-form-item></el-col>
-        <el-col :span="16"><el-form-item label="上修原因" prop="reason"><el-input v-model="projectForm.reason" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item label="优先级"><el-slider v-model="projectForm.production_priority" :max="100" /></el-form-item></el-col>
-      </el-row>
-
-      <div class="measure-head">
-        <strong>修井措施</strong>
-        <el-button size="small" :icon="Plus" @click="addMeasure">新增措施</el-button>
+  <el-dialog v-model="approvalDialogVisible" title="审批处理" width="620px">
+    <div v-if="pendingTask" class="approval-context">
+      <div>
+        <span>井号</span>
+        <strong>{{ pendingTask.project.well_no }}</strong>
       </div>
-      <div v-for="(measure, index) in projectForm.measures_jsonb.measures" :key="index" class="measure-row">
-        <div class="measure-field">
-          <label>措施类型</label>
-          <el-select v-model="measure.measure_type" placeholder="请选择" filterable clearable>
-            <el-option v-for="opt in measureTypeOptions" :key="opt.item_value" :label="opt.item_label" :value="opt.item_value" />
-          </el-select>
-        </div>
-        <div class="measure-field">
-          <label>施工工序</label>
-          <el-input v-model="measure.process" placeholder="如冲砂、检泵" />
-        </div>
-        <div class="measure-field">
-          <label>预计工期(天)</label>
-          <el-input-number v-model="measure.duration_days" :min="0" :controls="false" />
-        </div>
-        <div class="measure-field">
-          <label>估算费用(万元)</label>
-          <el-input-number v-model="measure.estimated_cost" :min="0" :precision="1" :controls="false" />
-        </div>
-        <el-button class="measure-delete" :icon="Delete" circle @click="removeMeasure(index)" />
+      <div>
+        <span>当前节点</span>
+        <strong>{{ pendingTask.node_label }}</strong>
       </div>
-
-      <div class="form-section-title" style="margin-top:16px">附件信息</div>
-      <el-row :gutter="16">
-        <el-col :span="24"><el-form-item label="照片附件">
-          <div class="photo-attachment-box">
-            <el-upload
-              :auto-upload="false"
-              :show-file-list="false"
-              multiple
-              accept=".jpg,.jpeg,.png,.gif,.webp,.bmp,image/jpeg,image/png,image/gif,image/webp,image/bmp"
-              :on-change="handlePhotoSelected"
-            >
-              <el-button :icon="Plus">添加照片</el-button>
-            </el-upload>
-            <span class="attachment-help">支持 jpg、jpeg、png、gif、webp、bmp，单张不超过 5MB</span>
-          </div>
-          <el-input v-model="photoUrlsText" type="textarea" :rows="2" placeholder="可粘贴照片URL，多个地址用逗号分隔；也可点击上方按钮选择本地照片" />
-          <div v-if="projectForm.photo_urls && projectForm.photo_urls.length" class="photo-preview-grid">
-            <div v-for="(url, index) in projectForm.photo_urls" :key="`${index}-${url.slice(0, 24)}`" class="photo-preview-card">
-              <el-image v-if="isPreviewablePhoto(url)" :src="url" fit="cover" class="photo-preview-image" :preview-src-list="projectForm.photo_urls" />
-              <div v-else class="photo-preview-placeholder">URL</div>
-              <el-button class="photo-remove" :icon="Delete" circle size="small" @click="removePhotoAttachment(index)" />
-            </div>
-          </div>
-        </el-form-item></el-col>
-      </el-row>
-    </el-form>
-    <template #footer>
-      <el-button @click="formVisible = false">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="saveProject">保存</el-button>
-    </template>
-  </el-dialog>
-
-  <el-dialog v-model="approvalDialogVisible" title="审批处理" width="520px">
-    <el-form label-position="top">
-      <el-form-item label="处理意见">
-        <el-input v-model="approvalComment" type="textarea" :rows="4" placeholder="请填写核实结论、退回原因或补充说明" />
+      <div>
+        <span>提报单位</span>
+        <strong>{{ pendingTask.project.report_unit }}</strong>
+      </div>
+      <div>
+        <span>资料完整性</span>
+        <strong>{{ completenessLabel(pendingTask.project.completeness_status) }}</strong>
+      </div>
+    </div>
+    <el-alert
+      v-if="pendingAction === 'APPROVE' && pendingTask?.current_node === 'PENDING_PROCESS_VERIFY'"
+      title="通过后将进入运行库"
+      type="success"
+      show-icon
+      :closable="false"
+    />
+    <el-form label-position="top" class="approval-form">
+      <el-form-item :label="pendingAction === 'REJECT' ? '驳回原因' : '处理意见'">
+        <el-input v-model="approvalComment" type="textarea" :rows="4" placeholder="填写核实结论、补充要求或审批说明" />
       </el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="approvalDialogVisible = false">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="confirmApproval">确认流转</el-button>
+      <el-button type="primary" :loading="saving" @click="confirmApproval">确认处理</el-button>
     </template>
   </el-dialog>
 
-  <el-dialog v-model="submitDialogVisible" title="批量提交至地质核实" width="520px">
-    <el-input v-model="submitComment" type="textarea" :rows="4" placeholder="提交说明" />
-    <template #footer>
-      <el-button @click="submitDialogVisible = false">取消</el-button>
-      <el-button type="success" :loading="saving" @click="confirmSubmit">提交</el-button>
-    </template>
-  </el-dialog>
-
-  <el-dialog v-model="deleteDialogVisible" title="删除项目" width="440px">
-    <p v-if="deleteTarget">
-      确认要删除项目 <strong>{{ deleteTarget.well_no }}</strong>（{{ deleteTarget.well_name || '未命名' }}）吗？删除后项目将从列表中移除，可在数据库中恢复。
-    </p>
-    <template #footer>
-      <el-button @click="deleteDialogVisible = false">取消</el-button>
-      <el-button type="danger" :loading="saving" @click="confirmDeleteAction">确认删除</el-button>
-    </template>
+  <el-dialog v-model="timelineVisible" title="审批轨迹" width="560px">
+    <el-timeline v-loading="timelineLoading">
+      <el-timeline-item v-for="item in timeline" :key="item.id" :timestamp="formatTime(item.created_at)" placement="top">
+        <div class="timeline-card">
+          <strong>{{ item.node_label }} · {{ item.action_label }}</strong>
+          <p>{{ item.comment || '无审批意见' }}</p>
+          <small>{{ item.operator_name || item.operator_id || '系统' }}：{{ item.before_status || '-' }} → {{ item.after_status || '-' }}</small>
+        </div>
+      </el-timeline-item>
+    </el-timeline>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import type { FormInstance, FormRules, UploadFile } from 'element-plus'
-import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
-import { Delete, Plus, Promotion, Refresh, Search, TrendCharts } from '@element-plus/icons-vue'
-import { createProject, deleteProject, getProjectAnalytics, listProjects, patchProjectStatus, submitProjects, updateProject } from '../api/workover'
-import { listDictionaryItems, type DictionaryItem } from '../api/dictionary'
-import { approvalFlowNodes, approvalNodeClass, canApprove, nextApprovedStatus, rejectedAtLabel, showApprovalFlow, statusLabels, statusTagType } from '../utils/status'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh, Search } from '@element-plus/icons-vue'
+import { getApprovalTimeline, listApprovalTasks, processProjectApproval } from '../api/approval'
 import { emitProjectDataChanged, useProjectDataChanged } from '../composables/useProjectSync'
-import type { ProjectPoolStatus, ProjectQuery, WorkoverProject } from '../types/workover'
-import { readPhotoAttachmentAsDataUrl, validatePhotoAttachment } from '../utils/photoAttachments'
-
-const statusOptions = (Object.keys(statusLabels) as ProjectPoolStatus[]).map((value) => ({
-  label: statusLabels[value],
-  value
-}))
-
-function userPermissions(): string[] {
-  try { return JSON.parse(localStorage.getItem('permissions') || '[]') } catch { return [] }
-}
-function hasPermission(perm: string): boolean {
-  return userPermissions().includes(perm)
-}
+import { rejectedAtLabel, statusTagType } from '../utils/status'
+import type { ApprovalActionCode, ApprovalTask, ApprovalTaskScope, ApprovalTimelineItem } from '../api/approval'
 
 const route = useRoute()
 const router = useRouter()
-const query = reactive<ProjectQuery>({ page: 1, page_size: 10, status: '' })
-const projects = ref<WorkoverProject[]>([])
+const activeScope = ref<ApprovalTaskScope>('pending')
+const query = reactive({ page: 1, page_size: 10, well_no: '' })
+const tasks = ref<ApprovalTask[]>([])
 const total = ref(0)
-const workflowCounts = ref<Record<ProjectPoolStatus, number>>({
-  DRAFT: 0,
-  PENDING_GEOLOGY_VERIFY: 0,
-  PENDING_PROCESS_VERIFY: 0,
-  APPROVED: 0,
-  REJECTED: 0,
-  DISPATCHED: 0
-})
 const loading = ref(false)
 const saving = ref(false)
-const selectedIds = ref<number[]>([])
-const formVisible = ref(false)
-const submitDialogVisible = ref(false)
 const approvalDialogVisible = ref(false)
-const editingProject = ref<WorkoverProject | null>(null)
-const pendingApproval = ref<{ id: number; status: ProjectPoolStatus } | null>(null)
-const submitComment = ref('')
 const approvalComment = ref('')
-const deleteDialogVisible = ref(false)
-const deleteTarget = ref<WorkoverProject | null>(null)
-const projectFormRef = ref<FormInstance>()
-const measureTypeOptions = ref<DictionaryItem[]>([])
-const measureLabelMap = ref<Record<string, string>>({})
+const pendingTask = ref<ApprovalTask | null>(null)
+const pendingAction = ref<ApprovalActionCode>('APPROVE')
+const timelineVisible = ref(false)
+const timelineLoading = ref(false)
+const timeline = ref<ApprovalTimelineItem[]>([])
 
-async function loadMeasureTypes() {
-  try {
-    const items = await listDictionaryItems('measure_type')
-    measureTypeOptions.value = items
-    // 构建 value → label 映射表，用于表格显示
-    const map: Record<string, string> = {}
-    for (const item of items) {
-      if (!map[item.item_value] || item.item_label.length <= map[item.item_value].length) {
-        map[item.item_value] = item.item_label
-      }
-    }
-    measureLabelMap.value = map
-  } catch {
-    measureTypeOptions.value = []
-    measureLabelMap.value = {}
-  }
-}
-
-function measureLabel(value: string): string {
-  return measureLabelMap.value[value] || value
-}
-
-const photoUrlsText = computed<string>({
-  get() { return (projectForm.photo_urls || []).join(', ') },
-  set(val: string) { projectForm.photo_urls = val ? val.split(',').map((s) => s.trim()).filter(Boolean) : [] }
-})
-
-function isPreviewablePhoto(url: string) {
-  return url.startsWith('data:image/') || /\.(jpg|jpeg|png|gif|webp|bmp)(\?.*)?$/i.test(url)
-}
-
-async function handlePhotoSelected(uploadFile: UploadFile) {
-  const raw = uploadFile.raw
-  if (!raw) return
-  const validationMessage = validatePhotoAttachment(raw)
-  if (validationMessage) {
-    ElMessage.warning(validationMessage)
-    return
-  }
-  try {
-    const dataUrl = await readPhotoAttachmentAsDataUrl(raw)
-    projectForm.photo_urls = [...(projectForm.photo_urls || []), dataUrl]
-    ElMessage.success('照片已添加')
-  } catch (error: any) {
-    ElMessage.error(error?.message || '照片读取失败')
-  }
-}
-
-function removePhotoAttachment(index: number) {
-  projectForm.photo_urls = (projectForm.photo_urls || []).filter((_, itemIndex) => itemIndex !== index)
-}
-
-const projectForm = reactive<Omit<WorkoverProject, 'id' | 'created_at' | 'updated_at'>>({
-  well_no: '',
-  well_name: '',
-  well_type: '',
-  layer: '',
-  fault_description: '',
-  territory_unit: '',
-  block_name: '',
-  county: '',
-  report_unit: '',
-  initiator_name: '',
-  initiator_phone: '',
-  production_priority: 60,
-  status: 'DRAFT',
-  reason: '',
-  measures_jsonb: { measures: [] },
-  photo_urls: [],
-  remark: ''
-})
-
-const projectRules: FormRules = {
-  well_no: [{ required: true, message: '请输入井号', trigger: 'blur' }],
-  report_unit: [{ required: true, message: '请输入提报单位', trigger: 'blur' }],
-  reason: [{ required: true, message: '请输入上修原因', trigger: 'blur' }]
-}
-
-const dialogTitle = computed(() => {
-  if (!editingProject.value) return '新增上修提报'
-  if (editingProject.value.status === 'REJECTED') return '修改已驳回项目（保存后回到草稿）'
-  return '编辑项目池井号'
-})
-
-const workflowNodes = computed(() => [
-  { code: '', label: '全部项目', desc: '项目总览', count: totalProjectCount.value },
-  { code: 'DRAFT', label: '基层提报', desc: '项目池录入', count: countStatus('DRAFT') },
-  { code: 'PENDING_GEOLOGY_VERIFY', label: '地质核实', desc: '产量与油藏核实', count: countStatus('PENDING_GEOLOGY_VERIFY') },
-  { code: 'PENDING_PROCESS_VERIFY', label: '工艺核实', desc: '井况与可行性', count: countStatus('PENDING_PROCESS_VERIFY') },
-  { code: 'APPROVED', label: '已入库', desc: '等待派工', count: countStatus('APPROVED') },
-  { code: 'DISPATCHED', label: '已派工', desc: '进入施工跟踪', count: countStatus('DISPATCHED') },
-  { code: 'REJECTED', label: '已驳回', desc: '待补充修改', count: countStatus('REJECTED') }
+const scopeCards = computed(() => [
+  { name: 'pending' as ApprovalTaskScope, label: '我的待办', desc: '地质与工艺', count: activeScope.value === 'pending' ? total.value : 0 },
+  { name: 'processed' as ApprovalTaskScope, label: '已处理', desc: '本人经办', count: activeScope.value === 'processed' ? total.value : 0 },
+  { name: 'rejected' as ApprovalTaskScope, label: '已驳回', desc: '待补充', count: activeScope.value === 'rejected' ? total.value : 0 },
+  { name: 'approved' as ApprovalTaskScope, label: '已通过', desc: '进入运行库', count: activeScope.value === 'approved' ? total.value : 0 }
 ])
 
-function countStatus(status: ProjectPoolStatus) {
-  return workflowCounts.value[status] || 0
+function completenessLabel(status?: string) {
+  if (status === 'COMPLETE') return '完整'
+  if (status === 'NEEDS_SUPPLEMENT') return '需补充'
+  return '未完整'
 }
 
-const totalProjectCount = computed(() => Object.values(workflowCounts.value).reduce((sum, value) => sum + value, 0))
-
-function statusLabel(status: ProjectPoolStatus) {
-  return statusLabels[status]
+function completenessTag(status?: string) {
+  if (status === 'COMPLETE') return 'success'
+  if (status === 'NEEDS_SUPPLEMENT') return 'warning'
+  return 'info'
 }
 
-async function reloadWorkbenchData() {
-  await Promise.all([loadWorkflowCounts(), loadProjects()])
+function canProcess(row: ApprovalTask, action: ApprovalActionCode) {
+  return row.can_process && row.allowed_actions.includes(action)
 }
 
-async function loadProjects() {
+async function loadTasks() {
   loading.value = true
   try {
-    const result = await listProjects(query)
-    projects.value = result.items
+    const result = await listApprovalTasks({
+      scope: activeScope.value,
+      page: query.page,
+      page_size: query.page_size,
+      well_no: query.well_no
+    })
+    tasks.value = result.items
     total.value = result.total
-    selectedIds.value = []
   } finally {
     loading.value = false
   }
 }
 
-async function loadWorkflowCounts() {
-  const summary = await getProjectAnalytics({})
-  const nextCounts: Record<ProjectPoolStatus, number> = {
-    DRAFT: 0,
-    PENDING_GEOLOGY_VERIFY: 0,
-    PENDING_PROCESS_VERIFY: 0,
-    APPROVED: 0,
-    REJECTED: 0,
-    DISPATCHED: 0
-  }
-  summary.status_counts.forEach((item) => {
-    nextCounts[item.status] = item.count
-  })
-  workflowCounts.value = nextCounts
-}
-
-function filterByStatus(status: string) {
-  query.status = status ? status as ProjectPoolStatus : ''
+function switchScope(name: string | number) {
+  activeScope.value = name as ApprovalTaskScope
   query.page = 1
-  router.replace({ path: '/approval', query: status ? { status } : {} })
-  loadProjects()
+  router.replace({ path: '/approval', query: { scope: activeScope.value } })
+  void loadTasks()
 }
 
 function resetQuery() {
   query.page = 1
-  query.status = ''
   query.well_no = ''
-  query.block_name = ''
-  query.measure_type = ''
-  router.replace({ path: '/approval' })
-  loadProjects()
+  void loadTasks()
 }
 
-function openDashboard() {
-  router.push({
-    path: '/dashboard',
-    query: {
-      status: query.status || undefined,
-      measure_type: query.measure_type || undefined,
-      block_name: query.block_name || undefined
-    }
-  })
-}
-
-function resetForm() {
-  Object.assign(projectForm, {
-    well_no: '',
-    well_name: '',
-    well_type: '',
-    layer: '',
-    fault_description: '',
-    territory_unit: '',
-    block_name: '',
-    county: '',
-    report_unit: '',
-    initiator_name: '',
-    initiator_phone: '',
-    production_priority: 60,
-    status: 'DRAFT',
-    reason: '',
-    measures_jsonb: { measures: [{ measure_type: '', process: '', construction_params: {}, duration_days: 0, estimated_cost: 0 }] },
-    photo_urls: [],
-    remark: ''
-  })
-}
-
-function openCreate() {
-  editingProject.value = null
-  resetForm()
-  loadMeasureTypes()
-  formVisible.value = true
-}
-
-function openEdit(row: WorkoverProject) {
-  editingProject.value = row
-  Object.assign(projectForm, JSON.parse(JSON.stringify(row)))
-  // 编辑已驳回项目时，保存后自动设为草稿以便重新提报
-  if (row.status === 'REJECTED') {
-    projectForm.status = 'DRAFT'
-  }
-  loadMeasureTypes()
-  formVisible.value = true
-}
-
-function addMeasure() {
-  projectForm.measures_jsonb.measures = projectForm.measures_jsonb.measures || []
-  projectForm.measures_jsonb.measures.push({ measure_type: '', process: '', construction_params: {}, duration_days: 0, estimated_cost: 0 })
-}
-
-function removeMeasure(index: number) {
-  projectForm.measures_jsonb.measures?.splice(index, 1)
-}
-
-function validateMeasures() {
-  const measures = projectForm.measures_jsonb.measures || []
-  if (!measures.length) {
-    ElMessage.warning('请至少新增一条修井措施')
-    return false
-  }
-  const measureTypes = measures.map((measure) => measure.measure_type).filter(Boolean)
-  if (measureTypes.length !== measures.length) {
-    ElMessage.warning('请选择每条修井措施的措施类型')
-    return false
-  }
-  if (new Set(measureTypes).size !== measureTypes.length) {
-    ElMessage.warning('修井措施类型不能重复')
-    return false
-  }
-  return true
-}
-
-async function saveProject() {
-  try {
-    await projectFormRef.value?.validate()
-  } catch {
-    // 表单校验不通过，Element Plus 会自动提示
-    return
-  }
-  if (!validateMeasures()) return
-  saving.value = true
-  try {
-    if (editingProject.value) {
-      await updateProject(editingProject.value.id, projectForm)
-    } else {
-      await createProject(projectForm)
-    }
-    ElMessage.success('保存成功')
-    formVisible.value = false
-    emitProjectDataChanged()
-    await loadWorkflowCounts()
-    await loadProjects()
-  } catch (error: any) {
-    const msg = error?.response?.data?.msg || error?.message || '保存失败，请检查网络连接'
-    ElMessage.error(msg)
-  } finally {
-    saving.value = false
-  }
-}
-
-function onSelectionChange(rows: WorkoverProject[]) {
-  selectedIds.value = rows.map((row) => row.id)
-}
-
-async function confirmSubmit() {
-  saving.value = true
-  try {
-    await submitProjects(selectedIds.value, submitComment.value)
-    ElNotification.success({ title: '待办已推送', message: '已提交至地质核实节点' })
-    submitDialogVisible.value = false
-    emitProjectDataChanged()
-    await loadWorkflowCounts()
-    await loadProjects()
-  } catch (error: any) {
-    const msg = error?.response?.data?.msg || error?.message || '提交失败，请检查网络连接'
-    ElMessage.error(msg)
-  } finally {
-    saving.value = false
-  }
-}
-
-function openApproval(row: WorkoverProject, status: ProjectPoolStatus) {
-  const nextStatus = status === 'APPROVED' ? nextApprovedStatus(row.status) : status
-  pendingApproval.value = { id: row.id, status: nextStatus }
-  approvalComment.value = status === 'APPROVED'
-    ? nextStatus === 'APPROVED'
-      ? '核实通过，同意通过审批，进入运行库。'
-      : `核实通过，同意流转至「${statusLabels[nextStatus]}」。`
-    : '资料需补充，退回修改。'
+function openApproval(row: ApprovalTask, action: ApprovalActionCode) {
+  pendingTask.value = row
+  pendingAction.value = action
+  approvalComment.value = action === 'APPROVE'
+    ? row.current_node === 'PENDING_PROCESS_VERIFY'
+      ? '核实通过，同意审批，进入运行库。'
+      : '核实通过，同意流转至工艺核实。'
+    : ''
   approvalDialogVisible.value = true
 }
 
 async function confirmApproval() {
-  if (!pendingApproval.value) return
+  if (!pendingTask.value) return
+  if (pendingAction.value === 'REJECT' && !approvalComment.value.trim()) {
+    ElMessage.warning('驳回时必须填写原因')
+    return
+  }
   saving.value = true
   try {
-    await patchProjectStatus(pendingApproval.value.id, pendingApproval.value.status, approvalComment.value)
-    ElMessage.success('审批状态已更新')
+    await processProjectApproval(pendingTask.value.business_id, {
+      action: pendingAction.value,
+      comment: approvalComment.value
+    })
+    ElMessage.success(pendingAction.value === 'APPROVE' ? '审批已通过' : '已驳回并记录补充要求')
     approvalDialogVisible.value = false
     emitProjectDataChanged()
-    await loadWorkflowCounts()
-    await loadProjects()
+    await loadTasks()
   } catch (error: any) {
-    const msg = error?.response?.data?.msg || error?.message || '审批操作失败，请检查网络连接'
-    ElMessage.error(msg)
+    ElMessage.error(error?.response?.data?.msg || error?.message || '审批操作失败')
   } finally {
     saving.value = false
   }
 }
 
-async function resubmitRejected(row: WorkoverProject) {
-  // Smart routing: re-submit to the node where it was rejected, or default to geology
-  const resubmitTo: ProjectPoolStatus =
-    row.rejected_from_status === 'PENDING_PROCESS_VERIFY'
-      ? 'PENDING_PROCESS_VERIFY'
-      : 'PENDING_GEOLOGY_VERIFY'
-  const targetName = resubmitTo === 'PENDING_PROCESS_VERIFY' ? '工艺核实' : '地质核实'
+async function resubmitRejected(row: ApprovalTask) {
+  const targetName = rejectedAtLabel(row.project.rejected_from_status).replace('驳回', '核实')
   try {
-    await ElMessageBox.confirm(
-      `将项目「${row.well_no}」修改后重新提交至「${targetName}」环节继续审批。`,
-      '重新提报',
-      { confirmButtonText: '确认提交', cancelButtonText: '取消', type: 'warning' }
-    )
+    await ElMessageBox.confirm(`将重新提交至${targetName}，是否继续？`, '重新提报', { type: 'warning' })
   } catch {
-    return // user cancelled
+    return
   }
   saving.value = true
   try {
-    await patchProjectStatus(row.id, resubmitTo, '修改后重新提报')
+    await processProjectApproval(row.business_id, { action: 'RESUBMIT', comment: '补充资料后重新提报' })
     ElMessage.success(`已重新提交至${targetName}`)
     emitProjectDataChanged()
-    await loadWorkflowCounts()
-    await loadProjects()
+    await loadTasks()
   } catch (error: any) {
-    const msg = error?.response?.data?.msg || error?.message || '重新提报失败'
-    ElMessage.error(msg)
+    ElMessage.error(error?.response?.data?.msg || error?.message || '重新提报失败')
   } finally {
     saving.value = false
   }
 }
 
-function confirmDelete(row: WorkoverProject) {
-  deleteTarget.value = row
-  deleteDialogVisible.value = true
-}
-
-async function confirmDeleteAction() {
-  if (!deleteTarget.value) return
-  saving.value = true
+async function openTimeline(row: ApprovalTask) {
+  timelineVisible.value = true
+  timelineLoading.value = true
   try {
-    await deleteProject(deleteTarget.value.id)
-    ElMessage.success('项目已删除')
-    deleteDialogVisible.value = false
-    deleteTarget.value = null
-    emitProjectDataChanged()
-    await loadWorkflowCounts()
-    await loadProjects()
-  } catch (error: any) {
-    const msg = error?.response?.data?.msg || error?.message || '删除失败，请检查网络连接'
-    ElMessage.error(msg)
+    timeline.value = await getApprovalTimeline(row.business_type, row.business_id)
   } finally {
-    saving.value = false
+    timelineLoading.value = false
   }
+}
+
+function formatTime(value: string) {
+  return new Date(value).toLocaleString()
 }
 
 watch(
-  () => route.query.status,
-  (status) => {
-    const nextStatus = typeof status === 'string' ? status as ProjectPoolStatus : ''
-    if (nextStatus !== query.status) {
-      query.status = nextStatus
+  () => route.query.scope,
+  (scope) => {
+    if (typeof scope === 'string' && scope !== activeScope.value) {
+      activeScope.value = scope as ApprovalTaskScope
       query.page = 1
-      loadProjects()
+      void loadTasks()
     }
   }
 )
 
-useProjectDataChanged(() => {
-  void reloadWorkbenchData()
-})
+useProjectDataChanged(() => { void loadTasks() })
 
 onMounted(() => {
-  if (typeof route.query.status === 'string') {
-    query.status = route.query.status as ProjectPoolStatus
-  }
-  loadMeasureTypes()
-  void reloadWorkbenchData()
+  if (typeof route.query.scope === 'string') activeScope.value = route.query.scope as ApprovalTaskScope
+  void loadTasks()
 })
 </script>
-
-<style scoped>
-.photo-attachment-box {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 8px;
-}
-
-.attachment-help {
-  color: #667085;
-  font-size: 12px;
-}
-
-.photo-preview-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-  gap: 10px;
-  width: 100%;
-  margin-top: 10px;
-}
-
-.photo-preview-card {
-  position: relative;
-  height: 96px;
-  border: 1px solid #d8dee8;
-  border-radius: 8px;
-  overflow: hidden;
-  background: #f7f9fc;
-}
-
-.photo-preview-image,
-.photo-preview-placeholder {
-  width: 100%;
-  height: 100%;
-}
-
-.photo-preview-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #667085;
-  font-size: 13px;
-}
-
-.photo-remove {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-}
-</style>

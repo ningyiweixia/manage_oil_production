@@ -7,7 +7,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 class PhotoAttachmentContractTest(unittest.TestCase):
     def test_approval_form_accepts_common_photo_formats(self):
-        view = (REPO_ROOT / "frontend/src/views/ApprovalWorkbench.vue").read_text(encoding="utf-8")
+        view = (REPO_ROOT / "frontend/src/views/ProjectPoolLedgerView.vue").read_text(encoding="utf-8")
 
         self.assertIn('accept=".jpg,.jpeg,.png,.gif,.webp,.bmp,image/jpeg,image/png,image/gif,image/webp,image/bmp"', view)
 

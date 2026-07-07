@@ -157,6 +157,22 @@ class OperationLogOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class SupportMetricOut(BaseModel):
+    name: str
+    status: str
+    value: str | int | float | None = None
+    description: str | None = None
+
+
+class SystemSupportOverviewOut(BaseModel):
+    runtime_monitoring: list[SupportMetricOut] = []
+    security_controls: list[SupportMetricOut] = []
+    audit_traceability: list[SupportMetricOut] = []
+    backup_recovery: list[SupportMetricOut] = []
+    message_alerts: list[SupportMetricOut] = []
+    data_scope: list[SupportMetricOut] = []
+
+
 class ApprovalLogOut(BaseModel):
     id: int
     business_type: str

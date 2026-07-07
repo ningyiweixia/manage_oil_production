@@ -253,13 +253,15 @@ body {
 }
 
 .workflow-strip,
+.source-summary,
 .kpi-grid {
   display: grid;
   gap: 12px;
   margin-bottom: 16px;
 }
 
-.workflow-strip {
+.workflow-strip,
+.source-summary {
   grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
 }
 
@@ -268,6 +270,7 @@ body {
 }
 
 .workflow-node,
+.source-summary-item,
 .kpi-card {
   min-height: 104px;
   background: #ffffff;
@@ -295,6 +298,7 @@ body {
 }
 
 .workflow-node span,
+.source-summary-item span,
 .kpi-card strong {
   display: block;
   font-size: 28px;
@@ -303,6 +307,7 @@ body {
 }
 
 .workflow-node strong,
+.source-summary-item strong,
 .kpi-card span {
   display: block;
   margin-top: 6px;
@@ -310,6 +315,7 @@ body {
 }
 
 .workflow-node small,
+.source-summary-item small,
 .kpi-card small {
   display: block;
   margin-top: 6px;

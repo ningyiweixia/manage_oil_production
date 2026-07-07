@@ -2,8 +2,10 @@ import { createRouter, createWebHistory } from 'vue-router'
 import MainLayout from '../views/MainLayout.vue'
 import LoginView from '../views/LoginView.vue'
 import ApprovalWorkbench from '../views/ApprovalWorkbench.vue'
+import ProjectPoolLedgerView from '../views/ProjectPoolLedgerView.vue'
 import AnalyticsDashboard from '../views/AnalyticsDashboard.vue'
 import ContractorDispatchView from '../views/ContractorDispatchView.vue'
+import WorkoverOperationManageView from '../views/WorkoverOperationManageView.vue'
 import A5IntegrationView from '../views/A5IntegrationView.vue'
 import SystemAdminView from '../views/SystemAdminView.vue'
 import MaterialManageView from '../views/MaterialManageView.vue'
@@ -21,10 +23,11 @@ const router = createRouter({
       children: [
         { path: 'approval', component: ApprovalWorkbench, meta: { title: '审核审批工作台' } },
         { path: 'dashboard', component: AnalyticsDashboard, meta: { title: '统计分析大屏' } },
-        { path: '/workover/project-pools', component: ApprovalWorkbench, meta: { title: '上修项目池台账' } },
+        { path: '/workover/project-pools', component: ProjectPoolLedgerView, meta: { title: '上修项目池台账' } },
+        { path: '/workover/operation-sheets', component: WorkoverOperationManageView, meta: { title: '修井运行管理' } },
         { path: '/contractor/capacity', component: ContractorDispatchView, meta: { title: '承包商运力报备' } },
         { path: '/contractor/dispatch', component: ContractorDispatchView, meta: { title: '智能派工' } },
-        { path: '/contractor/operation-sheets', component: ContractorDispatchView, meta: { title: '修井运行表' } },
+        { path: '/contractor/operation-sheets', component: WorkoverOperationManageView, meta: { title: '修井运行管理' } },
         { path: '/material/requirements', component: MaterialManageView, meta: { title: '物料需求台账' } },
         { path: '/material/delivery', component: MaterialManageView, meta: { title: '物料配送跟踪' } },
         { path: '/completion', component: CompletionLedgerView, meta: { title: '完井分类台账' } },
@@ -35,7 +38,8 @@ const router = createRouter({
         { path: '/system/menus', component: SystemAdminView, meta: { title: '系统菜单管理' } },
         { path: '/system/permissions', component: SystemAdminView, meta: { title: '系统权限管理' } },
         { path: '/system/operation-logs', component: SystemAdminView, meta: { title: '操作日志' } },
-        { path: '/system/dictionaries', component: SystemAdminView, meta: { title: '数据字典管理' } }
+        { path: '/system/dictionaries', component: SystemAdminView, meta: { title: '数据字典管理' } },
+        { path: '/system/support', component: SystemAdminView, meta: { title: '基础支撑' } }
       ]
     }
   ]

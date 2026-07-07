@@ -263,6 +263,40 @@
         />
       </section>
     </el-tab-pane>
+
+    <el-tab-pane label="基础支撑" name="support">
+      <section class="table-panel support-panel">
+        <div class="panel-head">
+          <div>
+            <h2>系统管理与基础支撑</h2>
+            <p>按方案统一呈现运行监控、接口安全、数据权限、敏感操作审计、备份与恢复、消息提醒能力。</p>
+          </div>
+          <el-button type="primary" :icon="Refresh" @click="loadSupportOverview">刷新</el-button>
+        </div>
+
+        <section class="support-grid" v-loading="loading">
+          <article v-for="section in supportSections" :key="section.key" class="support-card">
+            <div class="support-card-head">
+              <h3>{{ section.title }}</h3>
+              <span>{{ section.hint }}</span>
+            </div>
+            <div class="support-metrics">
+              <div v-for="item in section.items" :key="`${section.key}-${item.name}`" class="support-metric">
+                <div>
+                  <strong>{{ item.name }}</strong>
+                  <p>{{ item.description }}</p>
+                </div>
+                <div class="support-status">
+                  <el-tag :type="supportStatusType(item.status)" effect="plain">{{ item.status }}</el-tag>
+                  <span v-if="item.value !== undefined && item.value !== null">{{ item.value }}</span>
+                </div>
+              </div>
+              <el-empty v-if="!section.items.length" description="暂无基础支撑数据" :image-size="64" />
+            </div>
+          </article>
+        </section>
+      </section>
+    </el-tab-pane>
   </el-tabs>
 
   <el-dialog v-model="userVisible" title="新增用户" width="620px" @closed="resetUserForm">
@@ -349,7 +383,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { Lock, Plus, UserFilled, Warning } from '@element-plus/icons-vue'
+import { Lock, Plus, Refresh, UserFilled, Warning } from '@element-plus/icons-vue'
 import { cancelCurrentAccount, changeCurrentPassword, getCurrentUser, type CurrentUser } from '../api/auth'
 import { clearSessionMenus } from '../utils/menuCache'
 import DictionaryManageView from './DictionaryManageView.vue'
@@ -358,6 +392,7 @@ import {
   assignUserRoles,
   createUser,
   deleteUser,
+  getSystemSupportOverview,
   listMenus,
   listOperationLogs,
   listPermissions,
@@ -368,6 +403,8 @@ import {
   type OperationLogItem,
   type PermissionItem,
   type RoleItem,
+  type SupportMetric,
+  type SystemSupportOverview,
   type UserItem
 } from '../api/rbac'
 
@@ -380,7 +417,8 @@ const routeToTab: Record<string, string> = {
   '/system/menus': 'menus',
   '/system/permissions': 'permissions',
   '/system/operation-logs': 'logs',
-  '/system/dictionaries': 'dictionaries'
+  '/system/dictionaries': 'dictionaries',
+  '/system/support': 'support'
 }
 const tabToRoute = computed<Record<string, string>>(() => Object.fromEntries(
   Object.entries(routeToTab).map(([path, tab]) => [tab, path])
@@ -394,6 +432,7 @@ const roles = ref<RoleItem[]>([])
 const menus = ref<MenuItem[]>([])
 const permissions = ref<PermissionItem[]>([])
 const logs = ref<OperationLogItem[]>([])
+const supportOverview = ref<SystemSupportOverview | null>(null)
 const logTotal = ref(0)
 const userVisible = ref(false)
 const roleAssignVisible = ref(false)
@@ -479,6 +518,17 @@ const permissionStats = computed(() => [
   { label: '接口方法', value: new Set(permissions.value.map((permission) => permission.method)).size },
   { label: '资源路径', value: new Set(permissions.value.map((permission) => permission.path)).size }
 ])
+const supportSections = computed<{ key: keyof SystemSupportOverview; title: string; hint: string; items: SupportMetric[] }[]>(() => {
+  const overview = supportOverview.value
+  return [
+    { key: 'runtime_monitoring', title: '运行监控', hint: '服务、数据库、接口异常与集成任务', items: overview?.runtime_monitoring || [] },
+    { key: 'security_controls', title: '接口安全', hint: 'JWT、SSO/LDAP兼容、Token签名与白名单', items: overview?.security_controls || [] },
+    { key: 'data_scope', title: '数据权限', hint: '部门、角色、项目范围访问边界', items: overview?.data_scope || [] },
+    { key: 'audit_traceability', title: '敏感操作审计', hint: '权限变更、配置变更和业务关键动作留痕', items: overview?.audit_traceability || [] },
+    { key: 'backup_recovery', title: '备份与恢复', hint: '数据库、附件与配置恢复预案', items: overview?.backup_recovery || [] },
+    { key: 'message_alerts', title: '消息提醒', hint: '待办、派工、物料异常和同步失败提醒', items: overview?.message_alerts || [] }
+  ]
+})
 const userRoleGroups = computed<UserRoleGroup[]>(() => {
   const groups = roles.value
     .map((role) => ({
@@ -677,6 +727,9 @@ async function loadAll() {
       loadSystemResource('操作日志', () => listOperationLogs(logQuery), (value) => {
         logs.value = value.items
         logTotal.value = value.total
+      }),
+      loadSystemResource('基础支撑', getSystemSupportOverview, (value) => {
+        supportOverview.value = value
       })
     ])
     const failedLabels = results
@@ -709,6 +762,17 @@ async function loadLogs() {
 async function searchLogs() {
   logQuery.page = 1
   await loadLogs()
+}
+
+async function loadSupportOverview() {
+  supportOverview.value = await getSystemSupportOverview()
+}
+
+function supportStatusType(status: string) {
+  if (status.includes('正常') || status.includes('启用') || status.includes('纳入')) return 'success'
+  if (status.includes('关注') || status.includes('规划')) return 'warning'
+  if (status.includes('异常') || status.includes('失败')) return 'danger'
+  return 'info'
 }
 
 async function saveUser() {
@@ -1062,6 +1126,73 @@ onMounted(() => {
   white-space: nowrap;
 }
 
+.support-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.support-card {
+  min-width: 0;
+  padding: 16px;
+  background: #ffffff;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+}
+
+.support-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.support-card-head h3 {
+  margin: 0;
+  color: #172033;
+  font-size: 16px;
+}
+
+.support-card-head span,
+.support-metric p {
+  color: #667085;
+  font-size: 13px;
+}
+
+.support-metrics {
+  display: grid;
+  gap: 10px;
+}
+
+.support-metric {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 12px;
+  background: #f8fbff;
+  border: 1px solid #e3eaf4;
+  border-radius: 8px;
+}
+
+.support-metric strong {
+  color: #172033;
+}
+
+.support-metric p {
+  margin: 5px 0 0;
+  line-height: 1.5;
+}
+
+.support-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  color: #172033;
+  font-weight: 700;
+}
+
 @media (max-width: 900px) {
   .account-hero,
   .account-setting-row {
@@ -1079,6 +1210,15 @@ onMounted(() => {
 
   .system-admin-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .support-grid,
+  .support-metric {
+    grid-template-columns: 1fr;
+  }
+
+  .support-status {
+    align-items: flex-start;
   }
 }
 </style>

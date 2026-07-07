@@ -11,6 +11,7 @@ from app.services.report_service import (
     export_delivery_summary_excel,
     export_delivery_summary_word,
 )
+from app.services.statistics_analysis_service import StatisticsAnalysisQuery, build_statistics_analysis
 
 router = APIRouter(prefix="/reports", tags=["报表交付"])
 
@@ -21,6 +22,15 @@ def delivery_summary(
     _: User = Depends(require_permission("report:read")),
 ) -> ApiResponse[dict]:
     return success(build_delivery_summary(db))
+
+
+@router.get("/statistics-analysis", response_model=ApiResponse[dict])
+def statistics_analysis(
+    query: StatisticsAnalysisQuery = Depends(),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("report:read")),
+) -> ApiResponse[dict]:
+    return success(build_statistics_analysis(db, query))
 
 
 @router.get("/delivery-summary.xlsx")

@@ -63,6 +63,22 @@ export interface OperationLogItem {
   created_at: string
 }
 
+export interface SupportMetric {
+  name: string
+  status: string
+  value?: string | number | null
+  description?: string | null
+}
+
+export interface SystemSupportOverview {
+  runtime_monitoring: SupportMetric[]
+  security_controls: SupportMetric[]
+  audit_traceability: SupportMetric[]
+  backup_recovery: SupportMetric[]
+  message_alerts: SupportMetric[]
+  data_scope: SupportMetric[]
+}
+
 export function listUsers() {
   return unwrap<UserItem[]>(http.get('/users'))
 }
@@ -119,4 +135,8 @@ export function listOperationLogs(params: {
   end_at?: string
 } = {}) {
   return unwrap<PageResult<OperationLogItem>>(http.get('/operation-logs', { params }))
+}
+
+export function getSystemSupportOverview() {
+  return unwrap<SystemSupportOverview>(http.get('/system/support-overview'))
 }

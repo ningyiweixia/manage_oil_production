@@ -48,8 +48,17 @@ def _project_snapshot(project: WorkoverProjectPool) -> dict[str, Any]:
         "production_priority": project.production_priority,
         "status": project.status.value if isinstance(project.status, ProjectPoolStatus) else project.status,
         "reason": project.reason,
+        "reason_category": project.reason_category,
+        "completeness_status": project.completeness_status,
+        "data_source": project.data_source,
+        "report_batch": project.report_batch,
+        "photo_requirement": project.photo_requirement,
+        "rejection_supplement": project.rejection_supplement,
+        "is_duplicate_well": project.is_duplicate_well,
+        "related_project_ids": project.related_project_ids,
         "measures_jsonb": project.measures_jsonb,
         "photo_urls": project.photo_urls,
+        "attachments": project.attachments,
         "remark": project.remark,
         "created_by_id": project.created_by_id,
         "is_deleted": project.is_deleted,
@@ -69,6 +78,22 @@ def _ensure_status_transition(current: ProjectPoolStatus, target: ProjectPoolSta
         return
     if target not in ALLOWED_STATUS_TRANSITIONS[current]:
         raise BusinessException(CONFLICT, f"Status transition {current.value} -> {target.value} is not allowed")
+
+
+def _find_related_project_ids(db: Session, well_no: str, exclude_project_id: int | None = None) -> list[int]:
+    stmt = select(WorkoverProjectPool.id).where(
+        WorkoverProjectPool.well_no == well_no,
+        WorkoverProjectPool.is_deleted.is_(False),
+    )
+    if exclude_project_id is not None:
+        stmt = stmt.where(WorkoverProjectPool.id != exclude_project_id)
+    return list(db.scalars(stmt).all())
+
+
+def _apply_duplicate_marker(db: Session, project: WorkoverProjectPool) -> None:
+    related_ids = _find_related_project_ids(db, project.well_no, exclude_project_id=project.id)
+    project.related_project_ids = related_ids
+    project.is_duplicate_well = bool(related_ids)
 
 
 def _apply_filters(stmt: Select[tuple[WorkoverProjectPool]], query: WorkoverProjectPoolQuery) -> Select[tuple[WorkoverProjectPool]]:
@@ -127,6 +152,8 @@ def create_project_pool(
     project = WorkoverProjectPool(**data, created_by_id=operator_id)
     db.add(project)
     db.flush()
+    _apply_duplicate_marker(db, project)
+    db.flush()
     write_approval_log(
         db,
         business_type=BUSINESS_TYPE,
@@ -163,6 +190,7 @@ def update_project_pool(
     ensure_dictionary_values(db, "measure_type", _measure_types(data["measures_jsonb"]))
     for key, value in data.items():
         setattr(project, key, value)
+    _apply_duplicate_marker(db, project)
     db.flush()
     write_approval_log(
         db,

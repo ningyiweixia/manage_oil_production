@@ -4,17 +4,10 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_permission
 from app.crud.contractor import (
     create_contractor_capacity,
-    create_operation_sheet,
     dispatch_operation,
     get_contractor_capacity,
-    get_operation_analytics,
-    get_operation_sheet,
     list_contractor_capacities,
-    list_operation_sheets,
-    select_priority_sheets,
-    sync_approved_projects_to_operation_sheets,
     update_contractor_capacity,
-    update_sheet_progress,
 )
 from app.db.session import get_db
 from app.models.rbac import User
@@ -31,6 +24,14 @@ from app.schemas.contractor import (
 )
 from app.schemas.pagination import PageResult
 from app.schemas.response import ApiResponse, success
+from app.services.workover_operation_service import (
+    build_workover_operation_dashboard,
+    create_workover_operation_sheet,
+    get_workover_operation_sheet,
+    list_priority_operation_sheets,
+    list_workover_operation_sheets,
+    update_workover_operation_progress,
+)
 
 router = APIRouter(prefix="/contractors", tags=["承包商管理"])
 
@@ -72,13 +73,11 @@ def list_priority_sheets(
     current_user: User = Depends(require_permission("operation-sheet:read")),
 ) -> ApiResponse[list[WorkoverOperationSheetOut]]:
     """按优先级排序的待派工修井运行表。"""
-    sync_approved_projects_to_operation_sheets(
+    items = list_priority_operation_sheets(
         db,
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
     )
-    sheets = select_priority_sheets(db)
-    items = [WorkoverOperationSheetOut.model_validate(s) for s in sheets]
     return success(items)
 
 
@@ -88,16 +87,15 @@ def list_sheets(
     query: WorkoverOperationSheetQuery = Depends(),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("operation-sheet:read")),
-) -> ApiResponse[PageResult[WorkoverOperationSheetOut]]:
-    sync_approved_projects_to_operation_sheets(
+) -> ApiResponse[PageResult[dict]]:
+    rows, total = list_workover_operation_sheets(
         db,
+        query,
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
     )
-    rows, total = list_operation_sheets(db, query)
-    items = [WorkoverOperationSheetOut.model_validate(row) for row in rows]
     return success(
-        PageResult(items=items, total=total, page=query.page, page_size=query.page_size)
+        PageResult(items=rows, total=total, page=query.page, page_size=query.page_size)
     )
 
 
@@ -108,10 +106,10 @@ def create_sheet(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("operation-sheet:create")),
 ) -> ApiResponse[WorkoverOperationSheetOut]:
-    sheet = create_operation_sheet(
+    sheet = create_workover_operation_sheet(
         db, payload, operator_id=current_user.id, operator_ip=_client_ip(request)
     )
-    return success(WorkoverOperationSheetOut.model_validate(sheet), msg="工单创建成功")
+    return success(sheet, msg="工单创建成功")
 
 
 @router.get("/operation-sheets/{sheet_id}", response_model=ApiResponse[WorkoverOperationSheetOut])
@@ -120,7 +118,7 @@ def sheet_detail(
     db: Session = Depends(get_db),
     _: User = Depends(require_permission("operation-sheet:read")),
 ) -> ApiResponse[WorkoverOperationSheetOut]:
-    return success(WorkoverOperationSheetOut.model_validate(get_operation_sheet(db, sheet_id)))
+    return success(get_workover_operation_sheet(db, sheet_id))
 
 
 @router.patch("/dispatch", response_model=ApiResponse[WorkoverOperationSheetOut])
@@ -150,10 +148,10 @@ def update_progress(
     current_user: User = Depends(require_permission("operation-sheet:update")),
 ) -> ApiResponse[WorkoverOperationSheetOut]:
     """更新施工进度，进度到达 100% 自动推进工单状态。"""
-    sheet = update_sheet_progress(
+    sheet = update_workover_operation_progress(
         db, sheet_id, payload, operator_id=current_user.id, operator_ip=_client_ip(request)
     )
-    return success(WorkoverOperationSheetOut.model_validate(sheet), msg="进度已更新")
+    return success(sheet, msg="进度已更新")
 
 
 @router.get("/analytics/summary", response_model=ApiResponse[dict])
@@ -162,7 +160,7 @@ def operation_analytics(
     _: User = Depends(require_permission("operation-sheet:read")),
 ) -> ApiResponse[dict]:
     """修井运行基础统计：运行状态分布、派工完成率、队伍工作量、措施类型分布。"""
-    return success(get_operation_analytics(db))
+    return success(build_workover_operation_dashboard(db))
 
 
 @router.get("/{contractor_id}", response_model=ApiResponse[ContractorCapacityOut])

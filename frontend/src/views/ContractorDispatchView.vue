@@ -12,141 +12,42 @@
         </el-select>
       </el-form-item>
       <el-form-item>
-        <el-button type="primary" :icon="Search" @click="loadAll">查询</el-button>
+        <el-button type="primary" :icon="Search" @click="loadContractors">查询</el-button>
         <el-button :icon="Plus" @click="openContractor">运力报备</el-button>
-        <el-button :icon="DocumentAdd" @click="openSheet">创建运行表</el-button>
       </el-form-item>
     </el-form>
   </section>
 
-  <section class="stats-bar">
-    <div class="stats-card">
-      <span class="stats-label">运行表总数</span>
-      <strong class="stats-value">{{ analytics?.total_sheets || 0 }}</strong>
+  <section class="source-summary">
+    <div>
+      <strong>承包商系统对接</strong>
+      <span>本页保留外部承包商队伍资源入口，派工执行与运行表进度由厂内运行模块统一管理。</span>
     </div>
-    <div class="stats-card">
-      <span class="stats-label">待派工</span>
-      <strong class="stats-value warn">{{ analytics?.status_distribution?.waiting_dispatch || 0 }}</strong>
-    </div>
-    <div class="stats-card">
-      <span class="stats-label">施工中</span>
-      <strong class="stats-value primary">{{ analytics?.status_distribution?.working || 0 }}</strong>
-    </div>
-    <div class="stats-card">
-      <span class="stats-label">已完工</span>
-      <strong class="stats-value success">{{ analytics?.status_distribution?.finished || 0 }}</strong>
-    </div>
-    <div class="stats-card">
-      <span class="stats-label">派工完成率</span>
-      <strong class="stats-value">{{ analytics?.dispatch_rate || 0 }}%</strong>
-    </div>
-    <div class="stats-card">
-      <span class="stats-label">完工率</span>
-      <strong class="stats-value">{{ analytics?.completion_rate || 0 }}%</strong>
-    </div>
-  </section>
-
-  <section class="split-grid">
-    <article class="table-panel">
-      <div class="panel-head">
-        <div>
-          <h2>承包商运力</h2>
-          <p>维护每日队伍状态和施工能力标签。</p>
-        </div>
-      </div>
-      <el-table v-loading="loading" :data="contractors" row-key="id">
-        <el-table-column prop="contractor_name" label="承包商" min-width="140" />
-        <el-table-column prop="team_name" label="队伍" min-width="120" />
-        <el-table-column prop="report_date" label="日期" width="120" />
-        <el-table-column prop="available_count" label="可用数" width="84" />
-        <el-table-column label="状态" width="96">
-          <template #default="{ row }">
-            <el-tag :type="contractorTag(row.status)">{{ contractorStatusLabel(row.status) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="能力标签" min-width="180">
-          <template #default="{ row }">
-            <el-tag v-for="(value, key) in row.capability_tags" :key="key" class="tag-gap" effect="plain">
-              {{ key }}: {{ value }}
-            </el-tag>
-          </template>
-        </el-table-column>
-      </el-table>
-    </article>
-
-    <article class="table-panel">
-      <div class="panel-head">
-        <div>
-          <h2>待派工运行表</h2>
-          <p>按审批通过时间和产量优先级排序。</p>
-        </div>
-        <el-button :icon="Refresh" @click="loadPriority">刷新</el-button>
-      </div>
-      <el-table v-loading="loading" :data="prioritySheets" row-key="id">
-        <el-table-column prop="operation_no" label="作业编号" min-width="180" />
-        <el-table-column prop="project_id" label="项目ID" width="90" />
-        <el-table-column label="进度" width="120">
-          <template #default="{ row }">
-            <el-progress :percentage="row.progress" :stroke-width="8" />
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="110">
-          <template #default="{ row }">
-            <div class="table-actions">
-              <el-button text type="primary" @click="openDispatch(row)">派工</el-button>
-            </div>
-          </template>
-        </el-table-column>
-      </el-table>
-    </article>
+    <el-tag effect="plain">外部系统接口</el-tag>
   </section>
 
   <section class="table-panel">
     <div class="panel-head">
       <div>
-        <h2>修井运行表</h2>
-        <p>跟踪派工状态、施工进度和 A5 回调结果。</p>
+        <h2>承包商运力</h2>
+        <p>维护外部承包商系统同步前的队伍状态和施工能力标签。</p>
       </div>
     </div>
-    <el-table v-loading="loading" :data="sheets" row-key="id">
-      <el-table-column prop="operation_no" label="作业编号" min-width="180" />
-      <el-table-column prop="project_id" label="项目ID" width="90" />
-      <el-table-column prop="contractor_capacity_id" label="队伍ID" width="90" />
-      <el-table-column label="状态" width="120">
+    <el-table v-loading="loading" :data="contractors" row-key="id" empty-text="暂无承包商运力">
+      <el-table-column prop="contractor_name" label="承包商" min-width="140" />
+      <el-table-column prop="team_name" label="队伍" min-width="120" />
+      <el-table-column prop="report_date" label="日期" width="120" />
+      <el-table-column prop="available_count" label="可用数" width="84" />
+      <el-table-column label="状态" width="96">
         <template #default="{ row }">
-          <el-tag :type="sheetTag(row.status)">{{ sheetStatusLabel(row.status) }}</el-tag>
+          <el-tag :type="contractorTag(row.status)">{{ contractorStatusLabel(row.status) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="进度" min-width="160">
+      <el-table-column label="能力标签" min-width="180">
         <template #default="{ row }">
-          <el-progress :percentage="row.progress" />
-        </template>
-      </el-table-column>
-      <el-table-column label="物料状态" min-width="150">
-        <template #default="{ row }">
-          <el-tag :type="materialTag(materialInfo(row).status)" effect="plain">
-            {{ materialStatusLabel(materialInfo(row).status) }}
+          <el-tag v-for="(value, key) in row.capability_tags" :key="key" class="tag-gap" effect="plain">
+            {{ key }}: {{ value }}
           </el-tag>
-          <span class="muted-text material-count">共 {{ materialInfo(row).total }} 项</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="A5状态" width="120">
-        <template #default="{ row }">
-          <el-tag v-if="row.a5_status" effect="plain">{{ row.a5_status }}</el-tag>
-          <span v-else class="muted-text">未同步</span>
-        </template>
-      </el-table-column>
-      <el-table-column prop="a5_remark" label="A5备注" min-width="160" show-overflow-tooltip />
-      <el-table-column label="A5同步时间" min-width="170">
-        <template #default="{ row }">
-          {{ formatDateTime(row.last_a5_sync_at) }}
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="150">
-        <template #default="{ row }">
-          <div class="table-actions">
-            <el-button text type="primary" @click="openProgress(row)">更新进度</el-button>
-          </div>
         </template>
       </el-table-column>
     </el-table>
@@ -165,214 +66,63 @@
           <el-option label="离线" value="OFFLINE" />
         </el-select>
       </el-form-item>
-      <el-form-item label="大修资质"><el-switch v-model="majorRepair" />
-      </el-form-item>
+      <el-form-item label="大修资质"><el-switch v-model="majorRepair" /></el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="contractorVisible = false">取消</el-button>
       <el-button type="primary" :loading="saving" @click="saveContractor">保存</el-button>
     </template>
   </el-dialog>
-
-  <el-dialog v-model="sheetVisible" title="创建修井运行表" width="520px">
-    <el-form :model="sheetForm" label-width="104px">
-      <el-form-item label="项目ID"><el-input-number v-model="sheetForm.project_id" :min="1" /></el-form-item>
-      <el-form-item label="计划开始"><el-date-picker v-model="sheetForm.planned_start_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ" /></el-form-item>
-      <el-form-item label="计划结束"><el-date-picker v-model="sheetForm.planned_end_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ" /></el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button @click="sheetVisible = false">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="saveSheet">创建</el-button>
-    </template>
-  </el-dialog>
-
-  <el-dialog v-model="dispatchVisible" title="派工" width="520px">
-    <el-form label-width="104px">
-      <el-form-item label="运行表">
-        <el-input :model-value="dispatchTarget?.operation_no" disabled />
-      </el-form-item>
-      <el-form-item label="选择队伍">
-        <el-select v-model="dispatchContractorId" filterable placeholder="选择可用队伍" style="width: 100%">
-          <el-option
-            v-for="item in availableContractors"
-            :key="item.id"
-            :label="`${item.contractor_name} / ${item.team_name}`"
-            :value="item.id"
-          />
-        </el-select>
-      </el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button @click="dispatchVisible = false">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="confirmDispatch">确认派工</el-button>
-    </template>
-  </el-dialog>
-
-  <el-dialog v-model="progressVisible" title="更新进度" width="480px">
-    <el-slider v-model="progressValue" :max="100" show-input />
-    <template #footer>
-      <el-button @click="progressVisible = false">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="saveProgress">保存</el-button>
-    </template>
-  </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { DocumentAdd, Plus, Refresh, Search } from '@element-plus/icons-vue'
+import { Plus, Search } from '@element-plus/icons-vue'
 import {
   createContractor,
-  createOperationSheet,
-  dispatchOperation,
-  getOperationAnalytics,
   listContractors,
-  listOperationSheets,
-  listPrioritySheets,
-  updateOperationProgress,
   type ContractorCapacity,
   type ContractorQuery,
-  type OperationAnalytics,
-  type OperationSheet
+  type ContractorStatus
 } from '../api/contractor'
 
-const contractorStatusText = { AVAILABLE: '可用', BUSY: '忙碌', OFFLINE: '离线' }
-const sheetStatusText = { WAITING_DISPATCH: '待派工', DISPATCHED: '已派工', WORKING: '施工中', FINISHED: '已完成', CANCELED: '已取消' }
-const materialStatusText = {
-  NONE: '无需求',
-  PENDING: '待处理',
-  APPROVED: '已审核',
-  PLANNED: '已计划',
-  DELIVERED: '已出库',
-  ARRIVED: '已到场',
-  USED: '已使用',
-  CANCELED: '已取消'
-}
+const contractorStatusText: Record<ContractorStatus, string> = { AVAILABLE: '可用', BUSY: '忙碌', OFFLINE: '离线' }
 const loading = ref(false)
 const saving = ref(false)
 const contractors = ref<ContractorCapacity[]>([])
-const prioritySheets = ref<OperationSheet[]>([])
-const sheets = ref<OperationSheet[]>([])
 const contractorQuery = reactive<ContractorQuery>({ page: 1, page_size: 50, status: '' })
 const contractorVisible = ref(false)
-const sheetVisible = ref(false)
-const dispatchVisible = ref(false)
-const progressVisible = ref(false)
-const dispatchTarget = ref<OperationSheet | null>(null)
-const progressTarget = ref<OperationSheet | null>(null)
-const dispatchContractorId = ref<number>()
-const progressValue = ref(0)
-const analytics = ref<OperationAnalytics | null>(null)
 const majorRepair = ref(false)
 const contractorForm = reactive({
   contractor_name: '',
   team_name: '',
   report_date: new Date().toISOString().slice(0, 10),
   available_count: 1,
-  status: 'AVAILABLE' as const,
+  status: 'AVAILABLE' as ContractorStatus,
   capability_tags: {}
 })
-const sheetForm = reactive<{ project_id: number; planned_start_at?: string; planned_end_at?: string }>({ project_id: 1 })
-const availableContractors = computed(() => contractors.value.filter((item) => item.status === 'AVAILABLE'))
 
-function contractorTag(status: string) {
+function contractorTag(status: ContractorStatus) {
   return status === 'AVAILABLE' ? 'success' : status === 'BUSY' ? 'warning' : 'info'
 }
 
-function sheetTag(status: string) {
-  return status === 'FINISHED' ? 'success' : status === 'CANCELED' ? 'danger' : status === 'WAITING_DISPATCH' ? 'warning' : 'primary'
-}
-
-function contractorStatusLabel(status: keyof typeof contractorStatusText) {
+function contractorStatusLabel(status: ContractorStatus) {
   return contractorStatusText[status] || status
 }
 
-function sheetStatusLabel(status: keyof typeof sheetStatusText) {
-  return sheetStatusText[status] || status
-}
-
-function materialInfo(row: OperationSheet) {
-  const raw = row.progress_detail?.material
-  if (!raw || typeof raw !== 'object') return { status: 'NONE', total: 0 }
-  const material = raw as { status?: string; total?: number }
-  return {
-    status: material.status || 'NONE',
-    total: Number(material.total || 0)
-  }
-}
-
-function materialStatusLabel(status: string) {
-  return materialStatusText[status as keyof typeof materialStatusText] || status
-}
-
-function materialTag(status: string) {
-  if (status === 'USED' || status === 'ARRIVED') return 'success'
-  if (status === 'DELIVERED' || status === 'PLANNED') return 'primary'
-  if (status === 'PENDING' || status === 'APPROVED') return 'warning'
-  if (status === 'CANCELED') return 'danger'
-  return 'info'
-}
-
-function formatDateTime(value?: string | null) {
-  if (!value) return '-'
-  return value.replace('T', ' ').slice(0, 19)
-}
-
-async function loadAll() {
+async function loadContractors() {
   loading.value = true
   try {
-    const [contractorResult, sheetResult, priorityResult] = await Promise.allSettled([
-      listContractors(contractorQuery),
-      listOperationSheets({ page: 1, page_size: 100 }),
-      listPrioritySheets()
-    ])
-    if (contractorResult.status === 'fulfilled') {
-      contractors.value = contractorResult.value.items
-    } else {
-      ElMessage.error('承包商运力加载失败')
-    }
-    if (sheetResult.status === 'fulfilled') {
-      sheets.value = sheetResult.value.items
-    } else {
-      ElMessage.error('修井运行表加载失败')
-    }
-    if (priorityResult.status === 'fulfilled') {
-      prioritySheets.value = priorityResult.value
-    } else {
-      ElMessage.error('待派工运行表加载失败')
-    }
-    try {
-      analytics.value = await getOperationAnalytics()
-    } catch {
-      // statistics are optional
-    }
+    const result = await listContractors(contractorQuery)
+    contractors.value = result.items
   } finally {
     loading.value = false
   }
 }
 
-async function loadPriority() {
-  prioritySheets.value = await listPrioritySheets()
-}
-
 function openContractor() {
   contractorVisible.value = true
-}
-
-function openSheet() {
-  sheetVisible.value = true
-}
-
-function openDispatch(row: OperationSheet) {
-  dispatchTarget.value = row
-  dispatchContractorId.value = availableContractors.value[0]?.id
-  dispatchVisible.value = true
-}
-
-function openProgress(row: OperationSheet) {
-  progressTarget.value = row
-  progressValue.value = row.progress
-  progressVisible.value = true
 }
 
 async function saveContractor() {
@@ -384,83 +134,11 @@ async function saveContractor() {
     })
     ElMessage.success('运力已报备')
     contractorVisible.value = false
-    await loadAll()
+    await loadContractors()
   } finally {
     saving.value = false
   }
 }
 
-async function saveSheet() {
-  saving.value = true
-  try {
-    await createOperationSheet(sheetForm)
-    ElMessage.success('运行表已创建')
-    sheetVisible.value = false
-    await loadAll()
-  } finally {
-    saving.value = false
-  }
-}
-
-async function confirmDispatch() {
-  if (!dispatchTarget.value || !dispatchContractorId.value) return
-  saving.value = true
-  try {
-    await dispatchOperation({ operation_sheet_id: dispatchTarget.value.id, contractor_capacity_id: dispatchContractorId.value })
-    ElMessage.success('派工成功')
-    dispatchVisible.value = false
-    await loadAll()
-  } finally {
-    saving.value = false
-  }
-}
-
-async function saveProgress() {
-  if (!progressTarget.value) return
-  saving.value = true
-  try {
-    await updateOperationProgress(progressTarget.value.id, { progress: progressValue.value, progress_detail: { source: 'manual' } })
-    ElMessage.success('进度已更新')
-    progressVisible.value = false
-    await loadAll()
-  } finally {
-    saving.value = false
-  }
-}
-
-onMounted(loadAll)
+onMounted(loadContractors)
 </script>
-
-<style scoped>
-.stats-bar {
-  display: flex;
-  gap: 12px;
-  padding: 12px 0;
-  flex-wrap: wrap;
-}
-.stats-card {
-  background: #fff;
-  border: 1px solid #d8dee8;
-  border-radius: 8px;
-  padding: 14px 20px;
-  min-width: 120px;
-  flex: 1;
-  text-align: center;
-}
-.stats-label {
-  display: block;
-  color: #667085;
-  font-size: 13px;
-  margin-bottom: 4px;
-}
-.stats-value {
-  display: block;
-  font-size: 26px;
-  font-weight: 700;
-  color: #17202a;
-}
-.stats-value.warn { color: #b7791f; }
-.stats-value.primary { color: #409eff; }
-.stats-value.success { color: #168a4a; }
-.material-count { margin-left: 8px; }
-</style>

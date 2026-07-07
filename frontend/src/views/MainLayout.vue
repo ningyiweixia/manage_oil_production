@@ -91,7 +91,7 @@ import { clearSessionMenus, loadCachedMenus, refreshSessionMenus } from '../util
 
 const iconMap: Record<string, any> = {
   Tickets, TrendCharts, Setting, Monitor, Document, DataAnalysis, Bell, User,
-  settings: Setting, database: DataAnalysis, table: Tickets, team: OfficeBuilding,
+  settings: Setting, database: DataAnalysis, table: Tickets, tickets: Tickets, team: OfficeBuilding,
   list: List, send: Promotion, edit: Edit, key: Key, menu: Menu, goods: List, truck: Promotion,
   user: User, shield: Key, document: Document, monitor: Monitor, 'file-text': Files,
   'trend-charts': TrendCharts
@@ -106,6 +106,7 @@ const routeIconMap: Record<string, any> = {
   '/system/dictionaries': List,
   '/system/operation-logs': Files,
   '/workover/project-pools': Tickets,
+  '/workover/operation-sheets': Document,
   '/contractor/capacity': OfficeBuilding,
   '/contractor/dispatch': Promotion,
   '/contractor/operation-sheets': Document,
@@ -179,6 +180,64 @@ function normalizeDeprecatedMenus(items: MenuNode[]): MenuNode[] {
   })
 }
 
+const workoverOperationMenu: MenuNode = {
+  id: -3001,
+  title: '修井运行管理',
+  route_name: 'workover_operation',
+  route_path: '/workover/operation-sheets',
+  component: null,
+  icon: 'document',
+  parent_id: null,
+  sort_order: 22,
+  is_visible: true,
+  is_active: true,
+  meta: {},
+  children: []
+}
+
+function hasMenuPath(items: MenuNode[], routePath: string): boolean {
+  return items.some((item) => item.route_path === routePath || hasMenuPath(item.children || [], routePath))
+}
+
+function withWorkoverOperationMenu(items: MenuNode[]): MenuNode[] {
+  if (hasMenuPath(items, '/workover/operation-sheets')) return items
+  const canSeeOperation = permissions.value.includes('workover_operation:read') || permissions.value.includes('operation-sheet:read')
+  if (!canSeeOperation) return items
+  return [...items, workoverOperationMenu].sort((a, b) => a.sort_order - b.sort_order)
+}
+
+const systemSupportMenu: MenuNode = {
+  id: -3002,
+  title: '基础支撑',
+  route_name: 'system_support',
+  route_path: '/system/support',
+  component: null,
+  icon: 'monitor',
+  parent_id: null,
+  sort_order: 18,
+  is_visible: true,
+  is_active: true,
+  meta: {},
+  children: []
+}
+
+function canSeeSystemSupport() {
+  const roles = Array.isArray((user.value as any)?.roles) ? (user.value as any).roles : []
+  return permissions.value.includes('system:support:read')
+    || Boolean((user.value as any)?.is_superuser)
+    || roles.some((role: any) => role?.code === 'super_admin' || role?.code === 'ops_admin')
+}
+
+function withSystemSupportMenu(items: MenuNode[]): MenuNode[] {
+  if (hasMenuPath(items, '/system/support') || !canSeeSystemSupport()) return items
+  return items.map((item) => {
+    if (item.route_name !== 'system' && item.route_path !== '/system' && !item.route_path?.startsWith('/system')) return item
+    const children = [...(item.children || []), { ...systemSupportMenu, parent_id: item.id }]
+      .sort((a, b) => a.sort_order - b.sort_order)
+    return { ...item, children }
+  })
+}
+
 /** Build sidebar menus from backend RBAC menus, with a static fallback */
 const sidebarMenus = computed<MenuNode[]>(() => {
   const stored = cachedMenus.value
@@ -189,7 +248,7 @@ const sidebarMenus = computed<MenuNode[]>(() => {
         .filter((m) => m.is_visible !== false && m.is_active !== false)
         .map((m) => ({ ...m, children: filterVisible(m.children || []) }))
         .sort((a, b) => a.sort_order - b.sort_order)
-    return withAccountSettingsMenu(normalizeDeprecatedMenus(filterVisible(stored))).sort((a, b) => a.sort_order - b.sort_order)
+    return withWorkoverOperationMenu(withSystemSupportMenu(withAccountSettingsMenu(normalizeDeprecatedMenus(filterVisible(stored))))).sort((a, b) => a.sort_order - b.sort_order)
   }
   return [
     {
@@ -205,6 +264,11 @@ const sidebarMenus = computed<MenuNode[]>(() => {
     {
       id: 3, title: '承包商调度', route_name: 'contractor_dispatch', route_path: '/contractor/dispatch',
       component: null, icon: 'team', parent_id: null, sort_order: 3,
+      is_visible: true, is_active: true, meta: {}, children: []
+    },
+    {
+      id: 31, title: '修井运行管理', route_name: 'workover_operation', route_path: '/workover/operation-sheets',
+      component: null, icon: 'document', parent_id: null, sort_order: 3,
       is_visible: true, is_active: true, meta: {}, children: []
     },
     {
@@ -270,6 +334,11 @@ const sidebarMenus = computed<MenuNode[]>(() => {
         {
           id: 87, title: '数据字典', route_name: 'system_dictionaries', route_path: '/system/dictionaries',
           component: null, icon: 'list', parent_id: 8, sort_order: 7,
+          is_visible: true, is_active: true, meta: {}, children: []
+        },
+        {
+          id: 88, title: '基础支撑', route_name: 'system_support', route_path: '/system/support',
+          component: null, icon: 'monitor', parent_id: 8, sort_order: 8,
           is_visible: true, is_active: true, meta: {}, children: []
         }
       ]
