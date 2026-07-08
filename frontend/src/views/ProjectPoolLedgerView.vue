@@ -263,10 +263,25 @@ function attachmentCount(row: WorkoverProject) {
 async function loadProjects() {
   loading.value = true
   try {
-    const result = await listProjects(query)
-    projects.value = result.items
-    total.value = result.total
+    // Direct fetch to bypass any Axios/compactQuery issues
+    const token = localStorage.getItem('access_token')
+    const resp = await fetch('/api/v1/workover-project-pools/?page=1&page_size=20', {
+      headers: { 'Authorization': 'Bearer ' + (token || '') }
+    })
+    const json = await resp.json()
+    if (json.code === 20000 && json.data) {
+      projects.value = json.data.items || []
+      total.value = json.data.total || 0
+    } else {
+      ElMessage.error(json.msg || '接口返回异常')
+      projects.value = []
+      total.value = 0
+    }
     selectedIds.value = []
+  } catch (error: any) {
+    ElMessage.error(error?.message || '加载项目列表失败')
+    projects.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
@@ -370,5 +385,5 @@ async function confirmDelete(row: WorkoverProject) {
   ElMessage.success('已作废')
   await Promise.all([loadWorkflowCounts(), loadProjects()])
 }
-onMounted(() => { void Promise.all([loadWorkflowCounts(), loadProjects()]) })
+onMounted(() => { loadProjects(); loadWorkflowCounts() })
 </script>

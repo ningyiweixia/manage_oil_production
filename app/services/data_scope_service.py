@@ -5,7 +5,7 @@ from sqlalchemy import or_
 from app.models.rbac import User
 from app.models.workover import WorkoverProjectPool
 
-FULL_SCOPE_ROLES = {"super_admin", "ops_admin", "business_reviewer"}
+FULL_SCOPE_ROLES = {"super_admin", "ops_admin", "business_reviewer", "project_pool_admin"}
 
 
 def user_role_codes(user: User) -> set[str]:

@@ -1,6 +1,6 @@
 """Remove engineering design module
 
-Revision ID: 20260707_0012
+Revision ID: 20260707_0013
 Revises: 20260707_0011
 Create Date: 2026-07-07
 
@@ -10,7 +10,7 @@ from typing import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "20260707_0012"
+revision: str = "20260707_0013"
 down_revision: str | None = "20260707_0011"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None

@@ -2,10 +2,10 @@
   <section class="toolbar">
     <el-form :model="query" inline>
       <el-form-item label="井号">
-        <el-input v-model="query.well_no" clearable placeholder="CY2-136" @keyup.enter="loadTasks" />
+        <el-input v-model="query.well_no" clearable placeholder="CY2-136" @keyup.enter="loadWorkbench" />
       </el-form-item>
       <el-form-item>
-        <el-button type="primary" :icon="Search" @click="loadTasks">查询</el-button>
+        <el-button type="primary" :icon="Search" @click="loadWorkbench">查询</el-button>
         <el-button :icon="Refresh" @click="resetQuery">重置</el-button>
       </el-form-item>
     </el-form>
@@ -165,6 +165,12 @@ const activeScope = ref<ApprovalTaskScope>('pending')
 const query = reactive({ page: 1, page_size: 10, well_no: '' })
 const tasks = ref<ApprovalTask[]>([])
 const total = ref(0)
+const scopeTotals = reactive<Record<ApprovalTaskScope, number>>({
+  pending: 0,
+  processed: 0,
+  rejected: 0,
+  approved: 0
+})
 const loading = ref(false)
 const saving = ref(false)
 const approvalDialogVisible = ref(false)
@@ -183,12 +189,13 @@ const pendingAction = ref<ApprovalActionCode>('APPROVE')
 const timelineVisible = ref(false)
 const timelineLoading = ref(false)
 const timeline = ref<ApprovalTimelineItem[]>([])
+const approvalScopes: ApprovalTaskScope[] = ['pending', 'processed', 'rejected', 'approved']
 
 const scopeCards = computed(() => [
-  { name: 'pending' as ApprovalTaskScope, label: '我的待办', desc: '地质与工艺', count: activeScope.value === 'pending' ? total.value : 0 },
-  { name: 'processed' as ApprovalTaskScope, label: '已处理', desc: '本人经办', count: activeScope.value === 'processed' ? total.value : 0 },
-  { name: 'rejected' as ApprovalTaskScope, label: '已驳回', desc: '待补充', count: activeScope.value === 'rejected' ? total.value : 0 },
-  { name: 'approved' as ApprovalTaskScope, label: '已通过', desc: '进入运行库', count: activeScope.value === 'approved' ? total.value : 0 }
+  { name: 'pending' as ApprovalTaskScope, label: '我的待办', desc: '地质与工艺', count: scopeTotals.pending },
+  { name: 'processed' as ApprovalTaskScope, label: '已处理', desc: '本人经办', count: scopeTotals.processed },
+  { name: 'rejected' as ApprovalTaskScope, label: '已驳回', desc: '待补充', count: scopeTotals.rejected },
+  { name: 'approved' as ApprovalTaskScope, label: '已通过', desc: '进入运行库', count: scopeTotals.approved }
 ])
 
 function completenessLabel(status?: string) {
@@ -218,9 +225,27 @@ async function loadTasks() {
     })
     tasks.value = result.items
     total.value = result.total
+    scopeTotals[activeScope.value] = result.total
   } finally {
     loading.value = false
   }
+}
+
+async function loadScopeTotals() {
+  const results = await Promise.all([
+    listApprovalTasks({ scope: 'pending', page: 1, page_size: 1, well_no: query.well_no }),
+    listApprovalTasks({ scope: 'processed', page: 1, page_size: 1, well_no: query.well_no }),
+    listApprovalTasks({ scope: 'rejected', page: 1, page_size: 1, well_no: query.well_no }),
+    listApprovalTasks({ scope: 'approved', page: 1, page_size: 1, well_no: query.well_no })
+  ])
+  approvalScopes.forEach((scope, index) => {
+    scopeTotals[scope] = results[index].total
+  })
+}
+
+async function loadWorkbench() {
+  query.page = 1
+  await Promise.all([loadTasks(), loadScopeTotals()])
 }
 
 function switchScope(name: string | number) {
@@ -233,7 +258,7 @@ function switchScope(name: string | number) {
 function resetQuery() {
   query.page = 1
   query.well_no = ''
-  void loadTasks()
+  void loadWorkbench()
 }
 
 function openApproval(row: ApprovalTask, action: ApprovalActionCode) {
@@ -284,7 +309,7 @@ async function confirmApproval() {
     ElMessage.success(pendingAction.value === 'APPROVE' ? '审批已通过' : '已驳回并记录补充要求')
     approvalDialogVisible.value = false
     emitProjectDataChanged()
-    await loadTasks()
+    await Promise.all([loadTasks(), loadScopeTotals()])
   } catch (error: any) {
     ElMessage.error(error?.response?.data?.msg || error?.message || '审批操作失败')
   } finally {
@@ -304,7 +329,7 @@ async function resubmitRejected(row: ApprovalTask) {
     await processProjectApproval(row.business_id, { action: 'RESUBMIT', comment: '补充资料后重新提报' })
     ElMessage.success(`已重新提交至${targetName}`)
     emitProjectDataChanged()
-    await loadTasks()
+    await Promise.all([loadTasks(), loadScopeTotals()])
   } catch (error: any) {
     ElMessage.error(error?.response?.data?.msg || error?.message || '重新提报失败')
   } finally {
@@ -337,10 +362,10 @@ watch(
   }
 )
 
-useProjectDataChanged(() => { void loadTasks() })
+useProjectDataChanged(() => { void Promise.all([loadTasks(), loadScopeTotals()]) })
 
 onMounted(() => {
   if (typeof route.query.scope === 'string') activeScope.value = route.query.scope as ApprovalTaskScope
-  void loadTasks()
+  void Promise.all([loadTasks(), loadScopeTotals()])
 })
 </script>

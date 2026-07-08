@@ -75,6 +75,17 @@ class ApprovalWorkflowContractTest(unittest.TestCase):
         self.assertIn("/approvals/workover-project-pools", api_source)
         self.assertIn("/approvals/${businessType}/${businessId}/timeline", api_source)
 
+    def test_frontend_approval_workbench_syncs_scope_card_counts_from_task_totals(self):
+        source = (REPO_ROOT / "frontend/src/views/ApprovalWorkbench.vue").read_text(encoding="utf-8")
+
+        self.assertIn("scopeTotals", source)
+        self.assertIn("loadScopeTotals", source)
+        for scope in ("pending", "processed", "rejected", "approved"):
+            self.assertIn(f"{scope}: 0", source)
+            self.assertIn(f"scopeTotals.{scope}", source)
+            self.assertIn(f"scope: '{scope}'", source)
+        self.assertNotIn("activeScope.value === 'pending' ? total.value : 0", source)
+
     def test_project_pool_ledger_does_not_directly_approve_or_reject(self):
         source = (REPO_ROOT / "frontend/src/views/ProjectPoolLedgerView.vue").read_text(encoding="utf-8")
 
