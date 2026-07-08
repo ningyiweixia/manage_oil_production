@@ -67,12 +67,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\.local\start-frontend.
 From PowerShell:
 
 ```powershell
-cmd.exe /c "start ""oil-backend"" /min powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""D:\workspace\githubprojects\oil_production\manage_oil_production\.local\start-backend.ps1"""
+cmd.exe /c 'start "oil-backend" /min powershell.exe -NoProfile -ExecutionPolicy Bypass -File "D:\workspace\githubprojects\oil_production\manage_oil_production\.local\start-backend.ps1"'
 ```
 
 ```powershell
-cmd.exe /c "start ""oil-frontend"" /min powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""D:\workspace\githubprojects\oil_production\manage_oil_production\.local\start-frontend.ps1"""
+cmd.exe /c 'start "oil-frontend" /min powershell.exe -NoProfile -ExecutionPolicy Bypass -File "D:\workspace\githubprojects\oil_production\manage_oil_production\.local\start-frontend.ps1"'
 ```
+
+Use the single-quoted `cmd.exe /c 'start "title" ...'` form from PowerShell. It preserves the quoted window title for `cmd start`; without that, Windows may treat `oil-backend` or `oil-frontend` as the file to open.
 
 ## Local helper scripts
 
