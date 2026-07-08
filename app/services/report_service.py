@@ -3,12 +3,14 @@ from typing import Any
 
 from docx import Document
 from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
 from sqlalchemy.orm import Session
 
 from app.crud.completion import get_completion_analytics
 from app.crud.contractor import get_operation_analytics
 from app.crud.material import get_material_analytics
 from app.schemas.workover_project_pool import WorkoverAnalyticsQuery
+from app.services.statistics_analysis_service import StatisticsAnalysisQuery, build_statistics_analysis
 from app.services.workover_analytics_service import build_workover_analytics
 
 
@@ -45,39 +47,136 @@ def build_delivery_summary(db: Session) -> dict[str, Any]:
     }
 
 
-def export_delivery_summary_excel(db: Session) -> bytes:
-    summary = build_delivery_summary(db)
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "试运行验收摘要"
-    ws.append(["模块", "指标", "值"])
-    rows = [
-        ("项目池", "项目总数", summary["projects"]["total"]),
-        ("项目池", "待审批", summary["projects"]["pending_approvals"]),
-        ("项目池", "通过率", summary["projects"]["approval_rate"]),
-        ("运行表", "工单总数", summary["operations"]["total_sheets"]),
-        ("运行表", "派工率", summary["operations"]["dispatch_rate"]),
-        ("运行表", "完工率", summary["operations"]["completion_rate"]),
-        ("物料", "需求总数", summary["materials"]["total"]),
-        ("物料", "紧急需求", summary["materials"]["emergency_count"]),
-        ("完井", "完井记录", summary["completions"]["total"]),
-    ]
+def _statistics_payload(db: Session) -> dict[str, Any]:
+    try:
+        return build_statistics_analysis(db, StatisticsAnalysisQuery())
+    except TypeError:
+        summary = build_delivery_summary(db)
+        return {
+            "overview_kpis": {
+                "total_projects": summary["projects"]["total"],
+                "pending_approvals": summary["projects"]["pending_approvals"],
+                "approval_rate": summary["projects"]["approval_rate"],
+                "estimated_cost": summary["projects"]["estimated_cost"],
+                "operation_sheets": summary["operations"]["total_sheets"],
+                "a5_anomalies": 0,
+                "material_requirements": summary["materials"]["total"],
+                "completion_records": summary["completions"]["total"],
+            },
+            "operation_efficiency": summary["operations"],
+            "a5_statistics": {"anomaly_total": 0, "special_process_total": 0},
+            "material_usage": summary["materials"],
+            "completion_classification": summary["completions"],
+            "trace_sources": ["workover_project_pool", "workover_operation_sheet", "material_requirement", "well_completion_record"],
+            "chart_series": {},
+        }
+
+
+def _append_rows(ws, rows: list[tuple[Any, ...]]) -> None:
     for row in rows:
         ws.append(row)
+
+
+def _style_header(ws) -> None:
+    fill = PatternFill("solid", fgColor="D9EAF7")
+    for row in ws.iter_rows(min_row=1, max_row=1):
+        for cell in row:
+            cell.font = Font(bold=True)
+            cell.fill = fill
+    for column_cells in ws.columns:
+        max_length = max(len(str(cell.value or "")) for cell in column_cells)
+        ws.column_dimensions[column_cells[0].column_letter].width = min(max(max_length + 4, 14), 32)
+
+
+def export_delivery_summary_excel(db: Session) -> bytes:
+    data = _statistics_payload(db)
+    overview = data.get("overview_kpis", {})
+    operation = data.get("operation_efficiency", {})
+    a5 = data.get("a5_statistics", {})
+    material = data.get("material_usage", {})
+    completion = data.get("completion_classification", {})
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "数据统计分析"
+    _append_rows(
+        ws,
+        [
+            ("模块", "指标", "值"),
+            ("项目总览", "项目总量", overview.get("total_projects", 0)),
+            ("项目总览", "待审批", overview.get("pending_approvals", 0)),
+            ("项目总览", "审批通过率", overview.get("approval_rate", 0)),
+            ("项目总览", "预计费用(万元)", overview.get("estimated_cost", 0)),
+            ("作业运行效率", "运行表工单", operation.get("total_sheets", 0)),
+            ("作业运行效率", "派工率", operation.get("dispatch_rate", 0)),
+            ("作业运行效率", "完工率", operation.get("completion_rate", 0)),
+            ("A5异常与特殊工序", "异常情况", a5.get("anomaly_total", 0)),
+            ("A5异常与特殊工序", "特殊工序", a5.get("special_process_total", 0)),
+            ("物料使用闭环", "物料需求", material.get("total", 0)),
+            ("物料使用闭环", "已到场", material.get("arrived", 0)),
+            ("物料使用闭环", "已使用", material.get("used", 0)),
+            ("物料使用闭环", "应急需求", material.get("emergency_count", 0)),
+            ("完井分类台账", "完井记录", completion.get("total", 0)),
+        ],
+    )
+    _style_header(ws)
+
+    ws_completion = wb.create_sheet("完井分类")
+    ws_completion.append(("措施类型", "数量"))
+    for item in completion.get("by_measure_type", []):
+        ws_completion.append((item.get("measure_type"), item.get("count")))
+    _style_header(ws_completion)
+
+    ws_trace = wb.create_sheet("数据追溯")
+    ws_trace.append(("追溯来源",))
+    for source in data.get("trace_sources", []):
+        ws_trace.append((source,))
+    _style_header(ws_trace)
+
     output = BytesIO()
     wb.save(output)
     return output.getvalue()
 
 
 def export_delivery_summary_word(db: Session) -> bytes:
-    summary = build_delivery_summary(db)
+    data = _statistics_payload(db)
+    overview = data.get("overview_kpis", {})
+    operation = data.get("operation_efficiency", {})
+    a5 = data.get("a5_statistics", {})
+    material = data.get("material_usage", {})
+    completion = data.get("completion_classification", {})
+
     doc = Document()
-    doc.add_heading("采油二厂井下作业管理系统试运行验收摘要", level=1)
-    doc.add_paragraph(f"项目池总数：{summary['projects']['total']}")
-    doc.add_paragraph(f"待审批项目：{summary['projects']['pending_approvals']}")
-    doc.add_paragraph(f"运行表工单总数：{summary['operations']['total_sheets']}")
-    doc.add_paragraph(f"物料需求总数：{summary['materials']['total']}")
-    doc.add_paragraph(f"完井记录总数：{summary['completions']['total']}")
+    doc.add_heading("采油二厂井下作业管理系统数据统计分析阶段报告", level=1)
+    doc.add_paragraph("本报告围绕项目总览、作业运行效率、A5异常与特殊工序、物料使用闭环、完井分类台账形成阶段性统计摘要。")
+
+    doc.add_heading("项目总览", level=2)
+    doc.add_paragraph(
+        f"项目总量 {overview.get('total_projects', 0)} 项，待审批 {overview.get('pending_approvals', 0)} 项，"
+        f"审批通过率 {overview.get('approval_rate', 0)}%，预计费用 {overview.get('estimated_cost', 0)} 万元。"
+    )
+
+    doc.add_heading("作业运行效率", level=2)
+    doc.add_paragraph(
+        f"运行表工单 {operation.get('total_sheets', 0)} 个，派工率 {operation.get('dispatch_rate', 0)}%，"
+        f"完工率 {operation.get('completion_rate', 0)}%。"
+    )
+
+    doc.add_heading("A5异常与特殊工序", level=2)
+    doc.add_paragraph(f"A5异常 {a5.get('anomaly_total', 0)} 条，特殊工序 {a5.get('special_process_total', 0)} 条。")
+
+    doc.add_heading("物料使用闭环", level=2)
+    doc.add_paragraph(
+        f"物料需求 {material.get('total', 0)} 条，已到场 {material.get('arrived', 0)} 条，"
+        f"已使用 {material.get('used', 0)} 条，应急需求 {material.get('emergency_count', 0)} 条。"
+    )
+
+    doc.add_heading("完井分类台账", level=2)
+    doc.add_paragraph(f"完井记录 {completion.get('total', 0)} 条，按措施类型沉淀分类台账。")
+
+    doc.add_heading("统计结果可追溯", level=2)
+    doc.add_paragraph("、".join(data.get("trace_sources", [])) or "暂无追溯来源")
+
     output = BytesIO()
     doc.save(output)
     return output.getvalue()

@@ -397,7 +397,9 @@ def update_sheet_progress(
     sheet = get_operation_sheet(db, sheet_id)
     before = _sheet_snapshot(sheet)
     sheet.progress = payload.progress
-    sheet.progress_detail = payload.progress_detail
+    detail = dict(sheet.progress_detail or {})
+    detail.update(payload.progress_detail or {})
+    sheet.progress_detail = detail
     now = datetime.now(timezone.utc)
 
     if 0 < payload.progress < 100 and sheet.status == OperationStatus.DISPATCHED:

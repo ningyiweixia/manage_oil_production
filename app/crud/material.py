@@ -17,7 +17,7 @@ ALLOWED_STATUS_TRANSITIONS: dict[MaterialRequirementStatus, set[MaterialRequirem
     MaterialRequirementStatus.APPROVED: {MaterialRequirementStatus.PLANNED, MaterialRequirementStatus.CANCELED},
     MaterialRequirementStatus.PLANNED: {MaterialRequirementStatus.DELIVERED, MaterialRequirementStatus.CANCELED},
     MaterialRequirementStatus.DELIVERED: {MaterialRequirementStatus.ARRIVED, MaterialRequirementStatus.CANCELED},
-    MaterialRequirementStatus.ARRIVED: {MaterialRequirementStatus.USED},
+    MaterialRequirementStatus.ARRIVED: {MaterialRequirementStatus.USED, MaterialRequirementStatus.CANCELED},
     MaterialRequirementStatus.USED: set(),
     MaterialRequirementStatus.CANCELED: set(),
 }
@@ -41,6 +41,19 @@ def _snapshot(obj: MaterialRequirement) -> dict[str, Any]:
         "specification": obj.specification,
         "quantity": obj.quantity,
         "unit": obj.unit,
+        "plan_no": obj.plan_no,
+        "warehouse": obj.warehouse,
+        "supplier_or_team": obj.supplier_or_team,
+        "planned_quantity": obj.planned_quantity,
+        "delivered_quantity": obj.delivered_quantity,
+        "arrived_quantity": obj.arrived_quantity,
+        "used_quantity": obj.used_quantity,
+        "delivery_contact": obj.delivery_contact,
+        "delivery_phone": obj.delivery_phone,
+        "expected_arrival_at": obj.expected_arrival_at.isoformat() if obj.expected_arrival_at else None,
+        "exception_reason": obj.exception_reason,
+        "source_platform": obj.source_platform,
+        "external_material_id": obj.external_material_id,
         "requirement_type": obj.requirement_type.value if hasattr(obj.requirement_type, 'value') else obj.requirement_type,
         "status": obj.status.value if hasattr(obj.status, 'value') else obj.status,
         "remark": obj.remark,
@@ -68,6 +81,12 @@ def _apply_filters(stmt: Select[tuple[MaterialRequirement]], query: MaterialRequ
         stmt = stmt.where(MaterialRequirement.material_name.ilike(f"%{query.material_name}%"))
     if query.requirement_type:
         stmt = stmt.where(MaterialRequirement.requirement_type == query.requirement_type)
+    if query.has_exception is True:
+        stmt = stmt.where(MaterialRequirement.exception_reason.isnot(None), MaterialRequirement.exception_reason != "")
+    elif query.has_exception is False:
+        stmt = stmt.where((MaterialRequirement.exception_reason.is_(None)) | (MaterialRequirement.exception_reason == ""))
+    if query.source_platform:
+        stmt = stmt.where(MaterialRequirement.source_platform == query.source_platform)
     return stmt
 
 
@@ -91,6 +110,55 @@ def _material_rollup_status(items: list[MaterialRequirement]) -> MaterialRequire
         if status in active_statuses:
             return status
     return MaterialRequirementStatus.PENDING
+
+
+def validate_material_quantities(obj: MaterialRequirement) -> None:
+    quantities = {
+        "需求数量": obj.quantity,
+        "计划数量": obj.planned_quantity,
+        "出库数量": obj.delivered_quantity,
+        "到场数量": obj.arrived_quantity,
+        "使用数量": obj.used_quantity,
+    }
+    for label, value in quantities.items():
+        if value is not None and value < 0:
+            raise BusinessException(BAD_REQUEST, f"{label}不能小于0")
+    if obj.planned_quantity and obj.planned_quantity > obj.quantity:
+        raise BusinessException(BAD_REQUEST, "计划数量不能大于需求数量")
+    if obj.delivered_quantity and obj.delivered_quantity > (obj.planned_quantity or obj.quantity):
+        raise BusinessException(BAD_REQUEST, "出库数量不能大于计划数量")
+    if obj.arrived_quantity and obj.arrived_quantity > obj.delivered_quantity:
+        raise BusinessException(BAD_REQUEST, "到场数量不能大于出库数量")
+    if obj.used_quantity and obj.used_quantity > obj.arrived_quantity:
+        raise BusinessException(BAD_REQUEST, "使用数量不能大于到场数量")
+
+
+def build_material_analytics(items: list[MaterialRequirement]) -> dict[str, Any]:
+    total = len(items)
+    pending = sum(1 for i in items if _normalize_status(i.status) == MaterialRequirementStatus.PENDING)
+    approved = sum(1 for i in items if _normalize_status(i.status) == MaterialRequirementStatus.APPROVED)
+    planned = sum(1 for i in items if _normalize_status(i.status) == MaterialRequirementStatus.PLANNED)
+    delivered = sum(1 for i in items if _normalize_status(i.status) == MaterialRequirementStatus.DELIVERED)
+    arrived = sum(1 for i in items if _normalize_status(i.status) == MaterialRequirementStatus.ARRIVED)
+    used = sum(1 for i in items if _normalize_status(i.status) == MaterialRequirementStatus.USED)
+    canceled = sum(1 for i in items if _normalize_status(i.status) == MaterialRequirementStatus.CANCELED)
+    emergency = sum(1 for i in items if getattr(i.requirement_type, "value", i.requirement_type) == "EMERGENCY")
+    exception_count = sum(1 for i in items if bool((i.exception_reason or "").strip()))
+    usage_rate = round((used / total) * 100, 2) if total else 0.0
+
+    return {
+        "total": total,
+        "pending": pending,
+        "approved": approved,
+        "planned": planned,
+        "delivered": delivered,
+        "arrived": arrived,
+        "used": used,
+        "canceled": canceled,
+        "emergency_count": emergency,
+        "exception_count": exception_count,
+        "usage_rate": usage_rate,
+    }
 
 
 def apply_material_rollup_to_operation_sheet(
@@ -150,6 +218,7 @@ def create_material_requirement(
 ) -> MaterialRequirement:
     data = payload.model_dump(mode="json")
     obj = MaterialRequirement(**data)
+    validate_material_quantities(obj)
     db.add(obj)
     db.flush()
     sync_operation_sheet_material_rollup(db, obj.operation_sheet_id)
@@ -164,6 +233,7 @@ def update_material_requirement(
     payload: MaterialRequirementUpdate,
 ) -> MaterialRequirement:
     obj = get_material_requirement(db, req_id)
+    old_operation_sheet_id = obj.operation_sheet_id
     data = payload.model_dump(mode="json", exclude_unset=True)
     for key, value in data.items():
         if key == "status" and value is not None:
@@ -171,14 +241,19 @@ def update_material_requirement(
             _ensure_status_transition(obj.status, target)
             # Auto-set timestamps on status transitions
             now = datetime.now(timezone.utc)
-            if target == MaterialRequirementStatus.DELIVERED:
+            if target == MaterialRequirementStatus.PLANNED:
+                obj.planned_at = now
+            elif target == MaterialRequirementStatus.DELIVERED:
                 obj.delivered_at = now
             elif target == MaterialRequirementStatus.ARRIVED:
                 obj.arrived_at = now
             elif target == MaterialRequirementStatus.USED:
                 obj.used_at = now
         setattr(obj, key, value)
+    validate_material_quantities(obj)
     db.flush()
+    if old_operation_sheet_id != obj.operation_sheet_id:
+        sync_operation_sheet_material_rollup(db, old_operation_sheet_id)
     sync_operation_sheet_material_rollup(db, obj.operation_sheet_id)
     db.commit()
     db.refresh(obj)
@@ -205,24 +280,4 @@ def get_material_analytics(db: Session, well_no: str | None = None) -> dict[str,
         stmt = stmt.where(MaterialRequirement.well_no.ilike(f"%{well_no}%"))
     items = list(db.scalars(stmt).all())
 
-    total = len(items)
-    pending = sum(1 for i in items if i.status == MaterialRequirementStatus.PENDING)
-    approved = sum(1 for i in items if i.status == MaterialRequirementStatus.APPROVED)
-    planned = sum(1 for i in items if i.status == MaterialRequirementStatus.PLANNED)
-    delivered = sum(1 for i in items if i.status == MaterialRequirementStatus.DELIVERED)
-    arrived = sum(1 for i in items if i.status == MaterialRequirementStatus.ARRIVED)
-    used = sum(1 for i in items if i.status == MaterialRequirementStatus.USED)
-    canceled = sum(1 for i in items if i.status == MaterialRequirementStatus.CANCELED)
-    emergency = sum(1 for i in items if i.requirement_type.value == "EMERGENCY")
-
-    return {
-        "total": total,
-        "pending": pending,
-        "approved": approved,
-        "planned": planned,
-        "delivered": delivered,
-        "arrived": arrived,
-        "used": used,
-        "canceled": canceled,
-        "emergency_count": emergency,
-    }
+    return build_material_analytics(items)

@@ -43,6 +43,19 @@ class MaterialRequirement(TimestampMixin, Base):
     specification: Mapped[str | None] = mapped_column(String(255), comment="规格型号")
     quantity: Mapped[float] = mapped_column(Float, nullable=False, default=1, comment="数量")
     unit: Mapped[str] = mapped_column(String(32), nullable=False, default="件", comment="计量单位")
+    plan_no: Mapped[str | None] = mapped_column(String(64), comment="物料计划号")
+    warehouse: Mapped[str | None] = mapped_column(String(128), comment="仓库")
+    supplier_or_team: Mapped[str | None] = mapped_column(String(128), comment="供应商或配送队伍")
+    planned_quantity: Mapped[float] = mapped_column(Float, nullable=False, default=0, comment="计划数量")
+    delivered_quantity: Mapped[float] = mapped_column(Float, nullable=False, default=0, comment="出库数量")
+    arrived_quantity: Mapped[float] = mapped_column(Float, nullable=False, default=0, comment="到场数量")
+    used_quantity: Mapped[float] = mapped_column(Float, nullable=False, default=0, comment="使用数量")
+    delivery_contact: Mapped[str | None] = mapped_column(String(64), comment="配送联系人")
+    delivery_phone: Mapped[str | None] = mapped_column(String(32), comment="配送联系电话")
+    expected_arrival_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="预计到场时间")
+    exception_reason: Mapped[str | None] = mapped_column(Text, comment="异常情况")
+    source_platform: Mapped[str] = mapped_column(String(32), nullable=False, default="internal", comment="来源平台")
+    external_material_id: Mapped[str | None] = mapped_column(String(128), comment="外部物料记录ID")
     requirement_type: Mapped[MaterialRequirementType] = mapped_column(
         SQLEnum(MaterialRequirementType, native_enum=False, length=32),
         default=MaterialRequirementType.NORMAL,

@@ -131,6 +131,7 @@ ROLE_PERMISSION_CODES = {
         "workover_operation:dashboard",
         "operation-sheet:read",
         "material:read",
+        "material:update",
         "completion:read",
         "report:read",
         "report:export",
@@ -158,6 +159,7 @@ ROLE_PERMISSION_CODES = {
         "a5:sso",
         "a5:read",
         "material:read",
+        "material:update",
         "completion:read",
         "completion:create",
         "report:read",
@@ -205,6 +207,7 @@ ROLE_PERMISSION_CODES = {
         "contractor:create",
         "material:read",
         "material:create",
+        "material:update",
     },
 }
 

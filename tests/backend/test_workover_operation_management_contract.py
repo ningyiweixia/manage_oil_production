@@ -40,6 +40,8 @@ class WorkoverOperationManagementContractTest(unittest.TestCase):
         self.assertIn("material_status", source)
         self.assertIn("completion_status", source)
         self.assertIn("a5_status", source)
+        self.assertIn("closed_loop_status", source)
+        self.assertIn("build_closed_loop_status", source)
 
     def test_legacy_contractor_operation_endpoints_delegate_to_operation_service(self):
         source = (REPO_ROOT / "app/api/v1/endpoints/contractors.py").read_text(encoding="utf-8")
@@ -81,12 +83,16 @@ class WorkoverOperationManagementContractTest(unittest.TestCase):
         self.assertIn("listWorkoverOperationSheets", view_source)
         self.assertIn("getWorkoverOperationDashboard", view_source)
         self.assertIn("updateWorkoverOperationProgress", view_source)
+        self.assertIn("闭环状态", view_source)
+        self.assertIn("closed_loop_status", view_source)
+        self.assertIn("closedLoopTag", view_source)
 
         api_source = api.read_text(encoding="utf-8")
         self.assertIn("/workover-operations/sheets/", api_source)
         self.assertIn("/workover-operations/priority-sheets", api_source)
         self.assertIn("/workover-operations/dashboard", api_source)
         self.assertIn("/workover-operations/sheets/${id}/progress", api_source)
+        self.assertIn("closed_loop_status", api_source)
 
     def test_contractor_dispatch_page_no_longer_owns_operation_management(self):
         source = (REPO_ROOT / "frontend/src/views/ContractorDispatchView.vue").read_text(encoding="utf-8")

@@ -35,6 +35,17 @@ export interface ManagedOperationSheet extends OperationSheet {
     status: string
     total: number
   }
+  closed_loop_status?: {
+    overall: 'PENDING' | 'IN_PROGRESS' | 'COMPLETE' | string
+    done_count: number
+    total_count: number
+    stages: Array<{
+      key: string
+      label: string
+      status: string
+      done: boolean
+    }>
+  }
 }
 
 function compact(params: object) {

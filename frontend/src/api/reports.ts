@@ -36,19 +36,20 @@ export interface StatisticsAnalysisQuery {
   process_type?: string
   material_status?: string
   block_name?: string
+  status?: string
 }
 
 export interface StatisticsAnalysis {
   query: StatisticsAnalysisQuery
-  report_key_data: {
+  overview_kpis: {
     total_projects: number
     pending_approvals: number
     approval_rate: number
     estimated_cost: number
-    measure_distribution: { name: string; value: number }[]
-    status_counts: unknown[]
-    trend: unknown
-    fields: string[]
+    operation_sheets: number
+    a5_anomalies: number
+    material_requirements: number
+    completion_records: number
   }
   completion_classification: {
     total: number
@@ -71,6 +72,8 @@ export interface StatisticsAnalysis {
     used?: number
     canceled?: number
     emergency_count?: number
+    exception_count?: number
+    usage_rate?: number
   }
   operation_efficiency: {
     total_sheets?: number
@@ -80,6 +83,16 @@ export interface StatisticsAnalysis {
     runtime_focus?: Record<string, number>
   }
   trace_sources: string[]
+  chart_series: {
+    approval_status: { name: string; value: number; status?: string }[]
+    measure_distribution: { name: string; value: number }[]
+    block_status_heatmap: { blocks: string[]; statuses: string[]; data: [number, number, number][] }
+    submission_trend: { days: string[]; counts: number[]; costs: number[] }
+    a5_anomaly_trend: { days: string[]; anomaly_counts: number[]; process_counts: number[] }
+    material_status_distribution: { name: string; value: number }[]
+    team_workload_rank: { team_name: string; sheet_count: number }[]
+    completion_measure_distribution: { name: string; value: number }[]
+  }
   report_outputs: string[]
 }
 
@@ -89,12 +102,72 @@ function compactParams(params: object) {
   )
 }
 
+function nameValue(items?: Array<{ name?: string; label?: string; count?: number; value?: number }>) {
+  return (items || []).map((item) => ({
+    name: item.name || item.label || '',
+    value: Number(item.value ?? item.count ?? 0)
+  }))
+}
+
+function statusNameValue(items?: Array<{ status?: string; label?: string; count?: number; value?: number }>) {
+  return (items || []).map((item) => ({
+    name: item.label || item.status || '',
+    value: Number(item.value ?? item.count ?? 0),
+    status: item.status
+  }))
+}
+
+export function normalizeStatisticsAnalysis(payload: any): StatisticsAnalysis {
+  if (payload?.overview_kpis && payload?.chart_series) {
+    return payload as StatisticsAnalysis
+  }
+
+  const report_key_data = payload?.report_key_data || {}
+  const material = payload?.material_usage || {}
+  const completion = payload?.completion_classification || { total: 0, by_measure_type: [] }
+  const a5 = payload?.a5_statistics || { anomaly_total: 0, special_process_total: 0, trend: { days: [], anomaly_counts: [], process_counts: [] } }
+  const operation = payload?.operation_efficiency || {}
+
+  return {
+    query: payload?.query || {},
+    overview_kpis: {
+      total_projects: Number(report_key_data.total_projects || 0),
+      pending_approvals: Number(report_key_data.pending_approvals || 0),
+      approval_rate: Number(report_key_data.approval_rate || 0),
+      estimated_cost: Number(report_key_data.estimated_cost || 0),
+      operation_sheets: Number(operation.total_sheets || 0),
+      a5_anomalies: Number(a5.anomaly_total || 0),
+      material_requirements: Number(material.total || 0),
+      completion_records: Number(completion.total || 0)
+    },
+    completion_classification: completion,
+    a5_statistics: a5,
+    material_usage: material,
+    operation_efficiency: operation,
+    trace_sources: payload?.trace_sources || [],
+    chart_series: {
+      approval_status: statusNameValue(report_key_data.status_counts),
+      measure_distribution: nameValue(report_key_data.measure_distribution),
+      block_status_heatmap: report_key_data.heatmap || { blocks: [], statuses: [], data: [] },
+      submission_trend: report_key_data.trend || { days: [], counts: [], costs: [] },
+      a5_anomaly_trend: a5.trend || { days: [], anomaly_counts: [], process_counts: [] },
+      material_status_distribution: nameValue(material.status_distribution),
+      team_workload_rank: operation.team_workload || [],
+      completion_measure_distribution: (completion.by_measure_type || []).map((item: any) => ({
+        name: item.measure_type,
+        value: Number(item.count || 0)
+      }))
+    },
+    report_outputs: payload?.report_outputs || []
+  }
+}
+
 export function getDeliverySummary() {
   return unwrap<DeliverySummary>(http.get('/reports/delivery-summary'))
 }
 
 export function getStatisticsAnalysis(query: StatisticsAnalysisQuery) {
-  return unwrap<StatisticsAnalysis>(http.get('/reports/statistics-analysis', { params: compactParams(query) }))
+  return unwrap<any>(http.get('/reports/statistics-analysis', { params: compactParams(query) })).then(normalizeStatisticsAnalysis)
 }
 
 export async function downloadReport(path: '/reports/delivery-summary.xlsx' | '/reports/delivery-summary.docx', filename: string) {

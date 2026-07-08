@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from app.crud.contractor import dispatch_operation, select_priority_sheets  # noqa: E402
+from app.crud.completion import create_completion_record, delete_completion_record, update_completion_record  # noqa: E402
 from app.db.base import Base  # noqa: E402
 from app.models import *  # noqa: F401,F403,E402
 from app.models.workover import (  # noqa: E402
@@ -20,6 +21,7 @@ from app.models.workover import (  # noqa: E402
     WorkoverOperationSheet,
     WorkoverProjectPool,
 )
+from app.schemas.completion import WellCompletionCreate, WellCompletionUpdate  # noqa: E402
 
 
 class MemoryCache:
@@ -99,6 +101,59 @@ class ContractorDispatchTest(unittest.TestCase):
             self.assertEqual(contractor.available_count, 0)
             self.assertEqual(contractor.status, ContractorCapacityStatus.BUSY)
             self.assertEqual(select_priority_sheets(db), [])
+
+    def test_completion_records_sync_operation_sheet_closed_loop_detail(self):
+        with self.SessionLocal() as db:
+            project = WorkoverProjectPool(
+                well_no="WELL-CL-001",
+                report_unit="第一采油作业区",
+                production_priority=8,
+                status=ProjectPoolStatus.APPROVED,
+                measures_jsonb={"measures": [{"measure_type": "pump"}]},
+                photo_urls=[],
+                is_deleted=False,
+            )
+            sheet = WorkoverOperationSheet(
+                project=project,
+                operation_no="OP-CL-001",
+                status=OperationStatus.FINISHED,
+                progress=100,
+                progress_detail={},
+            )
+            db.add_all([project, sheet])
+            db.commit()
+
+            record = create_completion_record(
+                db,
+                WellCompletionCreate(
+                    well_no="WELL-CL-001",
+                    operation_sheet_id=sheet.id,
+                    measure_type="pump",
+                    completion_date=date(2026, 7, 8),
+                    team_name="第一作业队",
+                ),
+            )
+            db.refresh(sheet)
+
+            self.assertEqual(sheet.progress_detail["completion"]["status"], "RECORDED")
+            self.assertEqual(sheet.progress_detail["completion"]["total"], 1)
+            self.assertEqual(sheet.progress_detail["completion"]["latest"]["measure_type"], "pump")
+
+            update_completion_record(
+                db,
+                record.id,
+                WellCompletionUpdate(measure_type="acidizing", team_name="第二作业队"),
+            )
+            db.refresh(sheet)
+
+            self.assertEqual(sheet.progress_detail["completion"]["latest"]["measure_type"], "acidizing")
+            self.assertEqual(sheet.progress_detail["completion"]["latest"]["team_name"], "第二作业队")
+
+            delete_completion_record(db, record.id)
+            db.refresh(sheet)
+
+            self.assertEqual(sheet.progress_detail["completion"]["status"], "NONE")
+            self.assertEqual(sheet.progress_detail["completion"]["total"], 0)
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ from app.crud.contractor import (
 )
 from app.models.completion import WellCompletionRecord
 from app.models.material import MaterialRequirement
-from app.models.workover import OperationStatus, WorkoverOperationSheet
+from app.models.workover import OperationStatus, ProjectPoolStatus, WorkoverOperationSheet
 from app.schemas.contractor import (
     ProgressPatch,
     WorkoverOperationSheetCreate,
@@ -41,7 +41,47 @@ def _completion_status(db: Session, sheet_id: int) -> dict[str, Any]:
     return {"status": "RECORDED" if count else "NONE", "total": count}
 
 
+def _stage(key: str, label: str, status: str, done: bool) -> dict[str, Any]:
+    return {"key": key, "label": label, "status": status, "done": done}
+
+
+def build_closed_loop_status(
+    sheet: WorkoverOperationSheet,
+    material_status: dict[str, Any],
+    completion_status: dict[str, Any],
+) -> dict[str, Any]:
+    project_status = sheet.project.status.value if getattr(sheet.project.status, "value", None) else str(sheet.project.status)
+    operation_status = sheet.status.value if getattr(sheet.status, "value", None) else str(sheet.status)
+    material_code = str(material_status.get("status") or "NONE")
+    completion_code = str(completion_status.get("status") or "NONE")
+    a5_code = "SYNCED" if sheet.a5_status else "PENDING"
+
+    stages = [
+        _stage("project", "项目入库", project_status, project_status in {ProjectPoolStatus.APPROVED.value, ProjectPoolStatus.DISPATCHED.value}),
+        _stage("operation", "运行派工", operation_status, operation_status in {OperationStatus.DISPATCHED.value, OperationStatus.WORKING.value, OperationStatus.FINISHED.value}),
+        _stage("a5", "A5同步", a5_code, bool(sheet.a5_status)),
+        _stage("material", "物料保障", material_code, material_code in {"NONE", "ARRIVED", "USED"}),
+        _stage("completion", "完井登记", completion_code, completion_code == "RECORDED"),
+    ]
+    done_count = sum(1 for item in stages if item["done"])
+    if done_count == len(stages):
+        overall = "COMPLETE"
+    elif done_count > 1:
+        overall = "IN_PROGRESS"
+    else:
+        overall = "PENDING"
+
+    return {
+        "overall": overall,
+        "done_count": done_count,
+        "total_count": len(stages),
+        "stages": stages,
+    }
+
+
 def enrich_workover_operation_sheet(db: Session, sheet: WorkoverOperationSheet) -> dict[str, Any]:
+    material_status = _material_status(sheet)
+    completion_status = _completion_status(db, sheet.id)
     return {
         "id": sheet.id,
         "project_id": sheet.project_id,
@@ -57,8 +97,9 @@ def enrich_workover_operation_sheet(db: Session, sheet: WorkoverOperationSheet) 
         "a5_status": sheet.a5_status,
         "a5_remark": sheet.a5_remark,
         "last_a5_sync_at": sheet.last_a5_sync_at,
-        "material_status": _material_status(sheet),
-        "completion_status": _completion_status(db, sheet.id),
+        "material_status": material_status,
+        "completion_status": completion_status,
+        "closed_loop_status": build_closed_loop_status(sheet, material_status, completion_status),
         "created_at": sheet.created_at,
         "updated_at": sheet.updated_at,
     }

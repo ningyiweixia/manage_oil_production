@@ -1,12 +1,13 @@
 from datetime import date
 from typing import Any
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BusinessException
 from app.core.status_codes import BAD_REQUEST
 from app.models.completion import WellCompletionRecord
+from app.models.workover import WorkoverOperationSheet
 from app.schemas.completion import WellCompletionCreate, WellCompletionQuery, WellCompletionUpdate
 
 
@@ -40,10 +41,54 @@ def get_completion_record(db: Session, record_id: int) -> WellCompletionRecord:
     return obj
 
 
+def _completion_snapshot(record: WellCompletionRecord | None) -> dict[str, Any] | None:
+    if record is None:
+        return None
+    return {
+        "id": record.id,
+        "well_no": record.well_no,
+        "measure_type": record.measure_type,
+        "completion_date": record.completion_date.isoformat() if record.completion_date else None,
+        "team_name": record.team_name,
+    }
+
+
+def apply_completion_rollup_to_operation_sheet(
+    sheet: WorkoverOperationSheet,
+    records: list[WellCompletionRecord],
+) -> None:
+    detail = dict(sheet.progress_detail or {})
+    latest = records[0] if records else None
+    detail["completion"] = {
+        "status": "RECORDED" if records else "NONE",
+        "total": len(records),
+        "latest": _completion_snapshot(latest),
+    }
+    sheet.progress_detail = detail
+
+
+def sync_operation_sheet_completion_rollup(db: Session, operation_sheet_id: int | None) -> None:
+    if not operation_sheet_id:
+        return
+    sheet = db.get(WorkoverOperationSheet, operation_sheet_id)
+    if sheet is None:
+        return
+    records = list(
+        db.scalars(
+            select(WellCompletionRecord)
+            .where(WellCompletionRecord.operation_sheet_id == operation_sheet_id)
+            .order_by(desc(WellCompletionRecord.completion_date), desc(WellCompletionRecord.created_at))
+        ).all()
+    )
+    apply_completion_rollup_to_operation_sheet(sheet, records)
+
+
 def create_completion_record(db: Session, payload: WellCompletionCreate) -> WellCompletionRecord:
-    data = payload.model_dump(mode="json")
+    data = payload.model_dump(mode="python")
     obj = WellCompletionRecord(**data)
     db.add(obj)
+    db.flush()
+    sync_operation_sheet_completion_rollup(db, obj.operation_sheet_id)
     db.commit()
     db.refresh(obj)
     return obj
@@ -51,9 +96,12 @@ def create_completion_record(db: Session, payload: WellCompletionCreate) -> Well
 
 def update_completion_record(db: Session, record_id: int, payload: WellCompletionUpdate) -> WellCompletionRecord:
     obj = get_completion_record(db, record_id)
-    data = payload.model_dump(mode="json", exclude_unset=True)
+    operation_sheet_id = obj.operation_sheet_id
+    data = payload.model_dump(mode="python", exclude_unset=True)
     for key, value in data.items():
         setattr(obj, key, value)
+    db.flush()
+    sync_operation_sheet_completion_rollup(db, operation_sheet_id)
     db.commit()
     db.refresh(obj)
     return obj
@@ -61,7 +109,10 @@ def update_completion_record(db: Session, record_id: int, payload: WellCompletio
 
 def delete_completion_record(db: Session, record_id: int) -> None:
     obj = get_completion_record(db, record_id)
+    operation_sheet_id = obj.operation_sheet_id
     db.delete(obj)
+    db.flush()
+    sync_operation_sheet_completion_rollup(db, operation_sheet_id)
     db.commit()
 
 

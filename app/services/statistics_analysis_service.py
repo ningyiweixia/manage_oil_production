@@ -25,6 +25,7 @@ class StatisticsAnalysisQuery(BaseModel):
     process_type: str | None = Field(default=None, description="A5 process type")
     material_status: str | None = Field(default=None, description="Material status")
     block_name: str | None = Field(default=None, description="Block name")
+    status: str | None = Field(default=None, description="Project approval status")
 
 
 TRACE_SOURCES = [
@@ -51,24 +52,59 @@ def _dump(value: Any) -> Any:
 
 def _name_value_items(items: Any) -> list[dict[str, Any]]:
     dumped = _dump(items or [])
+    if not isinstance(dumped, list):
+        return []
     result: list[dict[str, Any]] = []
     for item in dumped:
         if isinstance(item, dict):
             result.append(item)
         else:
+            result.append({"name": getattr(item, "name", ""), "value": getattr(item, "value", 0)})
+    return result
+
+
+def _status_name_value(status_counts: Any) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    dumped = _dump(status_counts or [])
+    if not isinstance(dumped, list):
+        return result
+    for item in dumped:
+        if isinstance(item, dict):
             result.append(
                 {
-                    "name": getattr(item, "name", ""),
-                    "value": getattr(item, "value", 0),
+                    "name": item.get("label") or item.get("status"),
+                    "value": item.get("count", 0),
+                    "status": item.get("status"),
                 }
             )
     return result
+
+
+def _material_status_distribution(material_usage: dict[str, Any]) -> list[dict[str, Any]]:
+    labels = {
+        "pending": "待处理",
+        "approved": "已审核",
+        "planned": "已计划",
+        "delivered": "已出库",
+        "arrived": "已到场",
+        "used": "已使用",
+        "canceled": "已取消",
+    }
+    return [{"name": label, "value": int(material_usage.get(key) or 0)} for key, label in labels.items()]
+
+
+def _completion_distribution(completion: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {"name": item.get("measure_type", "未分类"), "value": int(item.get("count") or 0)}
+        for item in completion.get("by_measure_type", [])
+    ]
 
 
 def _build_workover_query(query: StatisticsAnalysisQuery) -> WorkoverAnalyticsQuery:
     return WorkoverAnalyticsQuery(
         start_date=query.start_date,
         end_date=query.end_date,
+        status=query.status,
         measure_type=query.measure_type,
         block_name=query.block_name,
     )
@@ -83,23 +119,23 @@ def _build_a5_query(query: StatisticsAnalysisQuery) -> A5AnalyticsQuery:
 
 
 def build_statistics_analysis(db: Session, query: StatisticsAnalysisQuery) -> dict[str, Any]:
-    """Aggregate the plan's data analysis sections into one report payload."""
+    """Aggregate production analysis, review, and report data into one payload."""
 
     workover = build_workover_analytics(db, _build_workover_query(query))
-    operation = build_workover_operation_dashboard(db)
-    material_usage = get_material_analytics(db, well_no=query.well_no)
-    completion_classification = get_completion_analytics(db)
+    operation_efficiency = _dump(build_workover_operation_dashboard(db))
+    material_usage = _dump(get_material_analytics(db, well_no=query.well_no))
+    completion_classification = _dump(get_completion_analytics(db))
     a5 = build_a5_analytics(_build_a5_query(query))
 
-    report_key_data = {
+    overview_kpis = {
         "total_projects": workover.kpis.total_projects,
         "pending_approvals": workover.kpis.pending_approvals,
         "approval_rate": workover.kpis.approval_rate,
         "estimated_cost": workover.kpis.estimated_cost,
-        "measure_distribution": _name_value_items(workover.measure_distribution),
-        "status_counts": _dump(workover.status_counts),
-        "trend": _dump(workover.trend),
-        "fields": ["well_no", "measure_type", "construction_result", "main_parameters", "exception_description"],
+        "operation_sheets": operation_efficiency.get("total_sheets", 0),
+        "a5_anomalies": a5.anomaly_total,
+        "material_requirements": material_usage.get("total", 0),
+        "completion_records": completion_classification.get("total", 0),
     }
 
     a5_statistics = {
@@ -110,13 +146,25 @@ def build_statistics_analysis(db: Session, query: StatisticsAnalysisQuery) -> di
         "trend": _dump(getattr(a5, "trend", None)),
     }
 
+    chart_series = {
+        "approval_status": _status_name_value(workover.status_counts),
+        "measure_distribution": _name_value_items(workover.measure_distribution),
+        "block_status_heatmap": _dump(workover.heatmap),
+        "submission_trend": _dump(workover.trend),
+        "a5_anomaly_trend": a5_statistics["trend"],
+        "material_status_distribution": _material_status_distribution(material_usage),
+        "team_workload_rank": operation_efficiency.get("team_workload", []),
+        "completion_measure_distribution": _completion_distribution(completion_classification),
+    }
+
     return {
         "query": query.model_dump(mode="json"),
-        "report_key_data": report_key_data,
-        "completion_classification": _dump(completion_classification),
+        "overview_kpis": overview_kpis,
+        "operation_efficiency": operation_efficiency,
         "a5_statistics": a5_statistics,
-        "material_usage": _dump(material_usage),
-        "operation_efficiency": _dump(operation),
+        "material_usage": material_usage,
+        "completion_classification": completion_classification,
         "trace_sources": TRACE_SOURCES,
-        "report_outputs": ["statistics_chart", "excel_report", "word_report", "analysis_summary"],
+        "chart_series": chart_series,
+        "report_outputs": ["statistics_dashboard", "excel_report", "word_report", "analysis_summary"],
     }

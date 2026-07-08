@@ -12,6 +12,19 @@ export interface MaterialRequirement {
   specification?: string | null
   quantity: number
   unit: string
+  plan_no?: string | null
+  warehouse?: string | null
+  supplier_or_team?: string | null
+  planned_quantity: number
+  delivered_quantity: number
+  arrived_quantity: number
+  used_quantity: number
+  delivery_contact?: string | null
+  delivery_phone?: string | null
+  expected_arrival_at?: string | null
+  exception_reason?: string | null
+  source_platform: string
+  external_material_id?: string | null
   requirement_type: MaterialRequirementType
   status: MaterialRequirementStatus
   planned_at?: string | null
@@ -31,6 +44,8 @@ export interface MaterialRequirementQuery {
   status?: MaterialRequirementStatus | ''
   material_name?: string
   requirement_type?: MaterialRequirementType | ''
+  has_exception?: boolean | ''
+  source_platform?: string
 }
 
 export interface MaterialRequirementPayload {
@@ -40,6 +55,19 @@ export interface MaterialRequirementPayload {
   specification?: string
   quantity: number
   unit: string
+  plan_no?: string | null
+  warehouse?: string | null
+  supplier_or_team?: string | null
+  planned_quantity?: number
+  delivered_quantity?: number
+  arrived_quantity?: number
+  used_quantity?: number
+  delivery_contact?: string | null
+  delivery_phone?: string | null
+  expected_arrival_at?: string | null
+  exception_reason?: string | null
+  source_platform?: string
+  external_material_id?: string | null
   requirement_type: MaterialRequirementType
   remark?: string
 }
@@ -54,6 +82,8 @@ export interface MaterialAnalytics {
   used: number
   canceled: number
   emergency_count: number
+  exception_count: number
+  usage_rate: number
 }
 
 export function listMaterialRequirements(query: MaterialRequirementQuery) {

@@ -68,6 +68,29 @@
           <el-progress :percentage="row.progress" />
         </template>
       </el-table-column>
+      <el-table-column label="闭环状态" min-width="260">
+        <template #default="{ row }">
+          <div class="closed-loop-cell">
+            <el-tag :type="closedLoopTag(row.closed_loop_status?.overall)" effect="dark">
+              {{ closedLoopLabel(row.closed_loop_status?.overall) }}
+            </el-tag>
+            <span class="muted-text">
+              {{ row.closed_loop_status?.done_count || 0 }}/{{ row.closed_loop_status?.total_count || 5 }}
+            </span>
+            <div class="closed-loop-stages">
+              <el-tag
+                v-for="stage in row.closed_loop_status?.stages || []"
+                :key="stage.key"
+                :type="stage.done ? 'success' : 'info'"
+                size="small"
+                effect="plain"
+              >
+                {{ stage.label }}
+              </el-tag>
+            </div>
+          </div>
+        </template>
+      </el-table-column>
       <el-table-column label="物料状态" min-width="140">
         <template #default="{ row }">
           <el-tag :type="materialTag(row.material_status?.status)" effect="plain">
@@ -191,6 +214,18 @@ function materialTag(status?: string) {
   return 'info'
 }
 
+function closedLoopLabel(status?: string) {
+  if (status === 'COMPLETE') return '已闭环'
+  if (status === 'IN_PROGRESS') return '推进中'
+  return '待闭环'
+}
+
+function closedLoopTag(status?: string) {
+  if (status === 'COMPLETE') return 'success'
+  if (status === 'IN_PROGRESS') return 'warning'
+  return 'info'
+}
+
 function formatDateTime(value?: string | null) {
   if (!value) return '-'
   return value.replace('T', ' ').slice(0, 19)
@@ -253,3 +288,19 @@ async function saveProgress() {
 
 onMounted(loadData)
 </script>
+
+<style scoped>
+.closed-loop-cell {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.closed-loop-stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: 100%;
+}
+</style>
