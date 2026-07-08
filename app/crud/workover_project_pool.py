@@ -156,12 +156,6 @@ def update_project_pool(
     project = get_project_pool(db, project_id)
     before = _project_snapshot(project)
     data = payload.model_dump(mode="json")
-    target_status = ProjectPoolStatus(data["status"])
-    _ensure_status_transition(project.status, target_status)
-    if target_status == ProjectPoolStatus.APPROVED and project.approved_at is None:
-        project.approved_at = datetime.now(timezone.utc)
-    elif target_status != ProjectPoolStatus.APPROVED:
-        project.approved_at = None
     ensure_dictionary_values(db, "measure_type", _measure_types(data["measures_jsonb"]))
     for key, value in data.items():
         setattr(project, key, value)
@@ -177,13 +171,6 @@ def update_project_pool(
         before_snapshot=before,
         after_snapshot=_project_snapshot(project),
     )
-    if target_status == ProjectPoolStatus.APPROVED:
-        ensure_operation_sheet_for_project(
-            db,
-            project,
-            operator_id=operator_id,
-            operator_ip=operator_ip,
-        )
     db.commit()
     db.refresh(project)
     return project
@@ -339,20 +326,14 @@ def patch_project_status(
     now = datetime.now(timezone.utc)
 
     if project.status == ProjectPoolStatus.PENDING_GEOLOGY_VERIFY and status == ProjectPoolStatus.PENDING_PROCESS_VERIFY:
-        verified_daily_oil = (
-            geology_verified_daily_oil
-            if geology_verified_daily_oil is not None
-            else project.geology_verified_daily_oil
-        )
-        if verified_daily_oil is None:
+        if geology_verified_daily_oil is None:
             raise BusinessException(BAD_REQUEST, "地质所/生产指挥中心核实通过前，请填写核实日产油")
-        project.geology_verified_daily_oil = verified_daily_oil
+        project.geology_verified_daily_oil = geology_verified_daily_oil
         project.geology_verified_at = now
 
     if project.status == ProjectPoolStatus.PENDING_PROCESS_VERIFY and status == ProjectPoolStatus.APPROVED:
-        can_workover = process_can_workover if process_can_workover is not None else project.process_can_workover
-        well_condition = process_well_condition or project.process_well_condition
-        if can_workover is not True:
+        well_condition = process_well_condition.strip() if process_well_condition else ""
+        if process_can_workover is not True:
             raise BusinessException(BAD_REQUEST, "工艺所通过前必须确认该井可以上修")
         if not well_condition:
             raise BusinessException(BAD_REQUEST, "工艺所通过前，请填写井况核实结论")
@@ -363,8 +344,9 @@ def patch_project_status(
     if project.status == ProjectPoolStatus.PENDING_PROCESS_VERIFY and status == ProjectPoolStatus.REJECTED:
         if process_can_workover is not None:
             project.process_can_workover = process_can_workover
-        if process_well_condition:
-            project.process_well_condition = process_well_condition
+        reject_well_condition = process_well_condition.strip() if process_well_condition else ""
+        if reject_well_condition:
+            project.process_well_condition = reject_well_condition
         project.process_verified_at = now
 
     project.status = status

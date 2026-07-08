@@ -26,7 +26,7 @@ groups:
           severity: warning
         annotations:
           summary: "Host disk space is below 15%"
-          description: "Check DB, MinIO, log, and Prometheus persistent volumes."
+          description: "Check DB, log, and Prometheus persistent volumes."
 
       - alert: ContainerCpuHigh
         expr: sum(rate(container_cpu_usage_seconds_total{name=~"manage_factory_.*"}[5m])) by (name) > 1.5

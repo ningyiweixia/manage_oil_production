@@ -149,9 +149,6 @@
         <el-col :span="24"><el-form-item label="故障描述"><el-input v-model="projectForm.fault_description" type="textarea" :rows="2" /></el-form-item></el-col>
         <el-col :span="16"><el-form-item label="上修原因" prop="reason"><el-input v-model="projectForm.reason" /></el-form-item></el-col>
         <el-col :span="8"><el-form-item label="优先级"><el-slider v-model="projectForm.production_priority" :max="100" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item label="核实日产油"><el-input-number v-model="projectForm.geology_verified_daily_oil" :min="0" :precision="2" :controls="false" /></el-form-item></el-col>
-        <el-col :span="8"><el-form-item label="可上修"><el-switch v-model="projectForm.process_can_workover" /></el-form-item></el-col>
-        <el-col :span="24"><el-form-item label="井况结论"><el-input v-model="projectForm.process_well_condition" type="textarea" :rows="2" /></el-form-item></el-col>
       </el-row>
 
       <div class="measure-head">
@@ -244,7 +241,7 @@ import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
 import { Delete, Plus, Promotion, Refresh, Search, TrendCharts } from '@element-plus/icons-vue'
-import { createProject, deleteProject, getProjectAnalytics, listProjects, patchProjectStatus, submitProjects, updateProject } from '../api/workover'
+import { createProject, deleteProject, getProjectAnalytics, listProjects, patchProjectStatus, submitProjects, updateProject, type WorkoverProjectPayload } from '../api/workover'
 import { listDictionaryItems, type DictionaryItem } from '../api/dictionary'
 import { approvalFlowNodes, approvalNodeClass, canApprove, nextApprovedStatus, rejectedAtLabel, showApprovalFlow, statusLabels, statusTagType } from '../utils/status'
 import { emitProjectDataChanged, useProjectDataChanged } from '../composables/useProjectSync'
@@ -283,7 +280,6 @@ const submitDialogVisible = ref(false)
 const approvalDialogVisible = ref(false)
 const editingProject = ref<WorkoverProject | null>(null)
 const pendingApproval = ref<{ id: number; status: ProjectPoolStatus } | null>(null)
-const approvalTarget = ref<WorkoverProject | null>(null)
 const submitComment = ref('')
 const approvalComment = ref('')
 const approvalExtra = reactive<{
@@ -328,7 +324,7 @@ const photoUrlsText = computed<string>({
   set(val: string) { projectForm.photo_urls = val ? val.split(',').map((s) => s.trim()).filter(Boolean) : [] }
 })
 
-const projectForm = reactive<Omit<WorkoverProject, 'id' | 'created_at' | 'updated_at'>>({
+const projectForm = reactive<WorkoverProjectPayload>({
   well_no: '',
   well_name: '',
   well_type: '',
@@ -341,10 +337,6 @@ const projectForm = reactive<Omit<WorkoverProject, 'id' | 'created_at' | 'update
   initiator_name: '',
   initiator_phone: '',
   production_priority: 60,
-  geology_verified_daily_oil: null,
-  process_well_condition: '',
-  process_can_workover: null,
-  status: 'DRAFT',
   reason: '',
   measures_jsonb: { measures: [] },
   photo_urls: [],
@@ -361,7 +353,7 @@ const projectRules: FormRules = {
 
 const dialogTitle = computed(() => {
   if (!editingProject.value) return '新增上修提报'
-  if (editingProject.value.status === 'REJECTED') return '修改已驳回项目（保存后回到草稿）'
+  if (editingProject.value.status === 'REJECTED') return '修改已驳回项目'
   return '编辑项目池井号'
 })
 
@@ -459,15 +451,32 @@ function resetForm() {
     initiator_name: '',
     initiator_phone: '',
     production_priority: 60,
-    geology_verified_daily_oil: null,
-    process_well_condition: '',
-    process_can_workover: null,
-    status: 'DRAFT',
     reason: '',
     measures_jsonb: { measures: [{ measure_type: '', process: '', construction_params: {}, duration_days: 0, estimated_cost: 0 }] },
     photo_urls: [],
     remark: ''
   })
+}
+
+function toProjectPayload(row: WorkoverProject): WorkoverProjectPayload {
+  return {
+    well_no: row.well_no,
+    well_name: row.well_name || '',
+    well_type: row.well_type || '',
+    layer: row.layer || '',
+    fault_description: row.fault_description || '',
+    territory_unit: row.territory_unit || '',
+    block_name: row.block_name || '',
+    county: row.county || '',
+    report_unit: row.report_unit,
+    initiator_name: row.initiator_name || '',
+    initiator_phone: row.initiator_phone || '',
+    production_priority: row.production_priority,
+    reason: row.reason || '',
+    measures_jsonb: JSON.parse(JSON.stringify(row.measures_jsonb || { measures: [] })),
+    photo_urls: [...(row.photo_urls || [])],
+    remark: row.remark || ''
+  }
 }
 
 function openCreate() {
@@ -479,11 +488,7 @@ function openCreate() {
 
 function openEdit(row: WorkoverProject) {
   editingProject.value = row
-  Object.assign(projectForm, JSON.parse(JSON.stringify(row)))
-  // 编辑已驳回项目时，保存后自动设为草稿以便重新提报
-  if (row.status === 'REJECTED') {
-    projectForm.status = 'DRAFT'
-  }
+  Object.assign(projectForm, toProjectPayload(row))
   loadMeasureTypes()
   formVisible.value = true
 }
@@ -567,10 +572,9 @@ async function confirmSubmit() {
 function openApproval(row: WorkoverProject, status: ProjectPoolStatus) {
   const nextStatus = status === 'APPROVED' ? nextApprovedStatus(row.status) : status
   pendingApproval.value = { id: row.id, status: nextStatus }
-  approvalTarget.value = row
-  approvalExtra.geology_verified_daily_oil = row.geology_verified_daily_oil ?? null
-  approvalExtra.process_well_condition = row.process_well_condition || ''
-  approvalExtra.process_can_workover = nextStatus === 'REJECTED' ? (row.process_can_workover ?? false) : true
+  approvalExtra.geology_verified_daily_oil = null
+  approvalExtra.process_well_condition = ''
+  approvalExtra.process_can_workover = nextStatus === 'REJECTED' ? false : true
   approvalComment.value = status === 'APPROVED'
     ? nextStatus === 'APPROVED'
       ? '核实通过，同意通过审批，进入运行库。'
@@ -581,7 +585,7 @@ function openApproval(row: WorkoverProject, status: ProjectPoolStatus) {
 
 async function confirmApproval() {
   if (!pendingApproval.value) return
-  const verifiedDailyOil = approvalExtra.geology_verified_daily_oil ?? approvalTarget.value?.geology_verified_daily_oil ?? null
+  const verifiedDailyOil = approvalExtra.geology_verified_daily_oil ?? null
   const normalizedDailyOil =
     verifiedDailyOil === null || verifiedDailyOil === ''
       ? null

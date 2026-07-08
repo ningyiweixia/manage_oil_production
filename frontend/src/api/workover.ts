@@ -4,6 +4,21 @@ import { statusLabels } from '../utils/status'
 
 const DEMO_PROJECTS_KEY = 'demo_workover_projects'
 
+export type WorkoverProjectPayload = Omit<
+  WorkoverProject,
+  | 'id'
+  | 'created_at'
+  | 'updated_at'
+  | 'created_by_id'
+  | 'status'
+  | 'geology_verified_daily_oil'
+  | 'geology_verified_at'
+  | 'process_well_condition'
+  | 'process_can_workover'
+  | 'process_verified_at'
+  | 'rejected_from_status'
+>
+
 const initialDemoProjects: WorkoverProject[] = [
   {
     id: 1001,
@@ -261,11 +276,11 @@ export async function deleteProject(id: number): Promise<void> {
   await unwrap<void>(http.delete(`/workover-project-pools/${id}`))
 }
 
-export async function createProject(payload: Omit<WorkoverProject, 'id' | 'created_at' | 'updated_at'>): Promise<WorkoverProject> {
+export async function createProject(payload: WorkoverProjectPayload): Promise<WorkoverProject> {
   return unwrap<WorkoverProject>(http.post('/workover-project-pools/', payload))
 }
 
-export async function updateProject(id: number, payload: Omit<WorkoverProject, 'id' | 'created_at' | 'updated_at'>): Promise<WorkoverProject> {
+export async function updateProject(id: number, payload: WorkoverProjectPayload): Promise<WorkoverProject> {
   return unwrap<WorkoverProject>(http.put(`/workover-project-pools/${id}`, payload))
 }
 

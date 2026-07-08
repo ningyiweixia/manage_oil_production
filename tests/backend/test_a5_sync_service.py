@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from app.core.exceptions import BusinessException
 from app.core.status_codes import A5_LINK_FAILED
+from app.models.workover import ContractorCapacity, ContractorCapacityStatus, OperationStatus, WorkoverOperationSheet
 from app.schemas.a5_integration import A5AnalyticsQuery
 from app.services import a5_sync_service as service
 
@@ -104,6 +105,40 @@ class A5SyncServiceTest(unittest.TestCase):
 
         self.assertTrue(result.filename.endswith(".xlsx"))
         self.assertTrue(base64.b64decode(result.content_base64).startswith(b"PK"))
+
+    def test_a5_release_capacity_only_when_leaving_occupied_status(self):
+        contractor = ContractorCapacity(
+            contractor_name="测试承包商",
+            team_name="一队",
+            report_date=date(2026, 6, 30),
+            available_count=0,
+            status=ContractorCapacityStatus.BUSY,
+            capability_tags={},
+        )
+        sheet = WorkoverOperationSheet(
+            project_id=1,
+            operation_no="OP-TEST-001",
+            status=OperationStatus.DISPATCHED,
+            progress=1,
+            progress_detail={},
+        )
+        sheet.contractor_capacity = contractor
+
+        service.apply_a5_update_to_operation_sheet(
+            sheet,
+            status="完成",
+            source="callback",
+        )
+        self.assertEqual(sheet.status, OperationStatus.FINISHED)
+        self.assertEqual(contractor.available_count, 1)
+
+        service.apply_a5_update_to_operation_sheet(
+            sheet,
+            status="取消",
+            source="callback",
+        )
+        self.assertEqual(sheet.status, OperationStatus.CANCELED)
+        self.assertEqual(contractor.available_count, 1)
 
 
 if __name__ == "__main__":

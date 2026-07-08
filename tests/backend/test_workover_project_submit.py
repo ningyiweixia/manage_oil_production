@@ -11,10 +11,12 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from app.api.v1.endpoints.workover_project_pools import submit_items  # noqa: E402
+from app.core.exceptions import BusinessException  # noqa: E402
+from app.crud.workover_project_pool import patch_project_status, update_project_pool  # noqa: E402
 from app.db.base import Base  # noqa: E402
 from app.models import *  # noqa: F401,F403,E402
 from app.models.workover import ProjectPoolStatus, WorkoverProjectPool  # noqa: E402
-from app.schemas.workover_project_pool import WorkoverProjectPoolSubmit  # noqa: E402
+from app.schemas.workover_project_pool import WorkoverProjectPoolSubmit, WorkoverProjectPoolUpdate  # noqa: E402
 
 
 class WorkoverProjectSubmitTest(unittest.TestCase):
@@ -56,6 +58,98 @@ class WorkoverProjectSubmitTest(unittest.TestCase):
             self.assertEqual(response.msg, "提报成功")
             self.assertEqual(response.data[0].status, ProjectPoolStatus.PENDING_GEOLOGY_VERIFY)
             self.assertEqual(submitted.status, ProjectPoolStatus.PENDING_GEOLOGY_VERIFY)
+
+    def test_update_project_pool_does_not_change_status_or_verification_fields(self):
+        with self.SessionLocal() as db:
+            project = WorkoverProjectPool(
+                well_no="TEST-002",
+                report_unit="第一采油作业区",
+                production_priority=10,
+                status=ProjectPoolStatus.PENDING_PROCESS_VERIFY,
+                measures_jsonb={"measures": []},
+                photo_urls=[],
+                is_deleted=False,
+            )
+            db.add(project)
+            db.commit()
+            db.refresh(project)
+
+            payload = WorkoverProjectPoolUpdate.model_validate(
+                {
+                    "well_no": "TEST-002",
+                    "report_unit": "第一采油作业区",
+                    "production_priority": 20,
+                    "status": "APPROVED",
+                    "process_can_workover": True,
+                    "process_well_condition": "接口伪造结论",
+                    "measures_jsonb": {"measures": []},
+                }
+            )
+            updated = update_project_pool(
+                db,
+                project.id,
+                payload,
+                operator_id=1,
+                operator_ip="127.0.0.1",
+            )
+
+            self.assertEqual(updated.status, ProjectPoolStatus.PENDING_PROCESS_VERIFY)
+            self.assertIsNone(updated.process_can_workover)
+            self.assertIsNone(updated.process_well_condition)
+            self.assertEqual(updated.production_priority, 20)
+
+    def test_patch_status_requires_current_geology_verification_payload(self):
+        with self.SessionLocal() as db:
+            project = WorkoverProjectPool(
+                well_no="TEST-003",
+                report_unit="第一采油作业区",
+                production_priority=10,
+                status=ProjectPoolStatus.PENDING_GEOLOGY_VERIFY,
+                geology_verified_daily_oil=12.5,
+                measures_jsonb={"measures": []},
+                photo_urls=[],
+                is_deleted=False,
+            )
+            db.add(project)
+            db.commit()
+            db.refresh(project)
+
+            with self.assertRaises(BusinessException):
+                patch_project_status(
+                    db,
+                    project.id,
+                    ProjectPoolStatus.PENDING_PROCESS_VERIFY,
+                    operator_id=1,
+                    operator_ip="127.0.0.1",
+                    comment="缺少本次核实产量",
+                )
+
+    def test_patch_status_requires_current_process_verification_payload(self):
+        with self.SessionLocal() as db:
+            project = WorkoverProjectPool(
+                well_no="TEST-004",
+                report_unit="第一采油作业区",
+                production_priority=10,
+                status=ProjectPoolStatus.PENDING_PROCESS_VERIFY,
+                process_can_workover=True,
+                process_well_condition="历史结论",
+                measures_jsonb={"measures": []},
+                photo_urls=[],
+                is_deleted=False,
+            )
+            db.add(project)
+            db.commit()
+            db.refresh(project)
+
+            with self.assertRaises(BusinessException):
+                patch_project_status(
+                    db,
+                    project.id,
+                    ProjectPoolStatus.APPROVED,
+                    operator_id=1,
+                    operator_ip="127.0.0.1",
+                    comment="缺少本次工艺核实",
+                )
 
 
 if __name__ == "__main__":

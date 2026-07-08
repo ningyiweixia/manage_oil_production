@@ -1,6 +1,5 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api.v1.router import api_router
@@ -25,7 +24,6 @@ def create_app() -> FastAPI:
     app.add_middleware(AuthMiddleware)
     app.include_router(api_router, prefix=settings.api_v1_prefix)
     app.include_router(ws_router)
-    app.mount("/local_minio", StaticFiles(directory="local_minio", check_dir=False), name="local_minio")
     Instrumentator(
         should_group_status_codes=False,
         should_ignore_untemplated=True,

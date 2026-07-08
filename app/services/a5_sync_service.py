@@ -77,6 +77,9 @@ def _normalize_progress(raw_progress: Any) -> int | None:
         return None
 
 
+OCCUPIED_OPERATION_STATUSES = {OperationStatus.DISPATCHED, OperationStatus.WORKING}
+
+
 def _cache_a5_records(
     *,
     latest_key: str,
@@ -176,7 +179,7 @@ def apply_a5_update_to_operation_sheet(
         if sheet.actual_start_at is None:
             sheet.actual_start_at = now
         sheet.actual_end_at = now
-        if contractor is not None and old_status != OperationStatus.FINISHED:
+        if contractor is not None and old_status in OCCUPIED_OPERATION_STATUSES:
             contractor.available_count += 1
             contractor.status = ContractorCapacityStatus.AVAILABLE
     elif new_status in {OperationStatus.WAITING_DISPATCH, OperationStatus.CANCELED}:
@@ -185,7 +188,7 @@ def apply_a5_update_to_operation_sheet(
             sheet.progress = 0
             if sheet.project is not None:
                 sheet.project.status = ProjectPoolStatus.APPROVED
-        if contractor is not None and old_status not in {OperationStatus.WAITING_DISPATCH, OperationStatus.CANCELED}:
+        if contractor is not None and old_status in OCCUPIED_OPERATION_STATUSES:
             contractor.available_count += 1
             contractor.status = ContractorCapacityStatus.AVAILABLE
 
