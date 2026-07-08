@@ -319,7 +319,7 @@ def dispatch_operation(
     operator_id: int,
     operator_ip: str | None,
 ) -> WorkoverOperationSheet:
-    """派工核心方法，含 Redis 分布式锁防重机制。"""
+    """分配上修队伍并发起 A5 措施审核办理，含 Redis 分布式锁防重机制。"""
     # 1. 获取分布式锁
     if not acquire_dispatch_lock(contractor_capacity_id):
         raise BusinessException(CONFLICT, "该队伍正在被其他调度员操作，请稍后重试")
@@ -329,6 +329,8 @@ def dispatch_operation(
         sheet = get_operation_sheet(db, sheet_id)
         if sheet.status != OperationStatus.WAITING_DISPATCH:
             raise BusinessException(CONFLICT, f"工单 {sheet.operation_no} 当前状态不允许派工")
+        if sheet.contractor_capacity_id is not None:
+            raise BusinessException(CONFLICT, f"工单 {sheet.operation_no} 已分配队伍，等待 A5 审核下发")
 
         # 3. 检查承包商状态
         contractor = get_contractor_capacity(db, contractor_capacity_id)
@@ -337,11 +339,22 @@ def dispatch_operation(
         if contractor.available_count <= 0:
             raise BusinessException(CONFLICT, f"承包商 {contractor.contractor_name} 今日可用队伍数不足")
 
-        # 4. 执行派工
+        # 4. 仅完成本地队伍分配，A5 审核/下发回写后再推进本地作业状态
         before = _sheet_snapshot(sheet)
         sheet.contractor_capacity_id = contractor_capacity_id
-        sheet.status = OperationStatus.DISPATCHED
-        sheet.project.status = ProjectPoolStatus.DISPATCHED
+        sheet.a5_status = "待A5措施审核"
+        sheet.a5_remark = "已分配上修队伍，等待进入A5完成措施审核及下发"
+        sheet.last_a5_sync_at = datetime.now(timezone.utc)
+        detail = dict(sheet.progress_detail or {})
+        detail["dispatch"] = {
+            "source": "local_dispatch",
+            "contractor_capacity_id": contractor_capacity_id,
+            "contractor_name": contractor.contractor_name,
+            "team_name": contractor.team_name,
+            "a5_next_step": "measure_review",
+            "updated_at": sheet.last_a5_sync_at.isoformat(),
+        }
+        sheet.progress_detail = detail
         db.flush()
 
         # 5. 按日报可用队伍数扣减，剩余为 0 时才标记忙碌
@@ -355,7 +368,7 @@ def dispatch_operation(
             db,
             business_type=BUSINESS_TYPE_OPERATION,
             business_id=sheet.id,
-            node_code="DISPATCH",
+            node_code="ASSIGN_AND_A5_REVIEW",
             action=ApprovalAction.APPROVE,
             operator_id=operator_id,
             operator_ip=operator_ip,
@@ -420,7 +433,10 @@ def select_priority_sheets(db: Session) -> list[WorkoverOperationSheet]:
     stmt = (
         select(WorkoverOperationSheet)
         .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)
-        .where(WorkoverOperationSheet.status == OperationStatus.WAITING_DISPATCH)
+        .where(
+            WorkoverOperationSheet.status == OperationStatus.WAITING_DISPATCH,
+            WorkoverOperationSheet.contractor_capacity_id.is_(None),
+        )
         .order_by(
             WorkoverProjectPool.approved_at.asc().nullslast(),
             WorkoverProjectPool.production_priority.desc(),

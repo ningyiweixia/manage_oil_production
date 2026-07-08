@@ -78,7 +78,7 @@
       <div class="panel-head">
         <div>
           <h2>待派工运行表</h2>
-          <p>按审批通过时间和产量优先级排序。</p>
+          <p>按审批通过时间和产量优先级排序，分配队伍后进入 A5 审核下发。</p>
         </div>
         <el-button :icon="Refresh" @click="loadPriority">刷新</el-button>
       </div>
@@ -93,7 +93,7 @@
         <el-table-column label="操作" width="110">
           <template #default="{ row }">
             <div class="table-actions">
-              <el-button text type="primary" @click="openDispatch(row)">派工</el-button>
+              <el-button text type="primary" @click="openDispatch(row)">分配</el-button>
             </div>
           </template>
         </el-table-column>
@@ -105,8 +105,9 @@
     <div class="panel-head">
       <div>
         <h2>修井运行表</h2>
-        <p>跟踪派工状态、施工进度和 A5 回调结果。</p>
+        <p>跟踪队伍分配、A5 审核下发、施工进度和日报同步结果。</p>
       </div>
+      <el-button :icon="Refresh" :loading="syncingA5" @click="syncA5Daily">同步A5日报</el-button>
     </div>
     <el-table v-loading="loading" :data="sheets" row-key="id">
       <el-table-column prop="operation_no" label="作业编号" min-width="180" />
@@ -180,7 +181,7 @@
     </template>
   </el-dialog>
 
-  <el-dialog v-model="dispatchVisible" title="派工" width="520px">
+  <el-dialog v-model="dispatchVisible" title="分配上修队伍" width="520px">
     <el-form label-width="104px">
       <el-form-item label="运行表">
         <el-input :model-value="dispatchTarget?.operation_no" disabled />
@@ -198,7 +199,7 @@
     </el-form>
     <template #footer>
       <el-button @click="dispatchVisible = false">取消</el-button>
-      <el-button type="primary" :loading="saving" @click="confirmDispatch">确认派工</el-button>
+      <el-button type="primary" :loading="saving" @click="confirmDispatch">分配并进入A5</el-button>
     </template>
   </el-dialog>
 
@@ -229,12 +230,13 @@ import {
   type OperationAnalytics,
   type OperationSheet
 } from '../api/contractor'
-import { createA5SsoToken as createA5Token } from '../api/a5'
+import { createA5SsoToken as createA5Token, triggerA5Sync } from '../api/a5'
 
 const contractorStatusText = { AVAILABLE: '可用', BUSY: '忙碌', OFFLINE: '离线' }
 const sheetStatusText = { WAITING_DISPATCH: '待派工', DISPATCHED: '已派工', WORKING: '施工中', FINISHED: '已完成', CANCELED: '已取消' }
 const loading = ref(false)
 const saving = ref(false)
+const syncingA5 = ref(false)
 const contractors = ref<ContractorCapacity[]>([])
 const prioritySheets = ref<OperationSheet[]>([])
 const sheets = ref<OperationSheet[]>([])
@@ -369,12 +371,28 @@ async function confirmDispatch() {
   if (!dispatchTarget.value || !dispatchContractorId.value) return
   saving.value = true
   try {
-    await dispatchOperation({ operation_sheet_id: dispatchTarget.value.id, contractor_capacity_id: dispatchContractorId.value })
-    ElMessage.success('派工成功')
+    const result = await dispatchOperation({
+      operation_sheet_id: dispatchTarget.value.id,
+      contractor_capacity_id: dispatchContractorId.value,
+      redirect_path: '/measure-review'
+    })
+    ElMessage.success('已分配队伍，请在 A5 完成措施审核及下发')
     dispatchVisible.value = false
+    window.open(result.redirect_url, '_blank')
     await loadAll()
   } finally {
     saving.value = false
+  }
+}
+
+async function syncA5Daily() {
+  syncingA5.value = true
+  try {
+    await triggerA5Sync()
+    ElMessage.success('已触发 A5 日报同步')
+    await loadAll()
+  } finally {
+    syncingA5.value = false
   }
 }
 

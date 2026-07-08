@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import logging
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 
 from app.core.config import settings
 from app.core.security import create_token
@@ -16,7 +17,12 @@ from app.schemas.a5_integration import A5TokenResponse
 logger = logging.getLogger(__name__)
 
 
-def generate_sso_token(well_no: str, redirect_path: str = "/workorder") -> A5TokenResponse:
+def generate_sso_token(
+    well_no: str,
+    redirect_path: str = "/workorder",
+    *,
+    operation_no: str | None = None,
+) -> A5TokenResponse:
     """生成 A5 系统 SSO 跳转令牌。
 
     方案要求：
@@ -26,6 +32,7 @@ def generate_sso_token(well_no: str, redirect_path: str = "/workorder") -> A5Tok
     Args:
         well_no: 井号
         redirect_path: A5 系统内的重定向路径
+        operation_no: 本系统修井运行表作业编号，用于 A5 回调精准匹配
 
     Returns:
         A5TokenResponse 包含 token, expire_at, redirect_url
@@ -41,7 +48,10 @@ def generate_sso_token(well_no: str, redirect_path: str = "/workorder") -> A5Tok
 
     # 构建 A5 跳转 URL
     a5_base = settings.a5_base_url.rstrip("/") if settings.a5_base_url else "http://a5-system"
-    redirect_url = f"{a5_base}{redirect_path}?token={token}&well_no={well_no}"
+    params = {"token": token, "well_no": well_no}
+    if operation_no:
+        params["operation_no"] = operation_no
+    redirect_url = f"{a5_base}{redirect_path}?{urlencode(params)}"
 
     return A5TokenResponse(
         token=token,

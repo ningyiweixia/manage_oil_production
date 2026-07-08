@@ -23,6 +23,7 @@ from app.schemas.contractor import (
     ContractorCapacityOut,
     ContractorCapacityQuery,
     ContractorCapacityUpdate,
+    DispatchA5Out,
     DispatchPayload,
     ProgressPatch,
     WorkoverOperationSheetCreate,
@@ -31,6 +32,7 @@ from app.schemas.contractor import (
 )
 from app.schemas.pagination import PageResult
 from app.schemas.response import ApiResponse, success
+from app.services.a5_auth_service import generate_sso_token
 
 router = APIRouter(prefix="/contractors", tags=["承包商管理"])
 
@@ -123,14 +125,14 @@ def sheet_detail(
     return success(WorkoverOperationSheetOut.model_validate(get_operation_sheet(db, sheet_id)))
 
 
-@router.patch("/dispatch", response_model=ApiResponse[WorkoverOperationSheetOut])
+@router.patch("/dispatch", response_model=ApiResponse[DispatchA5Out])
 def dispatch(
     payload: DispatchPayload,
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("operation-sheet:dispatch")),
-) -> ApiResponse[WorkoverOperationSheetOut]:
-    """分配队伍（核心派工接口），含 Redis 分布式锁防重机制。"""
+) -> ApiResponse[DispatchA5Out]:
+    """分配上修队伍，并返回 A5 措施审核跳转地址。"""
     sheet = dispatch_operation(
         db,
         payload.operation_sheet_id,
@@ -138,7 +140,20 @@ def dispatch(
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
     )
-    return success(WorkoverOperationSheetOut.model_validate(sheet), msg="派工成功")
+    token = generate_sso_token(
+        sheet.project_well_no or sheet.operation_no,
+        payload.redirect_path,
+        operation_no=sheet.operation_no,
+    )
+    return success(
+        DispatchA5Out(
+            sheet=WorkoverOperationSheetOut.model_validate(sheet),
+            redirect_url=token.redirect_url,
+            token=token.token,
+            expire_at=token.expire_at,
+        ),
+        msg="已分配队伍，请在 A5 完成措施审核及下发",
+    )
 
 
 @router.patch("/operation-sheets/{sheet_id}/progress", response_model=ApiResponse[WorkoverOperationSheetOut])

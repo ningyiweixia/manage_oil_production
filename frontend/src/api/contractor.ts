@@ -36,6 +36,13 @@ export interface OperationSheet {
   updated_at: string
 }
 
+export interface DispatchA5Result {
+  sheet: OperationSheet
+  redirect_url: string
+  token: string
+  expire_at: string
+}
+
 export interface ContractorQuery {
   page?: number
   page_size?: number
@@ -80,8 +87,8 @@ export function createOperationSheet(payload: { project_id: number; planned_star
   return unwrap<OperationSheet>(http.post('/contractors/operation-sheets/', payload))
 }
 
-export function dispatchOperation(payload: { operation_sheet_id: number; contractor_capacity_id: number }) {
-  return unwrap<OperationSheet>(http.patch('/contractors/dispatch', payload))
+export function dispatchOperation(payload: { operation_sheet_id: number; contractor_capacity_id: number; redirect_path?: string }) {
+  return unwrap<DispatchA5Result>(http.patch('/contractors/dispatch', payload))
 }
 
 export function updateOperationProgress(id: number, payload: { progress: number; progress_detail: Record<string, unknown> }) {

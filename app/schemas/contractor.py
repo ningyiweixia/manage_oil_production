@@ -96,6 +96,14 @@ class WorkoverOperationSheetOut(BaseModel):
 class DispatchPayload(BaseModel):
     operation_sheet_id: int = Field(ge=1)
     contractor_capacity_id: int = Field(ge=1)
+    redirect_path: str = Field(default="/measure-review", min_length=1, max_length=128)
+
+
+class DispatchA5Out(BaseModel):
+    sheet: WorkoverOperationSheetOut
+    redirect_url: str
+    token: str
+    expire_at: datetime
 
 
 class ProgressPatch(BaseModel):
