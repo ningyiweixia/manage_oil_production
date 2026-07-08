@@ -152,6 +152,14 @@ class A5SyncServiceTest(unittest.TestCase):
         self.assertEqual(sheet.status, OperationStatus.CANCELED)
         self.assertEqual(contractor.available_count, 1)
 
+    def test_a5_sso_redirect_includes_operation_no_when_provided(self):
+        from app.services.a5_auth_service import generate_sso_token
+
+        token = generate_sso_token("WELL-001", "/measure-review", operation_no="OP-TEST-001")
+
+        self.assertIn("well_no=WELL-001", token.redirect_url)
+        self.assertIn("operation_no=OP-TEST-001", token.redirect_url)
+
 
 if __name__ == "__main__":
     unittest.main()
