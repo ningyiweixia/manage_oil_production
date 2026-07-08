@@ -493,3 +493,19 @@ alembic revision --autogenerate -m "描述"
 - 登录接口内存滑动窗口限流（每 IP 每 5 分钟 5 次）
 - A5 回调接口 HMAC 签名验证
 - 生产环境 CSP 由 Nginx 注入
+## 试运行验收与运维脚本
+
+本地演示默认账号仍为 `admin / ChangeMe_123!`。后端和前端启动后，可执行以下命令做验收检查：
+
+```powershell
+.\scripts\acceptance-check.ps1
+```
+
+脚本会检查 `/health`、登录、项目池、审批日志、运行表、物料、完井、综合报表、操作日志以及 Excel/Word 报表导出。
+
+本地 SQLite 演示库可用以下命令备份和恢复：
+
+```powershell
+.\scripts\backup-local-db.ps1
+.\scripts\restore-local-db.ps1 -BackupPath .\backups\local_dev-YYYYMMDD-HHMMSS.db
+```

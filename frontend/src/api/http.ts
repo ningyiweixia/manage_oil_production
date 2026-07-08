@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import type { ApiResponse } from '../types/workover'
+import { clearSessionMenus } from '../utils/menuCache'
 
 export const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
@@ -23,7 +24,7 @@ http.interceptors.response.use(
       localStorage.removeItem('refresh_token')
       localStorage.removeItem('current_user')
       localStorage.removeItem('permissions')
-      localStorage.removeItem('menus')
+      clearSessionMenus()
       window.dispatchEvent(new CustomEvent('auth-expired'))
       ElMessage.error('登录已失效，请重新登录')
     }

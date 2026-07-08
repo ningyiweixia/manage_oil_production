@@ -4,20 +4,18 @@ import { statusLabels } from '../utils/status'
 
 const DEMO_PROJECTS_KEY = 'demo_workover_projects'
 
-export type WorkoverProjectPayload = Omit<
-  WorkoverProject,
-  | 'id'
-  | 'created_at'
-  | 'updated_at'
-  | 'created_by_id'
-  | 'status'
-  | 'geology_verified_daily_oil'
-  | 'geology_verified_at'
-  | 'process_well_condition'
-  | 'process_can_workover'
-  | 'process_verified_at'
-  | 'rejected_from_status'
->
+export interface FileExportPayload {
+  filename: string
+  content_base64: string
+}
+
+export interface ImportTaskResult {
+  task_id: string
+  status: string
+  imported_count: number
+  message?: string
+  errors: string[]
+}
 
 const initialDemoProjects: WorkoverProject[] = [
   {
@@ -276,11 +274,11 @@ export async function deleteProject(id: number): Promise<void> {
   await unwrap<void>(http.delete(`/workover-project-pools/${id}`))
 }
 
-export async function createProject(payload: WorkoverProjectPayload): Promise<WorkoverProject> {
+export async function createProject(payload: Omit<WorkoverProject, 'id' | 'created_at' | 'updated_at'>): Promise<WorkoverProject> {
   return unwrap<WorkoverProject>(http.post('/workover-project-pools/', payload))
 }
 
-export async function updateProject(id: number, payload: WorkoverProjectPayload): Promise<WorkoverProject> {
+export async function updateProject(id: number, payload: Omit<WorkoverProject, 'id' | 'created_at' | 'updated_at'>): Promise<WorkoverProject> {
   return unwrap<WorkoverProject>(http.put(`/workover-project-pools/${id}`, payload))
 }
 
@@ -288,17 +286,37 @@ export async function submitProjects(projectIds: number[], comment: string): Pro
   return unwrap<WorkoverProject[]>(http.patch('/workover-project-pools/submit', { project_ids: projectIds, comment }))
 }
 
-export async function patchProjectStatus(
-  id: number,
-  status: ProjectPoolStatus,
-  comment: string,
-  extra: {
-    geology_verified_daily_oil?: number | null
-    process_well_condition?: string | null
-    process_can_workover?: boolean | null
-  } = {}
-): Promise<WorkoverProject> {
-  return unwrap<WorkoverProject>(http.patch(`/workover-project-pools/${id}/status`, { status, comment, ...extra }))
+export async function patchProjectStatus(id: number, status: ProjectPoolStatus, comment: string): Promise<WorkoverProject> {
+  return unwrap<WorkoverProject>(http.patch(`/workover-project-pools/${id}/status`, { status, comment }))
+}
+
+export async function importProjects(file: File): Promise<ImportTaskResult> {
+  const form = new FormData()
+  form.append('file', file)
+  return unwrap<ImportTaskResult>(http.post('/workover-project-pools/import', form, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }))
+}
+
+export async function downloadProjectImportTemplate(): Promise<FileExportPayload> {
+  return unwrap<FileExportPayload>(http.get('/workover-project-pools/import/template'))
+}
+
+export async function exportProjects(): Promise<FileExportPayload> {
+  return unwrap<FileExportPayload>(http.get('/workover-project-pools/export/all'))
+}
+
+export function saveBase64File(payload: FileExportPayload) {
+  const binary = window.atob(payload.content_base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+  const blob = new Blob([bytes])
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = payload.filename
+  anchor.click()
+  URL.revokeObjectURL(url)
 }
 
 export function demoProjectDataset(): WorkoverProject[] {

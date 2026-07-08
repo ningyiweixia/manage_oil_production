@@ -1,6 +1,6 @@
 <template>
   <el-tabs v-model="activeTab" class="admin-tabs" @tab-change="changeTab">
-    <el-tab-pane label="账号设置" name="account" lazy>
+    <el-tab-pane label="账号设置" name="account">
       <section class="account-page">
         <div class="account-hero">
           <div class="account-avatar">
@@ -52,7 +52,7 @@
       </section>
     </el-tab-pane>
 
-    <el-tab-pane label="用户管理" name="users" lazy>
+    <el-tab-pane label="用户管理" name="users">
       <section class="table-panel">
         <div class="panel-head">
           <div>
@@ -61,33 +61,65 @@
           </div>
           <el-button type="primary" :icon="Plus" @click="userVisible = true">新增用户</el-button>
         </div>
-        <el-table v-loading="loading" :data="users" row-key="id">
-          <el-table-column prop="username" label="账号" width="130" />
-          <el-table-column prop="full_name" label="姓名" width="130" />
-          <el-table-column prop="department" label="部门" min-width="140" />
-          <el-table-column label="角色" min-width="220">
-            <template #default="{ row }">
-              <el-tag v-for="roleId in row.role_ids" :key="roleId" class="tag-gap">{{ roleName(roleId) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="90">
-            <template #default="{ row }">
-              <el-switch :model-value="row.is_active" @change="(value: string | number | boolean) => changeUserActive(row.id, Boolean(value))" />
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="170">
-            <template #default="{ row }">
-              <div class="table-actions">
-                <el-button text type="primary" @click="openRoleAssign(row)">分配角色</el-button>
-                <el-button text type="danger" :disabled="isDeleteDisabled(row)" @click="deleteUserRow(row)">删除</el-button>
+        <section class="system-admin-summary" aria-label="系统管理信息总览">
+          <div v-for="item in systemAdminStats" :key="item.label" class="system-admin-stat">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+          </div>
+        </section>
+        <div class="user-group-toolbar">
+          <strong>按角色分组</strong>
+          <span>组内排序</span>
+          <el-select v-model="userSortMode" style="width: 180px">
+            <el-option v-for="option in userSortOptions" :key="option.value" :label="option.label" :value="option.value" />
+          </el-select>
+        </div>
+        <el-empty v-if="!loading && !userRoleGroups.length" description="暂无用户" />
+        <div v-else v-loading="loading" class="role-user-groups">
+          <section v-for="group in userRoleGroups" :key="group.role.id" class="role-user-group">
+            <div class="role-user-group-head">
+              <div>
+                <h3>{{ group.role.name }}</h3>
+                <p>
+                  {{ group.role.description || '该角色下的系统用户' }}
+                  <span v-if="group.role.id">菜单 {{ group.role.menu_ids.length }} 项 / 权限 {{ group.role.permission_ids.length }} 项</span>
+                </p>
               </div>
-            </template>
-          </el-table-column>
-        </el-table>
+              <span class="role-count">{{ group.users.length }} 人</span>
+            </div>
+            <el-table :data="sortUsersForRole(group.users)" row-key="id">
+              <el-table-column prop="username" label="账号" width="130" />
+              <el-table-column label="首字母" width="80">
+                <template #default="{ row }">{{ userInitialLabel(row) }}</template>
+              </el-table-column>
+              <el-table-column prop="full_name" label="姓名" width="130" />
+              <el-table-column prop="department" label="部门" min-width="140" />
+              <el-table-column label="角色" min-width="220">
+                <template #default="{ row }">
+                  <el-tag v-for="roleId in row.role_ids" :key="roleId" class="tag-gap">{{ roleName(roleId) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="created_at" label="录入时间" min-width="170" show-overflow-tooltip />
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }">
+                  <el-switch :model-value="row.is_active" @change="(value: string | number | boolean) => changeUserActive(row.id, Boolean(value))" />
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="170">
+                <template #default="{ row }">
+                  <div class="table-actions">
+                    <el-button text type="primary" @click="openRoleAssign(row)">分配角色</el-button>
+                    <el-button text type="danger" :disabled="isDeleteDisabled(row)" @click="deleteUserRow(row)">删除</el-button>
+                  </div>
+                </template>
+              </el-table-column>
+            </el-table>
+          </section>
+        </div>
       </section>
     </el-tab-pane>
 
-    <el-tab-pane label="角色管理" name="roles" lazy>
+    <el-tab-pane label="角色管理" name="roles">
       <section class="table-panel">
         <div class="panel-head">
           <div>
@@ -95,6 +127,12 @@
             <p>维护角色信息，并查看菜单与权限绑定数量。</p>
           </div>
         </div>
+        <section class="system-admin-summary" aria-label="角色信息总览">
+          <div v-for="item in roleStats" :key="item.label" class="system-admin-stat">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+          </div>
+        </section>
         <el-table v-loading="loading" :data="roles" row-key="id">
           <el-table-column prop="name" label="角色" width="160" />
           <el-table-column prop="code" label="编码" width="180" />
@@ -116,7 +154,7 @@
       </section>
     </el-tab-pane>
 
-    <el-tab-pane label="菜单管理" name="menus" lazy>
+    <el-tab-pane label="菜单管理" name="menus">
       <section class="table-panel">
         <div class="panel-head">
           <div>
@@ -124,6 +162,12 @@
             <p>查看系统菜单、路由地址和启用状态。</p>
           </div>
         </div>
+        <section class="system-admin-summary" aria-label="菜单信息总览">
+          <div v-for="item in menuStats" :key="item.label" class="system-admin-stat">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+          </div>
+        </section>
         <el-table v-loading="loading" :data="menus" row-key="id" default-expand-all>
           <el-table-column prop="title" label="菜单名称" min-width="170" />
           <el-table-column prop="route_path" label="路由" min-width="220" show-overflow-tooltip />
@@ -143,7 +187,7 @@
       </section>
     </el-tab-pane>
 
-    <el-tab-pane label="权限管理" name="permissions" lazy>
+    <el-tab-pane label="权限管理" name="permissions">
       <section class="table-panel">
         <div class="panel-head">
           <div>
@@ -151,34 +195,36 @@
             <p>查看接口权限点、请求方法和资源路径。</p>
           </div>
         </div>
-        <el-table v-loading="loading" :data="pagedPermissions" row-key="id">
-          <el-table-column prop="name" label="权限名称" min-width="180" />
-          <el-table-column prop="code" label="权限编码" min-width="220" show-overflow-tooltip />
-          <el-table-column prop="method" label="方法" width="90" />
-          <el-table-column prop="path" label="接口路径" min-width="260" show-overflow-tooltip />
-          <el-table-column label="状态" width="90">
-            <template #default="{ row }">
-              <el-tag :type="row.is_active ? 'success' : 'danger'">{{ row.is_active ? '启用' : '停用' }}</el-tag>
-            </template>
-          </el-table-column>
-        </el-table>
-        <el-pagination
-          v-model:current-page="permissionQuery.page"
-          v-model:page-size="permissionQuery.page_size"
-          class="pager"
-          layout="total, sizes, prev, pager, next"
-          :page-sizes="[20, 50, 100]"
-          :total="permissions.length"
-          @size-change="handlePermissionPageSizeChange"
-        />
+        <section class="system-admin-summary" aria-label="权限信息总览">
+          <div v-for="item in permissionStats" :key="item.label" class="system-admin-stat">
+            <span>{{ item.label }}</span>
+            <strong>{{ item.value }}</strong>
+          </div>
+        </section>
+        <h3 class="detail-title">权限明细</h3>
+        <div v-loading="loading">
+          <el-empty v-if="!loading && !permissions.length" description="暂无权限数据" />
+          <el-table v-else :data="permissions" row-key="id">
+            <el-table-column prop="name" label="权限名称" min-width="180" />
+            <el-table-column prop="code" label="权限编码" min-width="220" show-overflow-tooltip />
+            <el-table-column prop="method" label="方法" width="90" />
+            <el-table-column prop="path" label="接口路径" min-width="260" show-overflow-tooltip />
+            <el-table-column prop="description" label="说明" min-width="180" show-overflow-tooltip />
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag :type="row.is_active ? 'success' : 'danger'">{{ row.is_active ? '启用' : '停用' }}</el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
       </section>
     </el-tab-pane>
 
-    <el-tab-pane label="数据字典" name="dictionaries" lazy>
+    <el-tab-pane label="数据字典" name="dictionaries">
       <DictionaryManageView />
     </el-tab-pane>
 
-    <el-tab-pane label="操作日志" name="logs" lazy>
+    <el-tab-pane label="操作日志" name="logs">
       <section class="table-panel">
         <div class="panel-head">
           <div>
@@ -186,8 +232,21 @@
             <p>查看最近接口访问记录和业务处理结果。</p>
           </div>
         </div>
+        <div class="toolbar-row">
+          <el-input v-model="logQuery.trace_id" clearable placeholder="Trace ID" style="width: 220px" />
+          <el-input v-model="logQuery.path" clearable placeholder="接口路径" style="width: 220px" />
+          <el-select v-model="logQuery.method" clearable placeholder="方法" style="width: 120px">
+            <el-option label="GET" value="GET" />
+            <el-option label="POST" value="POST" />
+            <el-option label="PUT" value="PUT" />
+            <el-option label="PATCH" value="PATCH" />
+            <el-option label="DELETE" value="DELETE" />
+          </el-select>
+          <el-button type="primary" @click="searchLogs">查询</el-button>
+        </div>
         <el-table v-loading="loading" :data="logs" row-key="id">
           <el-table-column prop="created_at" label="时间" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="trace_id" label="Trace ID" min-width="180" show-overflow-tooltip />
           <el-table-column prop="method" label="方法" width="90" />
           <el-table-column prop="path" label="路径" min-width="240" show-overflow-tooltip />
           <el-table-column prop="operation" label="权限点" min-width="180" />
@@ -199,11 +258,43 @@
           v-model:page-size="logQuery.page_size"
           class="pager"
           layout="total, sizes, prev, pager, next"
-          :page-sizes="[20, 50, 100]"
           :total="logTotal"
-          @current-change="loadLogsData"
-          @size-change="handleLogPageSizeChange"
+          @change="loadLogs"
         />
+      </section>
+    </el-tab-pane>
+
+    <el-tab-pane label="基础支撑" name="support">
+      <section class="table-panel support-panel">
+        <div class="panel-head">
+          <div>
+            <h2>系统管理与基础支撑</h2>
+            <p>按方案统一呈现运行监控、接口安全、数据权限、敏感操作审计、备份与恢复、消息提醒能力。</p>
+          </div>
+          <el-button type="primary" :icon="Refresh" @click="loadSupportOverview">刷新</el-button>
+        </div>
+
+        <section class="support-grid" v-loading="loading">
+          <article v-for="section in supportSections" :key="section.key" class="support-card">
+            <div class="support-card-head">
+              <h3>{{ section.title }}</h3>
+              <span>{{ section.hint }}</span>
+            </div>
+            <div class="support-metrics">
+              <div v-for="item in section.items" :key="`${section.key}-${item.name}`" class="support-metric">
+                <div>
+                  <strong>{{ item.name }}</strong>
+                  <p>{{ item.description }}</p>
+                </div>
+                <div class="support-status">
+                  <el-tag :type="supportStatusType(item.status)" effect="plain">{{ item.status }}</el-tag>
+                  <span v-if="item.value !== undefined && item.value !== null">{{ item.value }}</span>
+                </div>
+              </div>
+              <el-empty v-if="!section.items.length" description="暂无基础支撑数据" :image-size="64" />
+            </div>
+          </article>
+        </section>
       </section>
     </el-tab-pane>
   </el-tabs>
@@ -292,14 +383,16 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { Lock, Plus, UserFilled, Warning } from '@element-plus/icons-vue'
+import { Lock, Plus, Refresh, UserFilled, Warning } from '@element-plus/icons-vue'
 import { cancelCurrentAccount, changeCurrentPassword, getCurrentUser, type CurrentUser } from '../api/auth'
+import { clearSessionMenus } from '../utils/menuCache'
 import DictionaryManageView from './DictionaryManageView.vue'
 import {
   assignRolePermissions,
   assignUserRoles,
   createUser,
   deleteUser,
+  getSystemSupportOverview,
   listMenus,
   listOperationLogs,
   listPermissions,
@@ -310,6 +403,8 @@ import {
   type OperationLogItem,
   type PermissionItem,
   type RoleItem,
+  type SupportMetric,
+  type SystemSupportOverview,
   type UserItem
 } from '../api/rbac'
 
@@ -322,7 +417,8 @@ const routeToTab: Record<string, string> = {
   '/system/menus': 'menus',
   '/system/permissions': 'permissions',
   '/system/operation-logs': 'logs',
-  '/system/dictionaries': 'dictionaries'
+  '/system/dictionaries': 'dictionaries',
+  '/system/support': 'support'
 }
 const tabToRoute = computed<Record<string, string>>(() => Object.fromEntries(
   Object.entries(routeToTab).map(([path, tab]) => [tab, path])
@@ -336,10 +432,8 @@ const roles = ref<RoleItem[]>([])
 const menus = ref<MenuItem[]>([])
 const permissions = ref<PermissionItem[]>([])
 const logs = ref<OperationLogItem[]>([])
-const permissionQuery = reactive({ page: 1, page_size: 20 })
+const supportOverview = ref<SystemSupportOverview | null>(null)
 const logTotal = ref(0)
-const logQuery = reactive({ page: 1, page_size: 20 })
-const loadedTabs = reactive<Record<string, boolean>>({})
 const userVisible = ref(false)
 const roleAssignVisible = ref(false)
 const permissionAssignVisible = ref(false)
@@ -367,6 +461,86 @@ const userForm = reactive({
   department: '',
   is_active: true,
   role_id: undefined as number | undefined
+})
+const logQuery = reactive({
+  page: 1,
+  page_size: 20,
+  trace_id: '',
+  path: '',
+  method: ''
+})
+
+type UserSortMode = 'default' | 'initial_asc' | 'initial_desc' | 'created_desc' | 'created_asc'
+type UserRoleGroup = {
+  role: RoleItem
+  users: UserItem[]
+}
+
+const userSortMode = ref<UserSortMode>('default')
+const userSortOptions: { label: string; value: UserSortMode }[] = [
+  { label: '默认排序', value: 'default' },
+  { label: '首字母升序', value: 'initial_asc' },
+  { label: '首字母降序', value: 'initial_desc' },
+  { label: '录入时间从新到旧', value: 'created_desc' },
+  { label: '录入时间从旧到新', value: 'created_asc' }
+]
+const unassignedRole: UserRoleGroup['role'] = {
+  id: 0,
+  name: '未分配角色',
+  code: 'unassigned',
+  description: '尚未绑定角色的用户',
+  is_active: true,
+  menu_ids: [],
+  permission_ids: []
+}
+const systemAdminStats = computed(() => [
+  { label: '人员总数', value: users.value.length },
+  { label: '角色总数', value: roles.value.length },
+  { label: '权限总数', value: permissions.value.length },
+  { label: '菜单总数', value: flatMenus.value.length }
+])
+const flatMenus = computed(() => flattenMenus(menus.value))
+const roleStats = computed(() => [
+  { label: '角色总数', value: roles.value.length },
+  { label: '启用角色', value: roles.value.filter((role) => role.is_active).length },
+  { label: '绑定菜单', value: roles.value.reduce((total, role) => total + role.menu_ids.length, 0) },
+  { label: '绑定权限', value: roles.value.reduce((total, role) => total + role.permission_ids.length, 0) }
+])
+const menuStats = computed(() => [
+  { label: '菜单总数', value: flatMenus.value.length },
+  { label: '可见菜单', value: flatMenus.value.filter((menu) => menu.is_visible).length },
+  { label: '启用菜单', value: flatMenus.value.filter((menu) => menu.is_active).length },
+  { label: '一级菜单', value: menus.value.length }
+])
+const permissionStats = computed(() => [
+  { label: '权限总数', value: permissions.value.length },
+  { label: '启用权限', value: permissions.value.filter((permission) => permission.is_active).length },
+  { label: '接口方法', value: new Set(permissions.value.map((permission) => permission.method)).size },
+  { label: '资源路径', value: new Set(permissions.value.map((permission) => permission.path)).size }
+])
+const supportSections = computed<{ key: keyof SystemSupportOverview; title: string; hint: string; items: SupportMetric[] }[]>(() => {
+  const overview = supportOverview.value
+  return [
+    { key: 'runtime_monitoring', title: '运行监控', hint: '服务、数据库、接口异常与集成任务', items: overview?.runtime_monitoring || [] },
+    { key: 'security_controls', title: '接口安全', hint: 'JWT、SSO/LDAP兼容、Token签名与白名单', items: overview?.security_controls || [] },
+    { key: 'data_scope', title: '数据权限', hint: '部门、角色、项目范围访问边界', items: overview?.data_scope || [] },
+    { key: 'audit_traceability', title: '敏感操作审计', hint: '权限变更、配置变更和业务关键动作留痕', items: overview?.audit_traceability || [] },
+    { key: 'backup_recovery', title: '备份与恢复', hint: '数据库、附件与配置恢复预案', items: overview?.backup_recovery || [] },
+    { key: 'message_alerts', title: '消息提醒', hint: '待办、派工、物料异常和同步失败提醒', items: overview?.message_alerts || [] }
+  ]
+})
+const userRoleGroups = computed<UserRoleGroup[]>(() => {
+  const groups = roles.value
+    .map((role) => ({
+      role,
+      users: users.value.filter((user) => user.role_ids.includes(role.id))
+    }))
+    .filter((group) => group.users.length > 0)
+  const unassignedUsers = users.value.filter((user) => !user.role_ids.length)
+  if (unassignedUsers.length) {
+    groups.push({ role: unassignedRole, users: unassignedUsers })
+  }
+  return groups
 })
 
 const passwordPattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,128}$/
@@ -421,28 +595,55 @@ const userRules: FormRules<typeof userForm> = {
   full_name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
   role_id: [{ required: true, message: '请选择一个角色', trigger: 'change' }]
 }
-const pagedPermissions = computed(() => {
-  const start = (permissionQuery.page - 1) * permissionQuery.page_size
-  return permissions.value.slice(start, start + permissionQuery.page_size)
-})
 
 function clearAuthState() {
   localStorage.removeItem('access_token')
   localStorage.removeItem('refresh_token')
   localStorage.removeItem('current_user')
   localStorage.removeItem('permissions')
-  localStorage.removeItem('menus')
+  clearSessionMenus()
   router.push('/login')
 }
 
 async function loadAccount() {
-  if (loadedTabs.account) return
   accountInfo.value = await getCurrentUser()
-  loadedTabs.account = true
 }
 
 function roleName(id: number) {
   return roles.value.find((role) => role.id === id)?.name || `角色${id}`
+}
+
+function flattenMenus(items: MenuItem[]): MenuItem[] {
+  return items.flatMap((item) => [item, ...flattenMenus(item.children || [])])
+}
+
+function userInitialValue(user: UserItem) {
+  return (user.username || user.full_name || '').trim().toLocaleLowerCase('zh-CN')
+}
+
+function userInitialLabel(user: UserItem) {
+  return userInitialValue(user).charAt(0).toLocaleUpperCase('zh-CN') || '-'
+}
+
+function userCreatedValue(user: UserItem) {
+  return new Date(user.created_at).getTime() || 0
+}
+
+function sortUsersForRole(items: UserItem[]) {
+  const sorted = [...items]
+  if (userSortMode.value === 'initial_asc') {
+    return sorted.sort((a, b) => userInitialValue(a).localeCompare(userInitialValue(b), 'zh-CN'))
+  }
+  if (userSortMode.value === 'initial_desc') {
+    return sorted.sort((a, b) => userInitialValue(b).localeCompare(userInitialValue(a), 'zh-CN'))
+  }
+  if (userSortMode.value === 'created_desc') {
+    return sorted.sort((a, b) => userCreatedValue(b) - userCreatedValue(a))
+  }
+  if (userSortMode.value === 'created_asc') {
+    return sorted.sort((a, b) => userCreatedValue(a) - userCreatedValue(b))
+  }
+  return sorted
 }
 
 function isCurrentOpsAdmin() {
@@ -507,107 +708,71 @@ async function confirmCancelAccount() {
   }
 }
 
-async function loadUsersData() {
+async function loadAll() {
   loading.value = true
   try {
-    const [userRows, roleRows, currentUser] = await Promise.all([
-      listUsers(),
-      listRoles(),
-      loadedTabs.account ? Promise.resolve(accountInfo.value) : getCurrentUser()
+    const results = await Promise.allSettled([
+      loadSystemResource('用户', listUsers, (value) => {
+        users.value = value
+      }),
+      loadSystemResource('角色', listRoles, (value) => {
+        roles.value = value
+      }),
+      loadSystemResource('菜单', listMenus, (value) => {
+        menus.value = value
+      }),
+      loadSystemResource('权限', listPermissions, (value) => {
+        permissions.value = value
+      }),
+      loadSystemResource('操作日志', () => listOperationLogs(logQuery), (value) => {
+        logs.value = value.items
+        logTotal.value = value.total
+      }),
+      loadSystemResource('基础支撑', getSystemSupportOverview, (value) => {
+        supportOverview.value = value
+      })
     ])
-    users.value = userRows
-    roles.value = roleRows
-    accountInfo.value = currentUser
-    loadedTabs.account = true
-    loadedTabs.users = true
-  } finally {
-    loading.value = false
-  }
-}
-
-async function loadRolesData() {
-  loading.value = true
-  try {
-    roles.value = await listRoles()
-    loadedTabs.roles = true
-  } finally {
-    loading.value = false
-  }
-}
-
-async function loadMenusData() {
-  loading.value = true
-  try {
-    menus.value = await listMenus()
-    loadedTabs.menus = true
-  } finally {
-    loading.value = false
-  }
-}
-
-async function loadPermissionsData() {
-  loading.value = true
-  try {
-    permissions.value = await listPermissions()
-    if ((permissionQuery.page - 1) * permissionQuery.page_size >= permissions.value.length) {
-      permissionQuery.page = 1
+    const failedLabels = results
+      .filter((result): result is PromiseFulfilledResult<string | null> => result.status === 'fulfilled' && Boolean(result.value))
+      .map((result) => result.value)
+    if (failedLabels.length) {
+      ElMessage.warning(`${failedLabels.join('、')}加载失败，其余系统管理信息已正常显示`)
     }
-    loadedTabs.permissions = true
   } finally {
     loading.value = false
   }
 }
 
-function handlePermissionPageSizeChange() {
-  permissionQuery.page = 1
-}
-
-async function loadLogsData() {
-  loading.value = true
+async function loadSystemResource<T>(label: string, request: () => Promise<T>, apply: (value: T) => void) {
   try {
-    const page = await listOperationLogs(logQuery)
-    logs.value = page.items
-    logTotal.value = page.total
-    logQuery.page = page.page
-    logQuery.page_size = page.page_size
-    loadedTabs.logs = true
-  } finally {
-    loading.value = false
+    apply(await request())
+    return null
+  } catch (error) {
+    console.warn(`${label}加载失败`, error)
+    return label
   }
 }
 
-function handleLogPageSizeChange() {
+async function loadLogs() {
+  const page = await listOperationLogs(logQuery)
+  logs.value = page.items
+  logTotal.value = page.total
+}
+
+async function searchLogs() {
   logQuery.page = 1
-  loadLogsData()
+  await loadLogs()
 }
 
-async function ensureTabData(tabName = activeTab.value) {
-  switch (tabName) {
-    case 'account':
-      await loadAccount()
-      break
-    case 'users':
-      if (!loadedTabs.users) await loadUsersData()
-      break
-    case 'roles':
-      if (!loadedTabs.roles) await loadRolesData()
-      break
-    case 'menus':
-      if (!loadedTabs.menus) await loadMenusData()
-      break
-    case 'permissions':
-      if (!loadedTabs.permissions) await loadPermissionsData()
-      break
-    case 'logs':
-      if (!loadedTabs.logs) await loadLogsData()
-      break
-  }
+async function loadSupportOverview() {
+  supportOverview.value = await getSystemSupportOverview()
 }
 
-async function refreshCurrentAdminData() {
-  const tabName = activeTab.value
-  loadedTabs[tabName] = false
-  await ensureTabData(tabName)
+function supportStatusType(status: string) {
+  if (status.includes('正常') || status.includes('启用') || status.includes('纳入')) return 'success'
+  if (status.includes('关注') || status.includes('规划')) return 'warning'
+  if (status.includes('异常') || status.includes('失败')) return 'danger'
+  return 'info'
 }
 
 async function saveUser() {
@@ -625,7 +790,7 @@ async function saveUser() {
     })
     ElMessage.success('用户已创建')
     userVisible.value = false
-    await refreshCurrentAdminData()
+    await loadAll()
   } catch (error) {
     ElMessage.error(getErrorMessage(error, '用户创建失败，请检查账号、密码和角色配置'))
   } finally {
@@ -647,7 +812,7 @@ function resetUserForm() {
 
 async function changeUserActive(id: number, isActive: boolean) {
   await setUserActive(id, isActive)
-  await refreshCurrentAdminData()
+  await loadAll()
 }
 
 async function deleteUserRow(row: UserItem) {
@@ -664,7 +829,7 @@ async function deleteUserRow(row: UserItem) {
     )
     await deleteUser(row.id)
     ElMessage.success('用户已删除')
-    await refreshCurrentAdminData()
+    await loadAll()
   } catch (error) {
     if (error === 'cancel' || error === 'close') return
     ElMessage.error(getErrorMessage(error, '删除用户失败'))
@@ -684,7 +849,7 @@ async function saveRoleAssign() {
     await assignUserRoles(editingUser.value.id, selectedRoleId.value ? [selectedRoleId.value] : [])
     ElMessage.success('角色已更新')
     roleAssignVisible.value = false
-    await refreshCurrentAdminData()
+    await loadAll()
   } catch (error) {
     ElMessage.error(getErrorMessage(error, '角色更新失败'))
   } finally {
@@ -696,9 +861,6 @@ function openPermissionAssign(row: RoleItem) {
   editingRole.value = row
   selectedPermissionIds.value = [...row.permission_ids]
   permissionAssignVisible.value = true
-  if (!loadedTabs.permissions) {
-    loadPermissionsData()
-  }
 }
 
 async function savePermissionAssign() {
@@ -708,7 +870,7 @@ async function savePermissionAssign() {
     await assignRolePermissions(editingRole.value.id, selectedPermissionIds.value)
     ElMessage.success('权限已更新')
     permissionAssignVisible.value = false
-    await refreshCurrentAdminData()
+    await loadAll()
   } finally {
     saving.value = false
   }
@@ -736,12 +898,12 @@ watch(
   () => route.path,
   (path) => {
     activeTab.value = routeToTab[path] || 'account'
-    ensureTabData(activeTab.value)
   }
 )
 
 onMounted(() => {
-  ensureTabData()
+  loadAccount()
+  loadAll()
 })
 </script>
 
@@ -882,6 +1044,155 @@ onMounted(() => {
   line-height: 1.4;
 }
 
+.system-admin-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.system-admin-stat {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  background: #f8fbff;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+}
+
+.system-admin-stat span {
+  color: #667085;
+  font-size: 13px;
+}
+
+.system-admin-stat strong {
+  color: #172033;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.user-group-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  color: #667085;
+}
+
+.user-group-toolbar strong {
+  color: #172033;
+}
+
+.role-user-groups {
+  display: grid;
+  gap: 16px;
+}
+
+.role-user-group {
+  padding-top: 14px;
+  border-top: 1px solid #d8e0eb;
+}
+
+.role-user-group:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.role-user-group-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.role-user-group-head h3 {
+  margin: 0;
+  color: #172033;
+  font-size: 16px;
+}
+
+.role-user-group-head p {
+  margin: 4px 0 0;
+  color: #667085;
+  font-size: 13px;
+}
+
+.role-count {
+  flex: 0 0 auto;
+  color: #667085;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.support-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.support-card {
+  min-width: 0;
+  padding: 16px;
+  background: #ffffff;
+  border: 1px solid #d8e0eb;
+  border-radius: 8px;
+}
+
+.support-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.support-card-head h3 {
+  margin: 0;
+  color: #172033;
+  font-size: 16px;
+}
+
+.support-card-head span,
+.support-metric p {
+  color: #667085;
+  font-size: 13px;
+}
+
+.support-metrics {
+  display: grid;
+  gap: 10px;
+}
+
+.support-metric {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 12px;
+  background: #f8fbff;
+  border: 1px solid #e3eaf4;
+  border-radius: 8px;
+}
+
+.support-metric strong {
+  color: #172033;
+}
+
+.support-metric p {
+  margin: 5px 0 0;
+  line-height: 1.5;
+}
+
+.support-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  color: #172033;
+  font-weight: 700;
+}
+
 @media (max-width: 900px) {
   .account-hero,
   .account-setting-row {
@@ -895,6 +1206,19 @@ onMounted(() => {
 
   .account-facts {
     grid-template-columns: 1fr;
+  }
+
+  .system-admin-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .support-grid,
+  .support-metric {
+    grid-template-columns: 1fr;
+  }
+
+  .support-status {
+    align-items: flex-start;
   }
 }
 </style>

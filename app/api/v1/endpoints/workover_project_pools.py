@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, File, Request, UploadFile
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_permission
+from app.api.deps import require_permission
 from app.core.exceptions import BusinessException
 from app.core.status_codes import BAD_REQUEST
 from app.crud.workover_project_pool import (
@@ -11,7 +11,6 @@ from app.crud.workover_project_pool import (
     get_project_pool,
     list_all_project_pools,
     list_project_pools,
-    patch_project_status,
     submit_project_pools,
     update_project_pool,
 )
@@ -32,10 +31,16 @@ from app.schemas.workover_project_pool import (
     WorkoverProjectPoolUpdate,
 )
 from app.services.notification_service import push_geology_todo, push_status_changed
+from app.services.approval_workflow_service import (
+    ApprovalActionCode,
+    ApprovalDecision,
+    process_workover_project_approval,
+)
 from app.services.workover_analytics_service import build_workover_analytics
 from app.services.workover_project_pool_excel import (
     MAX_UPLOAD_SIZE,
     enqueue_import_workover_project_pool,
+    export_project_pool_template,
     export_project_pool_excel,
     parse_project_pool_excel,
 )
@@ -51,9 +56,9 @@ def _client_ip(request: Request) -> str | None:
 def list_items(
     query: WorkoverProjectPoolQuery = Depends(),
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("workover_project_pool:read")),
+    current_user: User = Depends(require_permission("workover_project_pool:read")),
 ) -> ApiResponse[PageResult[WorkoverProjectPoolOut]]:
-    rows, total = list_project_pools(db, query)
+    rows, total = list_project_pools(db, query, current_user=current_user)
 
     # 批量查询所有 REJECTED 项目的前一个状态，避免 N+1 查询
     rejected_ids = [row.id for row in rows if row.status == ProjectPoolStatus.REJECTED]
@@ -93,6 +98,8 @@ def import_excel(
     try:
         rows = parse_project_pool_excel(content)
     except ValueError as exc:
+        task.status = "FAILED"
+        task.errors = str(exc).splitlines()
         raise BusinessException(BAD_REQUEST, str(exc)) from exc
     imported_count = 0
     try:
@@ -111,6 +118,13 @@ def import_excel(
         raise
     task.imported_count = imported_count
     return success(task, msg="导入成功")
+
+
+@router.get("/import/template", response_model=ApiResponse[dict[str, str]])
+def import_template(
+    _: User = Depends(require_permission("workover_project_pool:import")),
+) -> ApiResponse[dict[str, str]]:
+    return success(export_project_pool_template(), msg="模板生成成功")
 
 
 @router.get("/export/all", response_model=ApiResponse[dict[str, str]])
@@ -209,16 +223,23 @@ async def patch_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("workover_project_pool:approve")),
 ) -> ApiResponse[WorkoverProjectPoolOut]:
-    project = patch_project_status(
+    action = ApprovalActionCode.REJECT if payload.status == ProjectPoolStatus.REJECTED else ApprovalActionCode.APPROVE
+    current_project = get_project_pool(db, project_id)
+    if current_project.status == ProjectPoolStatus.REJECTED and payload.status in {
+        ProjectPoolStatus.PENDING_GEOLOGY_VERIFY,
+        ProjectPoolStatus.PENDING_PROCESS_VERIFY,
+    }:
+        action = ApprovalActionCode.RESUBMIT
+    project = process_workover_project_approval(
         db,
         project_id,
-        payload.status,
+        ApprovalDecision(action=action, comment=payload.comment),
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
-        comment=payload.comment,
         geology_verified_daily_oil=payload.geology_verified_daily_oil,
         process_well_condition=payload.process_well_condition,
         process_can_workover=payload.process_can_workover,
+        current_user=current_user,
     )
     await push_status_changed(
         {

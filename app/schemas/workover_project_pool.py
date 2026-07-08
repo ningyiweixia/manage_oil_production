@@ -27,6 +27,38 @@ class MeasuresPayload(BaseModel):
         return value
 
 
+class WorkoverAttachment(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    url: str = Field(min_length=1)
+    content_type: str = Field(min_length=1, max_length=128)
+    size: int = Field(ge=0)
+    category: str = Field(min_length=1, max_length=64)
+    uploaded_by: str | None = Field(default=None, max_length=64)
+    uploaded_at: datetime | None = None
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        if value.startswith(("http://", "https://", "data:image/", "/")):
+            return value
+        raise ValueError("attachment url must be http(s), data:image, or absolute storage path")
+
+    @field_validator("content_type")
+    @classmethod
+    def validate_content_type(cls, value: str) -> str:
+        allowed = {
+            "image/jpeg",
+            "image/png",
+            "image/gif",
+            "image/webp",
+            "image/bmp",
+            "application/pdf",
+        }
+        if value not in allowed:
+            raise ValueError(f"content_type must be one of {sorted(allowed)}")
+        return value
+
+
 class WorkoverProjectPoolBase(BaseModel):
     well_no: str = Field(min_length=1, max_length=64)
     well_name: str | None = Field(default=None, max_length=128)
@@ -41,9 +73,44 @@ class WorkoverProjectPoolBase(BaseModel):
     initiator_phone: str | None = Field(default=None, max_length=32)
     production_priority: int = Field(default=0, ge=0)
     reason: str | None = None
+    reason_category: str | None = Field(default=None, max_length=64)
+    completeness_status: str = Field(default="INCOMPLETE", max_length=32)
+    data_source: str = Field(default="manual", max_length=32)
+    report_batch: str | None = Field(default=None, max_length=64)
+    photo_requirement: str | None = Field(default=None, max_length=255)
+    rejection_supplement: str | None = None
+    is_duplicate_well: bool = False
+    related_project_ids: list[int] = Field(default_factory=list)
     measures_jsonb: MeasuresPayload = Field(default_factory=MeasuresPayload)
     photo_urls: list[str] = Field(default_factory=list)
+    attachments: list[WorkoverAttachment] = Field(default_factory=list)
     remark: str | None = None
+
+    @field_validator("initiator_phone")
+    @classmethod
+    def validate_initiator_phone(cls, value: str | None) -> str | None:
+        if not value:
+            return value
+        normalized = value.strip()
+        if not normalized.replace("-", "").replace(" ", "").isdigit() or len(normalized.replace("-", "").replace(" ", "")) < 7:
+            raise ValueError("initiator_phone must be a valid phone number")
+        return normalized
+
+    @field_validator("completeness_status")
+    @classmethod
+    def validate_completeness_status(cls, value: str) -> str:
+        allowed = {"INCOMPLETE", "COMPLETE", "NEEDS_SUPPLEMENT"}
+        if value not in allowed:
+            raise ValueError(f"completeness_status must be one of {sorted(allowed)}")
+        return value
+
+    @field_validator("data_source")
+    @classmethod
+    def validate_data_source(cls, value: str) -> str:
+        allowed = {"manual", "excel", "external"}
+        if value not in allowed:
+            raise ValueError(f"data_source must be one of {sorted(allowed)}")
+        return value
 
 
 class WorkoverProjectPoolCreate(WorkoverProjectPoolBase):
@@ -145,8 +212,17 @@ class WorkoverProjectPoolOut(BaseModel):
     process_verified_at: datetime | None = None
     status: ProjectPoolStatus
     reason: str | None = None
+    reason_category: str | None = None
+    completeness_status: str = "INCOMPLETE"
+    data_source: str = "manual"
+    report_batch: str | None = None
+    photo_requirement: str | None = None
+    rejection_supplement: str | None = None
+    is_duplicate_well: bool = False
+    related_project_ids: list[int] = []
     measures_jsonb: dict[str, Any]
     photo_urls: list[str] = []
+    attachments: list[WorkoverAttachment] = []
     remark: str | None = None
     created_by_id: int | None = None
     created_at: datetime
@@ -161,3 +237,4 @@ class ImportTaskOut(BaseModel):
     status: str
     imported_count: int = 0
     message: str | None = None
+    errors: list[str] = Field(default_factory=list)

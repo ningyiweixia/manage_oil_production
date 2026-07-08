@@ -143,6 +143,7 @@ class PermissionOut(BaseModel):
 
 class OperationLogOut(BaseModel):
     id: int
+    trace_id: str | None = None
     user_id: int | None = None
     username: str | None = None
     ip_address: str | None = None
@@ -154,6 +155,22 @@ class OperationLogOut(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class SupportMetricOut(BaseModel):
+    name: str
+    status: str
+    value: str | int | float | None = None
+    description: str | None = None
+
+
+class SystemSupportOverviewOut(BaseModel):
+    runtime_monitoring: list[SupportMetricOut] = []
+    security_controls: list[SupportMetricOut] = []
+    audit_traceability: list[SupportMetricOut] = []
+    backup_recovery: list[SupportMetricOut] = []
+    message_alerts: list[SupportMetricOut] = []
+    data_scope: list[SupportMetricOut] = []
 
 
 class ApprovalLogOut(BaseModel):

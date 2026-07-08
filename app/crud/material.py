@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import BusinessException
 from app.core.status_codes import BAD_REQUEST, CONFLICT
 from app.models.material import MaterialRequirement, MaterialRequirementStatus
+from app.models.workover import WorkoverOperationSheet
 from app.schemas.material import MaterialRequirementCreate, MaterialRequirementQuery, MaterialRequirementUpdate
 
 BUSINESS_TYPE = "material_requirement"
@@ -20,6 +21,15 @@ ALLOWED_STATUS_TRANSITIONS: dict[MaterialRequirementStatus, set[MaterialRequirem
     MaterialRequirementStatus.USED: set(),
     MaterialRequirementStatus.CANCELED: set(),
 }
+
+MATERIAL_STATUS_ORDER: tuple[MaterialRequirementStatus, ...] = (
+    MaterialRequirementStatus.PENDING,
+    MaterialRequirementStatus.APPROVED,
+    MaterialRequirementStatus.PLANNED,
+    MaterialRequirementStatus.DELIVERED,
+    MaterialRequirementStatus.ARRIVED,
+    MaterialRequirementStatus.USED,
+)
 
 
 def _snapshot(obj: MaterialRequirement) -> dict[str, Any]:
@@ -61,6 +71,61 @@ def _apply_filters(stmt: Select[tuple[MaterialRequirement]], query: MaterialRequ
     return stmt
 
 
+def _normalize_status(value: MaterialRequirementStatus | str) -> MaterialRequirementStatus:
+    return value if isinstance(value, MaterialRequirementStatus) else MaterialRequirementStatus(value)
+
+
+def _material_rollup_status(items: list[MaterialRequirement]) -> MaterialRequirementStatus | None:
+    if not items:
+        return None
+    active_statuses = [
+        _normalize_status(item.status)
+        for item in items
+        if _normalize_status(item.status) != MaterialRequirementStatus.CANCELED
+    ]
+    if not active_statuses:
+        return MaterialRequirementStatus.CANCELED
+    if all(status == MaterialRequirementStatus.USED for status in active_statuses):
+        return MaterialRequirementStatus.USED
+    for status in reversed(MATERIAL_STATUS_ORDER[:-1]):
+        if status in active_statuses:
+            return status
+    return MaterialRequirementStatus.PENDING
+
+
+def apply_material_rollup_to_operation_sheet(
+    sheet: WorkoverOperationSheet,
+    items: list[MaterialRequirement],
+) -> None:
+    counts = {status.value: 0 for status in MaterialRequirementStatus}
+    for item in items:
+        counts[_normalize_status(item.status).value] += 1
+
+    rollup_status = _material_rollup_status(items)
+    detail = dict(sheet.progress_detail or {})
+    detail["material"] = {
+        "status": rollup_status.value if rollup_status else "NONE",
+        "total": len(items),
+        "counts": counts,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    sheet.progress_detail = detail
+
+
+def sync_operation_sheet_material_rollup(db: Session, operation_sheet_id: int | None) -> None:
+    if not operation_sheet_id:
+        return
+    sheet = db.get(WorkoverOperationSheet, operation_sheet_id)
+    if sheet is None:
+        return
+    items = list(
+        db.scalars(
+            select(MaterialRequirement).where(MaterialRequirement.operation_sheet_id == operation_sheet_id)
+        ).all()
+    )
+    apply_material_rollup_to_operation_sheet(sheet, items)
+
+
 def list_material_requirements(db: Session, query: MaterialRequirementQuery) -> tuple[list[MaterialRequirement], int]:
     base_stmt = _apply_filters(select(MaterialRequirement), query)
     total = db.scalar(select(func.count()).select_from(base_stmt.subquery())) or 0
@@ -86,6 +151,8 @@ def create_material_requirement(
     data = payload.model_dump(mode="json")
     obj = MaterialRequirement(**data)
     db.add(obj)
+    db.flush()
+    sync_operation_sheet_material_rollup(db, obj.operation_sheet_id)
     db.commit()
     db.refresh(obj)
     return obj
@@ -100,8 +167,7 @@ def update_material_requirement(
     data = payload.model_dump(mode="json", exclude_unset=True)
     for key, value in data.items():
         if key == "status" and value is not None:
-            from app.models.material import MaterialRequirementStatus as MRS
-            target = MRS(value)
+            target = _normalize_status(value)
             _ensure_status_transition(obj.status, target)
             # Auto-set timestamps on status transitions
             now = datetime.now(timezone.utc)
@@ -112,6 +178,8 @@ def update_material_requirement(
             elif target == MaterialRequirementStatus.USED:
                 obj.used_at = now
         setattr(obj, key, value)
+    db.flush()
+    sync_operation_sheet_material_rollup(db, obj.operation_sheet_id)
     db.commit()
     db.refresh(obj)
     return obj
@@ -124,7 +192,10 @@ def delete_material_requirement(
     obj = get_material_requirement(db, req_id)
     if obj.status not in {MaterialRequirementStatus.PENDING, MaterialRequirementStatus.CANCELED}:
         raise BusinessException(CONFLICT, "只有待处理或已取消的物料需求才能删除")
+    operation_sheet_id = obj.operation_sheet_id
     db.delete(obj)
+    db.flush()
+    sync_operation_sheet_material_rollup(db, operation_sheet_id)
     db.commit()
 
 

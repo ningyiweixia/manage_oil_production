@@ -52,6 +52,15 @@ def create_item(
     return success(MaterialRequirementOut.model_validate(obj), msg="物料需求创建成功")
 
 
+@router.get("/analytics/summary", response_model=ApiResponse[dict])
+def analytics(
+    well_no: str | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("material:read")),
+) -> ApiResponse[dict]:
+    return success(get_material_analytics(db, well_no))
+
+
 @router.get("/{req_id}", response_model=ApiResponse[MaterialRequirementOut])
 def detail(
     req_id: int,
@@ -82,10 +91,3 @@ def delete_item(
     return success(msg="物料需求已删除")
 
 
-@router.get("/analytics/summary", response_model=ApiResponse[dict])
-def analytics(
-    well_no: str | None = None,
-    db: Session = Depends(get_db),
-    _: User = Depends(require_permission("material:read")),
-) -> ApiResponse[dict]:
-    return success(get_material_analytics(db, well_no))

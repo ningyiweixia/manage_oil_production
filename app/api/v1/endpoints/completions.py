@@ -52,6 +52,14 @@ def create_item(
     return success(WellCompletionOut.model_validate(obj), msg="完井记录创建成功")
 
 
+@router.get("/analytics/summary", response_model=ApiResponse[dict])
+def analytics(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("completion:read")),
+) -> ApiResponse[dict]:
+    return success(get_completion_analytics(db))
+
+
 @router.get("/{record_id}", response_model=ApiResponse[WellCompletionOut])
 def detail(
     record_id: int,
@@ -82,9 +90,3 @@ def delete_item(
     return success(msg="完井记录已删除")
 
 
-@router.get("/analytics/summary", response_model=ApiResponse[dict])
-def analytics(
-    db: Session = Depends(get_db),
-    _: User = Depends(require_permission("completion:read")),
-) -> ApiResponse[dict]:
-    return success(get_completion_analytics(db))

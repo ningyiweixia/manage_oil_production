@@ -68,6 +68,19 @@ class WorkoverProjectPool(TimestampMixin, Base):
         comment="项目状态",
     )
     reason: Mapped[str | None] = mapped_column(Text, comment="上修原因")
+    reason_category: Mapped[str | None] = mapped_column(String(64), comment="提报原因分类")
+    completeness_status: Mapped[str] = mapped_column(String(32), default="INCOMPLETE", nullable=False, comment="资料完整性状态")
+    data_source: Mapped[str] = mapped_column(String(32), default="manual", nullable=False, comment="数据来源")
+    report_batch: Mapped[str | None] = mapped_column(String(64), comment="提报批次")
+    photo_requirement: Mapped[str | None] = mapped_column(String(255), comment="照片资料要求")
+    rejection_supplement: Mapped[str | None] = mapped_column(Text, comment="退回补充材料说明")
+    is_duplicate_well: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="是否重复井号提报")
+    related_project_ids: Mapped[list[int]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        comment="关联历史项目ID列表",
+    )
     measures_jsonb: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         nullable=False,
@@ -79,6 +92,12 @@ class WorkoverProjectPool(TimestampMixin, Base):
         nullable=False,
         default=list,
         comment="照片附件URL列表JSONB",
+    )
+    attachments: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        comment="附件元数据列表JSONB",
     )
     remark: Mapped[str | None] = mapped_column(Text, comment="备注")
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="审批通过时间")

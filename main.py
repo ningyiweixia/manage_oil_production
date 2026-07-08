@@ -18,7 +18,8 @@ def create_app() -> FastAPI:
         allow_origins=settings.cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "X-Trace-Id"],
+        expose_headers=["X-Trace-Id"],
     )
     app.add_middleware(OperationLogMiddleware)
     app.add_middleware(AuthMiddleware)

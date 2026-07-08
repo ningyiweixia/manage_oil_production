@@ -130,6 +130,7 @@ class OperationLog(TimestampMixin, Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="Operation log ID")
+    trace_id: Mapped[str | None] = mapped_column(String(64), index=True, comment="Request trace ID")
     user_id: Mapped[int | None] = mapped_column(ForeignKey("sys_user.id", ondelete="SET NULL"), comment="User ID")
     username: Mapped[str | None] = mapped_column(String(64), comment="Username snapshot")
     ip_address: Mapped[str | None] = mapped_column(String(64), comment="Client IP")

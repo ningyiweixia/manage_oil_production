@@ -1,5 +1,7 @@
 from collections.abc import Sequence
 
+from datetime import datetime
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -60,11 +62,35 @@ def list_operation_logs(db: Session, limit: int = 100) -> list[OperationLog]:
     return list(db.scalars(select(OperationLog).order_by(OperationLog.id.desc()).limit(limit)).all())
 
 
-def paginate_operation_logs(db: Session, page: int = 1, page_size: int = 20) -> tuple[list[OperationLog], int]:
-    total = db.scalar(select(func.count()).select_from(select(OperationLog).subquery())) or 0
+def paginate_operation_logs(
+    db: Session,
+    page: int = 1,
+    page_size: int = 20,
+    *,
+    trace_id: str | None = None,
+    method: str | None = None,
+    path: str | None = None,
+    status_code: int | None = None,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+) -> tuple[list[OperationLog], int]:
+    stmt = select(OperationLog)
+    if trace_id:
+        stmt = stmt.where(OperationLog.trace_id == trace_id)
+    if method:
+        stmt = stmt.where(OperationLog.method == method.upper())
+    if path:
+        stmt = stmt.where(OperationLog.path.ilike(f"%{path}%"))
+    if status_code is not None:
+        stmt = stmt.where(OperationLog.status_code == status_code)
+    if start_at:
+        stmt = stmt.where(OperationLog.created_at >= start_at)
+    if end_at:
+        stmt = stmt.where(OperationLog.created_at <= end_at)
+
+    total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
     rows = db.scalars(
-        select(OperationLog)
-        .order_by(OperationLog.id.desc())
+        stmt.order_by(OperationLog.id.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()

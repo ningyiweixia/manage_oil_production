@@ -51,6 +51,7 @@ export interface MenuItem {
 
 export interface OperationLogItem {
   id: number
+  trace_id?: string | null
   user_id?: number | null
   username?: string | null
   ip_address?: string | null
@@ -60,6 +61,22 @@ export interface OperationLogItem {
   status_code?: number | null
   response_message?: string | null
   created_at: string
+}
+
+export interface SupportMetric {
+  name: string
+  status: string
+  value?: string | number | null
+  description?: string | null
+}
+
+export interface SystemSupportOverview {
+  runtime_monitoring: SupportMetric[]
+  security_controls: SupportMetric[]
+  audit_traceability: SupportMetric[]
+  backup_recovery: SupportMetric[]
+  message_alerts: SupportMetric[]
+  data_scope: SupportMetric[]
 }
 
 export function listUsers() {
@@ -107,6 +124,19 @@ export function assignRolePermissions(id: number, permissionIds: number[]) {
   return unwrap<RoleItem>(http.patch(`/roles/${id}/permissions`, { ids: permissionIds }))
 }
 
-export function listOperationLogs(query: { page?: number; page_size?: number } = {}) {
-  return unwrap<PageResult<OperationLogItem>>(http.get('/operation-logs', { params: query }))
+export function listOperationLogs(params: {
+  page?: number
+  page_size?: number
+  trace_id?: string
+  method?: string
+  path?: string
+  status_code?: number
+  start_at?: string
+  end_at?: string
+} = {}) {
+  return unwrap<PageResult<OperationLogItem>>(http.get('/operation-logs', { params }))
+}
+
+export function getSystemSupportOverview() {
+  return unwrap<SystemSupportOverview>(http.get('/system/support-overview'))
 }

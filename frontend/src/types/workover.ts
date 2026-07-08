@@ -14,6 +14,16 @@ export interface WorkoverMeasure {
   estimated_cost?: number
 }
 
+export interface WorkoverAttachment {
+  name: string
+  url: string
+  content_type: string
+  size: number
+  category: string
+  uploaded_by?: string
+  uploaded_at?: string
+}
+
 export interface WorkoverProject {
   id: number
   well_no: string
@@ -35,8 +45,17 @@ export interface WorkoverProject {
   process_verified_at?: string | null
   status: ProjectPoolStatus
   reason?: string
+  reason_category?: string
+  completeness_status?: 'INCOMPLETE' | 'COMPLETE' | 'NEEDS_SUPPLEMENT'
+  data_source?: 'manual' | 'excel' | 'external'
+  report_batch?: string
+  photo_requirement?: string
+  rejection_supplement?: string
+  is_duplicate_well?: boolean
+  related_project_ids?: number[]
   measures_jsonb: { measures?: WorkoverMeasure[] }
   photo_urls?: string[]
+  attachments?: WorkoverAttachment[]
   remark?: string
   created_by_id?: number
   created_at: string

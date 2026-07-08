@@ -17,7 +17,10 @@ MENU_DEFINITIONS = [
     ("system_permissions", "system", "权限管理", "system_permissions", "/system/permissions", "system/permissions/index", "key", 15),
     ("system_dictionaries", "system", "数据字典", "system_dictionaries", "/system/dictionaries", "system/dictionaries/index", "list", 16),
     ("system_logs", "system", "操作日志", "system_logs", "/system/operation-logs", "system/logs/index", "file-text", 17),
+    ("system_support", "system", "基础支撑", "system_support", "/system/support", "system/support/index", "monitor", 18),
     ("workover_project_pool", None, "项目池台账", "workover_project_pool", "/workover/project-pools", "workover/project-pools/index", "table", 20),
+    ("workover_operation", None, "修井运行管理", "workover_operation", "/workover/operation-sheets", "workover/operation-sheets/index", "document", 22),
+    ("approval_workbench", None, "审核审批工作台", "approval", "/approval", "approval/index", "tickets", 21),
     ("analytics", None, "统计分析", "analytics", "/dashboard", "analytics/dashboard", "trend-charts", 25),
     ("contractor", None, "承包商管理", "contractor", "/contractor", "Layout", "team", 30),
     ("contractor_capacity", "contractor", "运力报备", "contractor_capacity", "/contractor/capacity", "contractor/capacity/index", "list", 31),
@@ -53,6 +56,7 @@ PERMISSION_DEFINITIONS = [
     ("system:operation_log:read", "查看操作日志", "/api/v1/operation-logs", "GET"),
     ("system:dictionary:read", "查看数据字典", "/api/v1/dictionaries", "GET"),
     ("system:dictionary:manage", "维护数据字典", "/api/v1/dictionaries", "POST"),
+    ("system:support:read", "查看基础支撑", "/api/v1/system/support-overview", "GET"),
     ("workover_project_pool:read", "查看上修项目池", "/api/v1/workover-project-pools", "GET"),
     ("workover_project_pool:create", "新增上修项目池", "/api/v1/workover-project-pools", "POST"),
     ("workover_project_pool:update", "修改上修项目池", "/api/v1/workover-project-pools/{project_id}", "PUT"),
@@ -62,6 +66,13 @@ PERMISSION_DEFINITIONS = [
     ("workover_project_pool:import", "导入上修项目池", "/api/v1/workover-project-pools/import", "POST"),
     ("workover_project_pool:export", "导出上修项目池", "/api/v1/workover-project-pools/export/all", "GET"),
     ("approval_log:read", "查看审批日志", "/api/v1/approval-logs", "GET"),
+    ("approval:task:read", "查看审批待办", "/api/v1/approvals/tasks", "GET"),
+    ("approval:process", "处理审批", "/api/v1/approvals/workover-project-pools/{project_id}", "PATCH"),
+    ("approval:timeline:read", "查看审批轨迹", "/api/v1/approvals/{business_type}/{business_id}/timeline", "GET"),
+    ("workover_operation:read", "查看修井运行管理", "/api/v1/workover-operations/sheets", "GET"),
+    ("workover_operation:create", "创建修井运行表", "/api/v1/workover-operations/sheets", "POST"),
+    ("workover_operation:update", "更新修井运行进度", "/api/v1/workover-operations/sheets/{sheet_id}/progress", "PATCH"),
+    ("workover_operation:dashboard", "查看修井运行看板", "/api/v1/workover-operations/dashboard", "GET"),
     # 承包商管理权限
     ("contractor:read", "查看承包商运力", "/api/v1/contractors", "GET"),
     ("contractor:create", "报承包商运力", "/api/v1/contractors", "POST"),
@@ -84,6 +95,8 @@ PERMISSION_DEFINITIONS = [
     ("completion:create", "创建完井记录", "/api/v1/well-completions", "POST"),
     ("completion:update", "更新完井记录", "/api/v1/well-completions/{record_id}", "PUT"),
     ("completion:delete", "删除完井记录", "/api/v1/well-completions/{record_id}", "DELETE"),
+    ("report:read", "查看统计报表", "/api/v1/reports", "GET"),
+    ("report:export", "导出统计报表", "/api/v1/reports", "GET"),
 ]
 
 ROLE_DEFINITIONS = [
@@ -91,6 +104,9 @@ ROLE_DEFINITIONS = [
     ("project_pool_admin", "项目池管理员", "负责上修项目池台账维护、提报和导入导出"),
     ("base_entry_clerk", "基层录入员", "负责基层单位上修项目池数据录入"),
     ("business_reviewer", "业务审核员", "负责地质所/工艺所审核"),
+    ("geology_reviewer", "地质审核员", "负责地质/产量/油藏核实"),
+    ("process_reviewer", "工艺审核员", "负责井况/措施可行性核实"),
+    ("production_command_reviewer", "生产指挥审核员", "负责生产指挥中心核实"),
     ("contractor_operator", "承包商操作员", "负责队伍运力提报"),
     ("ops_admin", "运维管理员", "负责系统配置与审计"),
 ]
@@ -108,9 +124,16 @@ ROLE_PERMISSION_CODES = {
         "workover_project_pool:import",
         "workover_project_pool:export",
         "approval_log:read",
+        "approval:timeline:read",
+        "workover_operation:read",
+        "workover_operation:create",
+        "workover_operation:update",
+        "workover_operation:dashboard",
         "operation-sheet:read",
         "material:read",
         "completion:read",
+        "report:read",
+        "report:export",
     },
     "base_entry_clerk": {
         "system:dictionary:read",
@@ -124,6 +147,12 @@ ROLE_PERMISSION_CODES = {
         "workover_project_pool:read",
         "workover_project_pool:approve",
         "approval_log:read",
+        "approval:task:read",
+        "approval:process",
+        "approval:timeline:read",
+        "workover_operation:read",
+        "workover_operation:update",
+        "workover_operation:dashboard",
         "operation-sheet:read",
         "operation-sheet:dispatch",
         "a5:sso",
@@ -131,6 +160,44 @@ ROLE_PERMISSION_CODES = {
         "material:read",
         "completion:read",
         "completion:create",
+        "report:read",
+        "report:export",
+    },
+    "geology_reviewer": {
+        "system:dictionary:read",
+        "workover_project_pool:read",
+        "approval_log:read",
+        "approval:task:read",
+        "approval:process",
+        "approval:timeline:read",
+        "workover_operation:read",
+        "workover_operation:dashboard",
+        "operation-sheet:read",
+        "report:read",
+    },
+    "process_reviewer": {
+        "system:dictionary:read",
+        "workover_project_pool:read",
+        "approval_log:read",
+        "approval:task:read",
+        "approval:process",
+        "approval:timeline:read",
+        "workover_operation:read",
+        "workover_operation:dashboard",
+        "operation-sheet:read",
+        "report:read",
+    },
+    "production_command_reviewer": {
+        "system:dictionary:read",
+        "workover_project_pool:read",
+        "approval_log:read",
+        "approval:task:read",
+        "approval:process",
+        "approval:timeline:read",
+        "workover_operation:read",
+        "workover_operation:dashboard",
+        "operation-sheet:read",
+        "report:read",
     },
     "contractor_operator": {
         "system:dictionary:read",
@@ -194,6 +261,7 @@ DICTIONARY_DEFINITIONS = [
     ("business_type", "上修项目池", "workover_project_pool"),
     ("business_type", "承包商运力", "contractor_capacity"),
     ("business_type", "修井运行表", "workover_operation_sheet"),
+    ("business_type", "工程设计文档", "engineering_design_doc"),
     ("business_type", "A5 系统集成", "a5_integration"),
     ("production_priority", "低优先级", "1"),
     ("production_priority", "中优先级", "3"),
@@ -212,6 +280,7 @@ DICTIONARY_DEFINITIONS = [
     ("business_status_code", "请求过于频繁", "42900"),
     ("business_status_code", "数据库不可用", "50300"),
     ("business_status_code", "A5 系统连接失败", "60001"),
+    ("business_status_code", "防偏磨系统连接失败", "60002"),
     ("system_role", "超级管理员", "super_admin"),
     ("system_role", "项目池管理员", "project_pool_admin"),
     ("system_role", "基层录入员", "base_entry_clerk"),
@@ -225,9 +294,16 @@ DICTIONARY_DEFINITIONS = [
     ("system_menu", "权限管理", "system_permissions"),
     ("system_menu", "数据字典", "system_dictionaries"),
     ("system_menu", "操作日志", "system_logs"),
+    ("system_menu", "基础支撑", "system_support"),
     ("system_menu", "项目池台账", "workover_project_pool"),
+    ("system_menu", "审核审批工作台", "approval"),
+    ("system_menu", "修井运行管理", "workover_operation"),
     ("system_menu", "统计分析", "analytics"),
     ("system_menu", "承包商管理", "contractor"),
+    ("system_menu", "物料管理", "material"),
+    ("system_menu", "物料需求", "material_requirements"),
+    ("system_menu", "物料配送", "material_delivery"),
+    ("system_menu", "完井台账", "completion"),
     ("system_menu", "A5 系统集成", "a5"),
     ("material_status", "待处理", "PENDING"),
     ("material_status", "已审核", "APPROVED"),
@@ -239,6 +315,8 @@ DICTIONARY_DEFINITIONS = [
     ("material_requirement_type", "正常需求", "NORMAL"),
     ("material_requirement_type", "紧急需求", "EMERGENCY"),
     ("external_system", "A5 系统", "a5"),
+    ("external_system", "防偏磨系统", "fpm"),
+    ("external_system", "MinIO 对象存储", "minio"),
     ("external_system", "企业微信告警", "wecom_alert"),
 ]
 
@@ -257,14 +335,23 @@ MEASURE_TYPE_VALUE_ALIASES = {
 STALE_DICTIONARY_ITEMS = [
     ("system_menu", "workover"),
     ("system_menu", "engineering"),
+    ("system_menu", "engineering_designs"),
     ("business_type", "engineering_design_doc"),
     ("business_status_code", "60002"),
     ("external_system", "fpm"),
     ("external_system", "minio"),
 ]
 
-STALE_MENU_ROUTE_NAMES = {"workover", "engineering", "engineering_designs"}
-STALE_PERMISSION_CODES = {"engineering:read", "engineering:generate", "engineering:delete"}
+STALE_MENU_ROUTE_NAMES = [
+    "engineering",
+    "engineering_designs",
+]
+
+STALE_PERMISSION_CODES = [
+    "engineering:read",
+    "engineering:generate",
+    "engineering:delete",
+]
 
 
 def seed() -> None:
@@ -285,10 +372,15 @@ def seed() -> None:
             menu.is_active = True
             menus_by_key[key] = menu
 
-        stale_menus = db.scalars(select(Menu).where(Menu.route_name.in_(STALE_MENU_ROUTE_NAMES))).all()
-        for menu in stale_menus:
-            menu.roles.clear()
-            db.delete(menu)
+        deprecated_workover_menu = db.scalar(select(Menu).where(Menu.route_name == "workover"))
+        if deprecated_workover_menu is not None:
+            deprecated_workover_menu.roles.clear()
+            db.delete(deprecated_workover_menu)
+        for route_name in STALE_MENU_ROUTE_NAMES:
+            stale_menu = db.scalar(select(Menu).where(Menu.route_name == route_name))
+            if stale_menu is not None:
+                stale_menu.roles.clear()
+                db.delete(stale_menu)
 
         permissions_by_code: dict[str, Permission] = {}
         for code, name, path, method in PERMISSION_DEFINITIONS:
@@ -301,10 +393,11 @@ def seed() -> None:
             permission.method = method
             permission.is_active = True
             permissions_by_code[code] = permission
-        stale_permissions = db.scalars(select(Permission).where(Permission.code.in_(STALE_PERMISSION_CODES))).all()
-        for permission in stale_permissions:
-            permission.roles.clear()
-            db.delete(permission)
+        for code in STALE_PERMISSION_CODES:
+            stale_permission = db.scalar(select(Permission).where(Permission.code == code))
+            if stale_permission is not None:
+                stale_permission.roles.clear()
+                db.delete(stale_permission)
 
         for dict_type, item_label, item_value in DICTIONARY_DEFINITIONS:
             item = db.scalar(
@@ -369,15 +462,21 @@ def seed() -> None:
 
         roles_by_code["super_admin"].menus = list(menus_by_key.values())
         roles_by_code["ops_admin"].menus = list(menus_by_key.values())
-        roles_by_code["project_pool_admin"].menus = [menus_by_key["workover_project_pool"], menus_by_key["analytics"], menus_by_key["material"], menus_by_key["material_requirements"], menus_by_key["completion"]]
+        roles_by_code["project_pool_admin"].menus = [menus_by_key["workover_project_pool"], menus_by_key["approval_workbench"], menus_by_key["workover_operation"], menus_by_key["analytics"], menus_by_key["material"], menus_by_key["material_requirements"], menus_by_key["completion"]]
         roles_by_code["base_entry_clerk"].menus = [menus_by_key["workover_project_pool"]]
         roles_by_code["business_reviewer"].menus = [
+            menus_by_key["approval_workbench"],
             menus_by_key["workover_project_pool"],
+            menus_by_key["workover_operation"],
             menus_by_key["contractor"], menus_by_key["contractor_dispatch"], menus_by_key["contractor_sheets"],
             menus_by_key["analytics"], menus_by_key["a5"],
             menus_by_key["material"], menus_by_key["material_requirements"],
             menus_by_key["completion"],
         ]
+        reviewer_menus = [menus_by_key["approval_workbench"], menus_by_key["workover_project_pool"], menus_by_key["workover_operation"], menus_by_key["analytics"]]
+        roles_by_code["geology_reviewer"].menus = reviewer_menus
+        roles_by_code["process_reviewer"].menus = reviewer_menus
+        roles_by_code["production_command_reviewer"].menus = reviewer_menus
         roles_by_code["contractor_operator"].menus = [
             menus_by_key["contractor"], menus_by_key["contractor_capacity"],
             menus_by_key["material"], menus_by_key["material_requirements"], menus_by_key["material_delivery"],
