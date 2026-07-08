@@ -1,5 +1,55 @@
 # Local Startup Log
 
+## 2026-07-08 PostgreSQL local startup method on macOS
+
+This repository now includes a tracked helper for the local PostgreSQL workflow:
+
+```bash
+./scripts/start-local-postgres.sh
+```
+
+What it does:
+- creates `.venv` with Python 3.12 when available
+- installs backend dependencies from `requirements.txt`
+- installs frontend dependencies when `frontend/node_modules` is missing
+- creates the local PostgreSQL database when missing
+- runs `alembic upgrade head`
+- seeds menus, roles, permissions, dictionaries, and the default admin user
+- starts backend on `http://127.0.0.1:8000`
+- starts frontend on `http://127.0.0.1:5173`
+
+Default PostgreSQL connection:
+
+```text
+host: 127.0.0.1
+port: 5432
+user: current OS user
+database: manage_factory
+password: empty
+```
+
+Override with environment variables when needed:
+
+```bash
+POSTGRES_USER=postgres POSTGRES_PASSWORD=your-password ./scripts/start-local-postgres.sh
+```
+
+Stop processes started by the helper:
+
+```bash
+./scripts/stop-local.sh
+```
+
+Verified URLs:
+- Backend: `http://127.0.0.1:8000`
+- Backend health: `http://127.0.0.1:8000/health`
+- Backend docs: `http://127.0.0.1:8000/docs`
+- Frontend: `http://127.0.0.1:5173`
+
+Verified account:
+- Username: `admin`
+- Password: `ChangeMe_123!`
+
 ## 2026-06-29 verified startup method
 
 This project should prefer the following local startup method on Windows.

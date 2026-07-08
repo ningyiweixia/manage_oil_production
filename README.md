@@ -148,12 +148,47 @@ manage_oil_production/
 
 ### 后端
 
+推荐使用仓库内的 PostgreSQL 本地启动脚本一次性准备并启动前后端：
+
+```bash
+./scripts/start-local-postgres.sh
+```
+
+脚本会自动创建 `.venv`、安装依赖、创建/复用本机 PostgreSQL 数据库、执行 Alembic 迁移、写入初始数据，并启动：
+
+- 后端：`http://127.0.0.1:8000`
+- 前端：`http://127.0.0.1:5173`
+
+默认连接本机 PostgreSQL：
+
+```env
+POSTGRES_SERVER=127.0.0.1
+POSTGRES_PORT=5432
+POSTGRES_USER=<当前系统用户>
+POSTGRES_PASSWORD=
+POSTGRES_DB=manage_factory
+```
+
+如需指定账号密码：
+
+```bash
+POSTGRES_USER=postgres POSTGRES_PASSWORD=<your-password> ./scripts/start-local-postgres.sh
+```
+
+停止脚本启动的本地服务：
+
+```bash
+./scripts/stop-local.sh
+```
+
+也可以手动分步启动后端：
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-# 数据库迁移（PostgreSQL 或 SQLite 均可）
+# 数据库迁移（推荐 PostgreSQL）
 alembic upgrade head
 python -m app.db.seed
 
