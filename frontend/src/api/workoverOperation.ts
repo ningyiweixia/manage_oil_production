@@ -16,6 +16,7 @@ export interface OperationDashboard {
   anomaly_count: number
   runtime_focus: {
     waiting: number
+    dispatched?: number
     working: number
     finished: number
     material_total: number

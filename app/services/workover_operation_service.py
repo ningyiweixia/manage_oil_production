@@ -82,10 +82,30 @@ def build_closed_loop_status(
 def enrich_workover_operation_sheet(db: Session, sheet: WorkoverOperationSheet) -> dict[str, Any]:
     material_status = _material_status(sheet)
     completion_status = _completion_status(db, sheet.id)
+    project = sheet.project
+    contractor = sheet.contractor_capacity
     return {
         "id": sheet.id,
         "project_id": sheet.project_id,
+        "project_well_no": project.well_no if project else None,
+        "project": {
+            "id": project.id,
+            "well_no": project.well_no,
+            "block_name": project.block_name,
+            "territory_unit": project.territory_unit,
+            "report_unit": project.report_unit,
+            "data_source": project.data_source,
+            "measures_jsonb": project.measures_jsonb,
+            "approved_at": project.approved_at,
+        } if project else None,
         "contractor_capacity_id": sheet.contractor_capacity_id,
+        "contractor": {
+            "id": contractor.id,
+            "contractor_name": contractor.contractor_name,
+            "team_name": contractor.team_name,
+            "report_date": contractor.report_date,
+            "status": contractor.status.value if hasattr(contractor.status, "value") else contractor.status,
+        } if contractor else None,
         "operation_no": sheet.operation_no,
         "status": sheet.status.value if hasattr(sheet.status, "value") else sheet.status,
         "progress": sheet.progress,

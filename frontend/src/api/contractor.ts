@@ -1,5 +1,5 @@
 import { http, unwrap } from './http'
-import type { PageResult } from '../types/workover'
+import type { PageResult, WorkoverMeasure } from '../types/workover'
 
 export type ContractorStatus = 'AVAILABLE' | 'BUSY' | 'OFFLINE'
 export type OperationStatus = 'WAITING_DISPATCH' | 'DISPATCHED' | 'WORKING' | 'FINISHED' | 'CANCELED'
@@ -20,7 +20,24 @@ export interface OperationSheet {
   id: number
   project_id: number
   project_well_no?: string | null
+  project?: {
+    id: number
+    well_no?: string | null
+    block_name?: string | null
+    territory_unit?: string | null
+    report_unit?: string | null
+    data_source?: string | null
+    measures_jsonb?: { measures?: WorkoverMeasure[] }
+    approved_at?: string | null
+  } | null
   contractor_capacity_id: number | null
+  contractor?: {
+    id: number
+    contractor_name: string
+    team_name: string
+    report_date?: string | null
+    status?: ContractorStatus | string
+  } | null
   operation_no: string
   status: OperationStatus
   planned_start_at?: string | null
@@ -57,6 +74,11 @@ export interface OperationSheetQuery {
   status?: OperationStatus | ''
   project_id?: number
   contractor_capacity_id?: number
+  well_no?: string
+  block_name?: string
+  contractor_keyword?: string
+  start_date?: string
+  end_date?: string
 }
 
 function compact(params: object) {

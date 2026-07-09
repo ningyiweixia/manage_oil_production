@@ -1,9 +1,9 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from typing import Any
 
-from sqlalchemy import Select, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy import Select, func, or_, select
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.exceptions import BusinessException
 from app.core.redis import cache_client
@@ -79,6 +79,34 @@ def _apply_sheet_filters(stmt: Select[tuple[WorkoverOperationSheet]], query: Wor
         stmt = stmt.where(WorkoverOperationSheet.project_id == query.project_id)
     if query.contractor_capacity_id:
         stmt = stmt.where(WorkoverOperationSheet.contractor_capacity_id == query.contractor_capacity_id)
+    if query.well_no:
+        stmt = stmt.where(WorkoverProjectPool.well_no.ilike(f"%{query.well_no}%"))
+    if query.block_name:
+        stmt = stmt.where(WorkoverProjectPool.block_name.ilike(f"%{query.block_name}%"))
+    if query.contractor_keyword:
+        keyword = f"%{query.contractor_keyword}%"
+        stmt = stmt.where(
+            or_(
+                ContractorCapacity.contractor_name.ilike(keyword),
+                ContractorCapacity.team_name.ilike(keyword),
+            )
+        )
+    if query.start_date:
+        start_at = datetime.combine(query.start_date, time.min)
+        stmt = stmt.where(
+            or_(
+                WorkoverOperationSheet.planned_start_at >= start_at,
+                WorkoverOperationSheet.actual_start_at >= start_at,
+            )
+        )
+    if query.end_date:
+        end_at = datetime.combine(query.end_date, time.max)
+        stmt = stmt.where(
+            or_(
+                WorkoverOperationSheet.planned_end_at <= end_at,
+                WorkoverOperationSheet.actual_end_at <= end_at,
+            )
+        )
     return stmt
 
 
@@ -159,7 +187,16 @@ def update_contractor_capacity(
 
 
 def list_operation_sheets(db: Session, query: WorkoverOperationSheetQuery) -> tuple[list[WorkoverOperationSheet], int]:
-    base_stmt = _apply_sheet_filters(select(WorkoverOperationSheet), query)
+    base_stmt = _apply_sheet_filters(
+        select(WorkoverOperationSheet)
+        .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)
+        .outerjoin(ContractorCapacity, WorkoverOperationSheet.contractor_capacity_id == ContractorCapacity.id)
+        .options(
+            selectinload(WorkoverOperationSheet.project),
+            selectinload(WorkoverOperationSheet.contractor_capacity),
+        ),
+        query,
+    )
     total = db.scalar(select(func.count()).select_from(base_stmt.subquery())) or 0
     rows = db.scalars(
         base_stmt.order_by(WorkoverOperationSheet.created_at.desc())

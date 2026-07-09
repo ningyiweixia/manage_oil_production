@@ -1,3 +1,4 @@
+import json
 import logging
 
 from fastapi import FastAPI, Request
@@ -22,7 +23,7 @@ class BusinessException(Exception):
 def _response(code: int, msg: str, data: object | None = None, http_status: int = 200) -> JSONResponse:
     return JSONResponse(
         status_code=http_status,
-        content=ApiResponse(code=code, msg=msg, data=data).model_dump(),
+        content=json.loads(ApiResponse(code=code, msg=msg, data=data).model_dump_json()),
     )
 
 

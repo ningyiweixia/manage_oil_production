@@ -254,7 +254,8 @@ body {
 
 .workflow-strip,
 .source-summary,
-.kpi-grid {
+.kpi-grid,
+.stats-bar {
   display: grid;
   gap: 12px;
   margin-bottom: 16px;
@@ -269,9 +270,14 @@ body {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.stats-bar {
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+}
+
 .workflow-node,
 .source-summary-item,
-.kpi-card {
+.kpi-card,
+.stats-card {
   min-height: 104px;
   background: #ffffff;
   border: 1px solid #d8e0eb;
@@ -299,7 +305,8 @@ body {
 
 .workflow-node span,
 .source-summary-item span,
-.kpi-card strong {
+.kpi-card strong,
+.stats-value {
   display: block;
   font-size: 28px;
   font-weight: 800;
@@ -308,7 +315,8 @@ body {
 
 .workflow-node strong,
 .source-summary-item strong,
-.kpi-card span {
+.kpi-card span,
+.stats-label {
   display: block;
   margin-top: 6px;
   font-weight: 700;
@@ -320,6 +328,18 @@ body {
   display: block;
   margin-top: 6px;
   color: #667085;
+}
+
+.stats-value.primary {
+  color: #2f7de1;
+}
+
+.stats-value.success {
+  color: #12a182;
+}
+
+.stats-value.warn {
+  color: #e6a23c;
 }
 
 .panel-head {

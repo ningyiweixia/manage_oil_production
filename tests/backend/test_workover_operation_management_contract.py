@@ -78,14 +78,18 @@ class WorkoverOperationManagementContractTest(unittest.TestCase):
         self.assertIn("2026-07-07-phase3-operation-menu", cache_source)
 
         view_source = view.read_text(encoding="utf-8")
-        for text in ("修井运行管理", "待运行", "施工中", "已完工", "A5同步", "物料状态", "完井状态", "更新进度"):
+        for text in ("修井运行表", "总工单", "待派工", "已派工", "施工中", "已完工", "完工率", "井号", "区块", "承包商/队伍", "时间节点", "分配队伍", "更新进度"):
             self.assertIn(text, view_source)
         self.assertIn("listWorkoverOperationSheets", view_source)
         self.assertIn("getWorkoverOperationDashboard", view_source)
         self.assertIn("updateWorkoverOperationProgress", view_source)
-        self.assertIn("闭环状态", view_source)
+        self.assertIn("dispatchOperation", view_source)
+        self.assertIn("A5与闭环信息", view_source)
         self.assertIn("closed_loop_status", view_source)
-        self.assertIn("closedLoopTag", view_source)
+        self.assertNotIn('label="项目ID"', view_source)
+        self.assertNotIn('label="A5同步"', view_source)
+        self.assertNotIn('label="A5备注"', view_source)
+        self.assertNotIn('label="更新时间"', view_source)
 
         api_source = api.read_text(encoding="utf-8")
         self.assertIn("/workover-operations/sheets/", api_source)

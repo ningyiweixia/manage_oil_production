@@ -69,6 +69,11 @@ class WorkoverOperationSheetQuery(BaseModel):
     status: OperationStatus | None = None
     project_id: int | None = None
     contractor_capacity_id: int | None = None
+    well_no: str | None = None
+    block_name: str | None = None
+    contractor_keyword: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
 
 
 class WorkoverOperationSheetOut(BaseModel):

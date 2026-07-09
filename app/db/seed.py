@@ -1,11 +1,15 @@
+from datetime import date, datetime, timedelta, timezone
+
 from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.db.session import SessionLocal
+from app.models.completion import WellCompletionRecord
 from app.models.dictionary import DataDictionary
+from app.models.material import MaterialRequirement, MaterialRequirementStatus, MaterialRequirementType
 from app.models.rbac import Menu, Permission, Role, User
-from app.models.workover import WorkoverProjectPool
+from app.models.workover import ContractorCapacity, ContractorCapacityStatus, OperationStatus, ProjectPoolStatus, WorkoverOperationSheet, WorkoverProjectPool
 
 
 MENU_DEFINITIONS = [
@@ -345,6 +349,265 @@ STALE_DICTIONARY_ITEMS = [
     ("external_system", "minio"),
 ]
 
+
+DEMO_CONTRACTORS = [
+    ("胜利井下作业公司", "修井一队", 1, ContractorCapacityStatus.AVAILABLE),
+    ("华油工程服务公司", "作业三队", 0, ContractorCapacityStatus.BUSY),
+    ("长庆油服二厂项目部", "酸化班组", 1, ContractorCapacityStatus.AVAILABLE),
+    ("渤海钻修技术服务", "大修二队", 0, ContractorCapacityStatus.BUSY),
+]
+
+DEMO_OPERATION_ROWS = [
+    {
+        "operation_no": "OP-DEMO-20260709-001",
+        "well_no": "采2-检101",
+        "block_name": "东一区",
+        "territory_unit": "第一采油作业区",
+        "measure_type": "pump_inspection",
+        "status": OperationStatus.WAITING_DISPATCH,
+        "progress": 0,
+        "contractor": None,
+        "planned_offset": (0, 3),
+        "material": None,
+        "a5_status": None,
+        "a5_remark": None,
+    },
+    {
+        "operation_no": "OP-DEMO-20260709-002",
+        "well_no": "采2-冲205",
+        "block_name": "东一区",
+        "territory_unit": "第一采油作业区",
+        "measure_type": "sand_washing",
+        "status": OperationStatus.DISPATCHED,
+        "progress": 0,
+        "contractor": ("华油工程服务公司", "作业三队"),
+        "planned_offset": (-1, 2),
+        "material": MaterialRequirementStatus.DELIVERED,
+        "a5_status": "已下发",
+        "a5_remark": "A5措施审核通过，等待现场开工。",
+    },
+    {
+        "operation_no": "OP-DEMO-20260709-003",
+        "well_no": "采2-酸318",
+        "block_name": "西二区",
+        "territory_unit": "第二采油作业区",
+        "measure_type": "acidizing",
+        "status": OperationStatus.WORKING,
+        "progress": 45,
+        "contractor": ("长庆油服二厂项目部", "酸化班组"),
+        "planned_offset": (-2, 1),
+        "actual_offset": (-1, None),
+        "material": MaterialRequirementStatus.ARRIVED,
+        "a5_status": "施工中",
+        "a5_remark": "酸化液已到场，现场按计划施工。",
+    },
+    {
+        "operation_no": "OP-DEMO-20260709-004",
+        "well_no": "采2-管426",
+        "block_name": "南三区",
+        "territory_unit": "第三采油作业区",
+        "measure_type": "tubing_replacement",
+        "status": OperationStatus.WORKING,
+        "progress": 80,
+        "contractor": ("渤海钻修技术服务", "大修二队"),
+        "planned_offset": (-3, 1),
+        "actual_offset": (-3, None),
+        "material": MaterialRequirementStatus.USED,
+        "a5_status": "施工中",
+        "a5_remark": "管柱更换基本完成，等待复核。",
+    },
+    {
+        "operation_no": "OP-DEMO-20260709-005",
+        "well_no": "采2-完512",
+        "block_name": "西二区",
+        "territory_unit": "第二采油作业区",
+        "measure_type": "pump_repair",
+        "status": OperationStatus.FINISHED,
+        "progress": 100,
+        "contractor": ("胜利井下作业公司", "修井一队"),
+        "planned_offset": (-5, -2),
+        "actual_offset": (-5, -2),
+        "material": MaterialRequirementStatus.USED,
+        "completion": True,
+        "a5_status": "已完工",
+        "a5_remark": "完工数据已回写。",
+    },
+    {
+        "operation_no": "OP-DEMO-20260709-006",
+        "well_no": "采2-待609",
+        "block_name": "北四区",
+        "territory_unit": "第四采油作业区",
+        "measure_type": "casing_damage_treatment",
+        "status": OperationStatus.WAITING_DISPATCH,
+        "progress": 0,
+        "contractor": None,
+        "planned_offset": (1, 5),
+        "material": MaterialRequirementStatus.PENDING,
+        "a5_status": None,
+        "a5_remark": None,
+    },
+]
+
+
+def _measure_payload(measure_type: str) -> dict:
+    return {
+        "measures": [
+            {
+                "measure_type": measure_type,
+                "process": "standard_workover",
+                "construction_params": {"source": "demo_seed"},
+                "duration_days": 3,
+                "estimated_cost": 12.5,
+            }
+        ]
+    }
+
+
+def _status_value(status):
+    return status.value if hasattr(status, "value") else status
+
+
+def _seed_demo_runtime_data(db) -> None:
+    today = date.today()
+    now = datetime.now(timezone.utc)
+
+    contractors_by_key: dict[tuple[str, str], ContractorCapacity] = {}
+    for contractor_name, team_name, available_count, status in DEMO_CONTRACTORS:
+        contractor = db.scalar(
+            select(ContractorCapacity).where(
+                ContractorCapacity.contractor_name == contractor_name,
+                ContractorCapacity.team_name == team_name,
+                ContractorCapacity.report_date == today,
+            )
+        )
+        if contractor is None:
+            contractor = ContractorCapacity(
+                contractor_name=contractor_name,
+                team_name=team_name,
+                report_date=today,
+                capability_tags={"demo": True, "major_repair": team_name.startswith("大修")},
+            )
+            db.add(contractor)
+        contractor.available_count = available_count
+        contractor.status = status
+        contractor.capability_tags = {**(contractor.capability_tags or {}), "demo": True}
+        contractors_by_key[(contractor_name, team_name)] = contractor
+
+    db.flush()
+
+    for index, row in enumerate(DEMO_OPERATION_ROWS, start=1):
+        project = db.scalar(
+            select(WorkoverProjectPool).where(
+                WorkoverProjectPool.well_no == row["well_no"],
+                WorkoverProjectPool.is_deleted.is_(False),
+            )
+        )
+        if project is None:
+            project = WorkoverProjectPool(
+                well_no=row["well_no"],
+                report_unit="采油二厂生产运行科",
+                measures_jsonb=_measure_payload(row["measure_type"]),
+            )
+            db.add(project)
+        project.block_name = row["block_name"]
+        project.territory_unit = row["territory_unit"]
+        project.production_priority = 10 - index
+        project.status = ProjectPoolStatus.APPROVED if row["status"] == OperationStatus.WAITING_DISPATCH else ProjectPoolStatus.DISPATCHED
+        project.approved_at = now - timedelta(days=6 - index)
+        project.reason = "本地演示数据，用于修井运行表调度跟踪。"
+        project.reason_category = "生产维护"
+        project.data_source = "manual"
+        project.measures_jsonb = _measure_payload(row["measure_type"])
+        project.is_deleted = False
+
+        contractor = contractors_by_key.get(row["contractor"]) if row.get("contractor") else None
+        planned_start = now + timedelta(days=row["planned_offset"][0])
+        planned_end = now + timedelta(days=row["planned_offset"][1])
+        actual_offset = row.get("actual_offset")
+        actual_start = now + timedelta(days=actual_offset[0]) if actual_offset else None
+        actual_end = now + timedelta(days=actual_offset[1]) if actual_offset and actual_offset[1] is not None else None
+
+        sheet = db.scalar(select(WorkoverOperationSheet).where(WorkoverOperationSheet.operation_no == row["operation_no"]))
+        if sheet is None:
+            sheet = WorkoverOperationSheet(project=project, operation_no=row["operation_no"])
+            db.add(sheet)
+        sheet.project = project
+        sheet.contractor_capacity = contractor
+        sheet.status = row["status"]
+        sheet.progress = row["progress"]
+        sheet.planned_start_at = planned_start
+        sheet.planned_end_at = planned_end
+        sheet.actual_start_at = actual_start
+        sheet.actual_end_at = actual_end
+        sheet.a5_status = row.get("a5_status")
+        sheet.a5_remark = row.get("a5_remark")
+        sheet.last_a5_sync_at = now - timedelta(hours=index) if row.get("a5_status") else None
+        detail = dict(sheet.progress_detail or {})
+        detail["demo"] = True
+        if contractor is not None:
+            detail["dispatch"] = {
+                "source": "demo_seed",
+                "contractor_capacity_id": contractor.id,
+                "contractor_name": contractor.contractor_name,
+                "team_name": contractor.team_name,
+                "updated_at": (now - timedelta(hours=index + 2)).isoformat(),
+            }
+        if row.get("material"):
+            detail["material"] = {
+                "status": _status_value(row["material"]),
+                "total": 1,
+                "counts": {_status_value(row["material"]): 1},
+            }
+        sheet.progress_detail = detail
+
+        db.flush()
+
+        if row.get("material"):
+            material = db.scalar(
+                select(MaterialRequirement).where(
+                    MaterialRequirement.operation_sheet_id == sheet.id,
+                    MaterialRequirement.material_name == "演示物料包",
+                )
+            )
+            if material is None:
+                material = MaterialRequirement(
+                    well_no=row["well_no"],
+                    operation_sheet_id=sheet.id,
+                    material_name="演示物料包",
+                )
+                db.add(material)
+            material.status = row["material"]
+            material.requirement_type = MaterialRequirementType.EMERGENCY if row["status"] == OperationStatus.WAITING_DISPATCH else MaterialRequirementType.NORMAL
+            material.specification = "按措施设计配套"
+            material.quantity = 1
+            material.unit = "套"
+            material.planned_quantity = 1
+            material.delivered_quantity = 1 if row["material"] in {MaterialRequirementStatus.DELIVERED, MaterialRequirementStatus.ARRIVED, MaterialRequirementStatus.USED} else 0
+            material.arrived_quantity = 1 if row["material"] in {MaterialRequirementStatus.ARRIVED, MaterialRequirementStatus.USED} else 0
+            material.used_quantity = 1 if row["material"] == MaterialRequirementStatus.USED else 0
+            material.source_platform = "internal"
+            material.extra_info = {"demo": True}
+
+        if row.get("completion"):
+            completion = db.scalar(
+                select(WellCompletionRecord).where(
+                    WellCompletionRecord.operation_sheet_id == sheet.id,
+                    WellCompletionRecord.well_no == row["well_no"],
+                )
+            )
+            if completion is None:
+                completion = WellCompletionRecord(
+                    well_no=row["well_no"],
+                    operation_sheet_id=sheet.id,
+                    measure_type=row["measure_type"],
+                )
+                db.add(completion)
+            completion.completion_date = today - timedelta(days=2)
+            completion.team_name = contractor.team_name if contractor else None
+            completion.pre_repair_data = {"daily_oil": 1.8, "pump_efficiency": 32}
+            completion.post_repair_data = {"daily_oil": 4.6, "pump_efficiency": 68}
+            completion.remark = "演示完井记录。"
+
 STALE_MENU_ROUTE_NAMES = [
     "engineering",
     "engineering_designs",
@@ -501,6 +764,8 @@ def seed() -> None:
         admin.is_active = True
         admin.is_superuser = True
         admin.roles = [roles_by_code["super_admin"]]
+
+        _seed_demo_runtime_data(db)
         db.commit()
 
 
