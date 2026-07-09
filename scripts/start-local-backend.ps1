@@ -4,6 +4,24 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $repoRoot
 
+$venvPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path $venvPython)) {
+    $python = (Get-Command py -ErrorAction SilentlyContinue)
+    if ($python) {
+        & py -3.12 -m venv .venv
+        if ($LASTEXITCODE -ne 0) {
+            & py -3 -m venv .venv
+        }
+    }
+    else {
+        & python -m venv .venv
+    }
+}
+
+if ($env:SKIP_BACKEND_INSTALL -ne "1") {
+    & $venvPython -m pip install -r requirements.txt
+}
+
 $env:DATABASE_URL = if ($env:DATABASE_URL) { $env:DATABASE_URL } else { "sqlite:///./local_dev.db" }
 $env:POSTGRES_PASSWORD = if ($env:POSTGRES_PASSWORD) { $env:POSTGRES_PASSWORD } else { "local-dev-postgres-placeholder" }
 $env:JWT_SECRET_KEY = if ($env:JWT_SECRET_KEY) { $env:JWT_SECRET_KEY } else { "local-dev-jwt-secret-change-me" }
@@ -22,6 +40,6 @@ Base.metadata.create_all(bind=engine)
 ensure_sqlite_columns(engine)
 seed()
 print("Local database initialized")
-"@ | python -
+"@ | & $venvPython -
 
-python -m uvicorn main:app --host 127.0.0.1 --port 8000
+& $venvPython -m uvicorn main:app --host 127.0.0.1 --port 8000

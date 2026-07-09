@@ -40,6 +40,16 @@ Stop processes started by the helper:
 ./scripts/stop-local.sh
 ```
 
+For SQLite local development on macOS/Linux, use:
+
+```bash
+./scripts/start-local-sqlite.sh
+```
+
+Both shell helpers create `.venv` when missing and install Python/frontend dependencies as needed, so a fresh agent session does not depend on a previously prepared virtual environment.
+
+Important: the PostgreSQL helper explicitly clears `DATABASE_URL` from `.env` by exporting an empty `DATABASE_URL`, so the app uses the PostgreSQL settings from `POSTGRES_*` variables. Without that override, a local `.env` containing `DATABASE_URL=sqlite:///local_dev.db` can silently force the backend onto SQLite.
+
 Verified URLs:
 - Backend: `http://127.0.0.1:8000`
 - Backend health: `http://127.0.0.1:8000/health`
@@ -103,13 +113,19 @@ print("Local database initialized")
 Start backend in the foreground:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\.local\start-backend.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-local-backend.ps1
 ```
 
 Start frontend in another PowerShell window:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\.local\start-frontend.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-local-frontend.ps1
+```
+
+Or start both in minimized windows:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-local.ps1
 ```
 
 ## Preferred minimized startup
