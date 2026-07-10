@@ -15,8 +15,13 @@ from app.schemas.rbac import MenuOut, PermissionOut, RoleOut
 
 ACCESS_REVOKE_PREFIX = "auth:access:revoked:"
 REFRESH_TOKEN_PREFIX = "auth:refresh:"
-REMOVED_MENU_ROUTE_NAMES = {"engineering", "engineering_designs"}
-REMOVED_MENU_ROUTE_PATHS = {"/engineering", "/engineering/designs"}
+REMOVED_MENU_ROUTE_NAMES = {"engineering", "engineering_designs", "contractor", "contractor_sheets"}
+REMOVED_MENU_ROUTE_PATHS = {"/engineering", "/engineering/designs", "/contractor", "/contractor/operation-sheets"}
+CORE_MENU_SORT_ORDERS = {
+    "contractor_capacity": 22,
+    "contractor_dispatch": 23,
+    "workover_operation": 24,
+}
 
 
 def _role_out(role: Role) -> RoleOut:
@@ -31,9 +36,17 @@ def _role_out(role: Role) -> RoleOut:
     )
 
 
+def _menu_out(menu: Menu) -> MenuOut:
+    node = MenuOut.model_validate(menu).model_copy(update={"children": []})
+    if menu.route_name in CORE_MENU_SORT_ORDERS:
+        node.parent_id = None
+        node.sort_order = CORE_MENU_SORT_ORDERS[menu.route_name]
+    return node
+
+
 def build_menu_tree(menus: list[Menu]) -> list[MenuOut]:
     nodes = {
-        menu.id: MenuOut.model_validate(menu).model_copy(update={"children": []})
+        menu.id: _menu_out(menu)
         for menu in sorted(menus, key=lambda item: (item.sort_order, item.id))
         if (
             menu.is_active
@@ -47,11 +60,11 @@ def build_menu_tree(menus: list[Menu]) -> list[MenuOut]:
         if menu.id not in nodes:
             continue
         node = nodes[menu.id]
-        if menu.parent_id and menu.parent_id in nodes:
-            nodes[menu.parent_id].children.append(node)
+        if node.parent_id and node.parent_id in nodes:
+            nodes[node.parent_id].children.append(node)
         else:
             roots.append(node)
-    return roots
+    return sorted(roots, key=lambda item: (item.sort_order, item.id))
 
 
 def user_permissions(user: User) -> list[Permission]:

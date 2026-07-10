@@ -61,6 +61,24 @@ class WorkoverOperationManagementContractTest(unittest.TestCase):
         self.assertIn('"workover_operation:update"', source)
         self.assertIn('"workover_operation:dashboard"', source)
         self.assertIn('menus_by_key["workover_operation"]', source)
+        self.assertIn('("contractor_capacity", None, "运力报备"', source)
+        self.assertIn('("contractor_dispatch", None, "智能派工"', source)
+        self.assertNotIn('("contractor", None, "承包商管理"', source)
+        self.assertNotIn('("contractor_sheets"', source)
+
+    def test_runtime_menu_normalization_places_dispatch_before_operation(self):
+        auth_source = (REPO_ROOT / "app/services/auth_service.py").read_text(encoding="utf-8")
+        layout_source = (REPO_ROOT / "frontend/src/views/MainLayout.vue").read_text(encoding="utf-8")
+
+        self.assertIn('"contractor_capacity": 22', auth_source)
+        self.assertIn('"contractor_dispatch": 23', auth_source)
+        self.assertIn('"workover_operation": 24', auth_source)
+        self.assertIn('"contractor"', auth_source)
+        self.assertIn('"/contractor/operation-sheets"', auth_source)
+        self.assertIn("normalizeCoreMenuOrder", layout_source)
+        self.assertIn("sort_order: 22", layout_source)
+        self.assertIn("sort_order: 23", layout_source)
+        self.assertIn("sort_order: 24", layout_source)
 
     def test_frontend_has_standalone_operation_management_page_and_api(self):
         view = REPO_ROOT / "frontend/src/views/WorkoverOperationManageView.vue"

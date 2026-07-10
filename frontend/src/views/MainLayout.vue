@@ -165,10 +165,21 @@ function withAccountSettingsMenu(items: MenuNode[]): MenuNode[] {
 
 function normalizeDeprecatedMenus(items: MenuNode[]): MenuNode[] {
   return items.flatMap((item) => {
-    if (item.route_name === 'engineering' || item.route_name === 'engineering_designs' || item.route_path?.startsWith('/engineering')) {
+    if (
+      item.route_name === 'engineering'
+      || item.route_name === 'engineering_designs'
+      || item.route_path?.startsWith('/engineering')
+      || item.route_name === 'contractor_sheets'
+      || item.route_path === '/contractor/operation-sheets'
+    ) {
       return []
     }
     const children = normalizeDeprecatedMenus(item.children || [])
+    if (item.route_name === 'contractor' || item.route_path === '/contractor') {
+      return children
+        .filter((child) => child.route_name === 'contractor_capacity' || child.route_name === 'contractor_dispatch')
+        .map((child) => normalizeCoreMenuOrder({ ...child, parent_id: null }))
+    }
     if (item.route_name === 'workover' || item.route_path === '/workover') {
       return children.map((child) => ({
         ...child,
@@ -176,8 +187,21 @@ function normalizeDeprecatedMenus(items: MenuNode[]): MenuNode[] {
         sort_order: child.route_name === 'workover_project_pool' ? item.sort_order : child.sort_order
       }))
     }
-    return [{ ...item, children }]
+    return [normalizeCoreMenuOrder({ ...item, children })]
   })
+}
+
+function normalizeCoreMenuOrder(item: MenuNode): MenuNode {
+  if (item.route_name === 'contractor_capacity' || item.route_path === '/contractor/capacity') {
+    return { ...item, parent_id: null, sort_order: 22 }
+  }
+  if (item.route_name === 'contractor_dispatch' || item.route_path === '/contractor/dispatch') {
+    return { ...item, parent_id: null, sort_order: 23 }
+  }
+  if (item.route_name === 'workover_operation' || item.route_path === '/workover/operation-sheets') {
+    return { ...item, parent_id: null, sort_order: 24 }
+  }
+  return item
 }
 
 const workoverOperationMenu: MenuNode = {
@@ -188,7 +212,7 @@ const workoverOperationMenu: MenuNode = {
   component: null,
   icon: 'document',
   parent_id: null,
-  sort_order: 22,
+  sort_order: 24,
   is_visible: true,
   is_active: true,
   meta: {},
@@ -262,13 +286,18 @@ const sidebarMenus = computed<MenuNode[]>(() => {
       is_visible: true, is_active: true, meta: {}, children: []
     },
     {
-      id: 3, title: '承包商调度', route_name: 'contractor_dispatch', route_path: '/contractor/dispatch',
-      component: null, icon: 'team', parent_id: null, sort_order: 3,
+      id: 3, title: '运力报备', route_name: 'contractor_capacity', route_path: '/contractor/capacity',
+      component: null, icon: 'team', parent_id: null, sort_order: 22,
+      is_visible: true, is_active: true, meta: {}, children: []
+    },
+    {
+      id: 32, title: '智能派工', route_name: 'contractor_dispatch', route_path: '/contractor/dispatch',
+      component: null, icon: 'send', parent_id: null, sort_order: 23,
       is_visible: true, is_active: true, meta: {}, children: []
     },
     {
       id: 31, title: '修井运行管理', route_name: 'workover_operation', route_path: '/workover/operation-sheets',
-      component: null, icon: 'document', parent_id: null, sort_order: 3,
+      component: null, icon: 'document', parent_id: null, sort_order: 24,
       is_visible: true, is_active: true, meta: {}, children: []
     },
     {

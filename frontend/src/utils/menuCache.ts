@@ -1,6 +1,6 @@
 import type { CurrentUser, LoginResponse, MenuNode } from '../api/auth'
 
-export const MENU_SCHEMA_VERSION = '2026-07-07-phase3-operation-menu-system-support-menu'
+export const MENU_SCHEMA_VERSION = '2026-07-07-phase3-operation-menu-system-support-menu-2026-07-10-contractor-menu-flatten'
 const MENU_SCHEMA_VERSION_KEY = 'menu_schema_version'
 
 export function storeSessionMenus(payload: {

@@ -23,13 +23,11 @@ MENU_DEFINITIONS = [
     ("system_logs", "system", "操作日志", "system_logs", "/system/operation-logs", "system/logs/index", "file-text", 17),
     ("system_support", "system", "基础支撑", "system_support", "/system/support", "system/support/index", "monitor", 18),
     ("workover_project_pool", None, "项目池台账", "workover_project_pool", "/workover/project-pools", "workover/project-pools/index", "table", 20),
-    ("workover_operation", None, "修井运行管理", "workover_operation", "/workover/operation-sheets", "workover/operation-sheets/index", "document", 22),
     ("approval_workbench", None, "审核审批工作台", "approval", "/approval", "approval/index", "tickets", 21),
+    ("contractor_capacity", None, "运力报备", "contractor_capacity", "/contractor/capacity", "contractor/capacity/index", "list", 22),
+    ("contractor_dispatch", None, "智能派工", "contractor_dispatch", "/contractor/dispatch", "contractor/dispatch/index", "send", 23),
+    ("workover_operation", None, "修井运行管理", "workover_operation", "/workover/operation-sheets", "workover/operation-sheets/index", "document", 24),
     ("analytics", None, "统计分析", "analytics", "/dashboard", "analytics/dashboard", "trend-charts", 25),
-    ("contractor", None, "承包商管理", "contractor", "/contractor", "Layout", "team", 30),
-    ("contractor_capacity", "contractor", "运力报备", "contractor_capacity", "/contractor/capacity", "contractor/capacity/index", "list", 31),
-    ("contractor_dispatch", "contractor", "智能派工", "contractor_dispatch", "/contractor/dispatch", "contractor/dispatch/index", "send", 32),
-    ("contractor_sheets", "contractor", "修井运行表", "contractor_sheets", "/contractor/operation-sheets", "contractor/operation-sheets/index", "document", 33),
     ("material", None, "物料管理", "material", "/material", "Layout", "goods", 35),
     ("material_requirements", "material", "物料需求", "material_requirements", "/material/requirements", "material/requirements/index", "list", 36),
     ("material_delivery", "material", "物料配送", "material_delivery", "/material/delivery", "material/delivery/index", "truck", 37),
@@ -734,7 +732,7 @@ def seed() -> None:
             menus_by_key["approval_workbench"],
             menus_by_key["workover_project_pool"],
             menus_by_key["workover_operation"],
-            menus_by_key["contractor"], menus_by_key["contractor_dispatch"], menus_by_key["contractor_sheets"],
+            menus_by_key["contractor_dispatch"],
             menus_by_key["analytics"], menus_by_key["a5"],
             menus_by_key["material"], menus_by_key["material_requirements"],
             menus_by_key["completion"],
@@ -744,7 +742,7 @@ def seed() -> None:
         roles_by_code["process_reviewer"].menus = reviewer_menus
         roles_by_code["production_command_reviewer"].menus = reviewer_menus
         roles_by_code["contractor_operator"].menus = [
-            menus_by_key["contractor"], menus_by_key["contractor_capacity"],
+            menus_by_key["contractor_capacity"],
             menus_by_key["material"], menus_by_key["material_requirements"], menus_by_key["material_delivery"],
         ]
 
