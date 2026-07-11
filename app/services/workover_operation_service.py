@@ -1,7 +1,9 @@
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, func, select
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from app.crud.contractor import (
     BUSINESS_TYPE_OPERATION,
@@ -15,12 +17,24 @@ from app.crud.contractor import (
 )
 from app.models.completion import WellCompletionRecord
 from app.models.material import MaterialRequirement
-from app.models.workover import OperationStatus, ProjectPoolStatus, WorkoverOperationSheet
+from app.models.workover import ContractorCapacity, OperationStatus, ProjectPoolStatus, WorkoverOperationSheet, WorkoverProjectPool
 from app.schemas.contractor import (
     ProgressPatch,
     WorkoverOperationSheetCreate,
     WorkoverOperationSheetQuery,
 )
+
+
+class OperationAnalyticsQuery(BaseModel):
+    start_date: date | None = None
+    end_date: date | None = None
+    well_no: str | None = None
+    report_unit: str | None = None
+    team_name: str | None = None
+    block_name: str | None = None
+    status: ProjectPoolStatus | None = None
+    measure_type: str | None = None
+    material_status: str | None = None
 
 
 def _material_status(sheet: WorkoverOperationSheet) -> dict[str, Any]:
@@ -174,13 +188,89 @@ def update_workover_operation_progress(
     return enrich_workover_operation_sheet(db, sheet)
 
 
-def build_workover_operation_dashboard(db: Session) -> dict[str, Any]:
-    base = get_operation_analytics(db)
-    total_materials = db.scalar(select(func.count()).select_from(MaterialRequirement)) or 0
-    total_completions = db.scalar(select(func.count()).select_from(WellCompletionRecord)) or 0
-    a5_synced = db.scalar(
-        select(func.count()).select_from(WorkoverOperationSheet).where(WorkoverOperationSheet.a5_status.is_not(None))
-    ) or 0
+def build_workover_operation_dashboard(db: Session, query: OperationAnalyticsQuery | None = None) -> dict[str, Any]:
+    if query is None:
+        base = get_operation_analytics(db)
+    else:
+        stmt = select(WorkoverOperationSheet).join(WorkoverProjectPool).outerjoin(ContractorCapacity)
+        if query.well_no:
+            stmt = stmt.where(WorkoverProjectPool.well_no.ilike(f"%{query.well_no}%"))
+        if query.report_unit:
+            stmt = stmt.where(WorkoverProjectPool.report_unit.ilike(f"%{query.report_unit}%"))
+        if query.team_name:
+            stmt = stmt.where(ContractorCapacity.team_name.ilike(f"%{query.team_name}%"))
+        if query.block_name:
+            stmt = stmt.where(WorkoverProjectPool.block_name == query.block_name)
+        if query.status:
+            stmt = stmt.where(WorkoverProjectPool.status == query.status)
+        if query.measure_type:
+            stmt = stmt.where(cast(WorkoverProjectPool.measures_jsonb, String).ilike(f"%{query.measure_type}%"))
+        if query.start_date:
+            stmt = stmt.where(WorkoverOperationSheet.created_at >= datetime.combine(query.start_date, time.min))
+        if query.end_date:
+            stmt = stmt.where(WorkoverOperationSheet.created_at < datetime.combine(query.end_date + timedelta(days=1), time.min))
+        sheets = list(db.scalars(stmt).all())
+        counts = {status.value: 0 for status in OperationStatus}
+        teams: dict[str, int] = {}
+        measures: dict[str, int] = {}
+        anomaly_count = 0
+        for sheet in sheets:
+            counts[getattr(sheet.status, "value", sheet.status)] += 1
+            if sheet.contractor_capacity and sheet.contractor_capacity.team_name:
+                team = sheet.contractor_capacity.team_name
+                teams[team] = teams.get(team, 0) + 1
+            for measure in (sheet.project.measures_jsonb or {}).get("measures", []):
+                measure_type = measure.get("measure_type") if isinstance(measure, dict) else None
+                if measure_type:
+                    measures[measure_type] = measures.get(measure_type, 0) + 1
+            if str(sheet.a5_status or "").upper() in {"ANOMALY", "ERROR", "EXCEPTION", "FAILED"}:
+                anomaly_count += 1
+        total = len(sheets)
+        active = counts[OperationStatus.DISPATCHED.value] + counts[OperationStatus.WORKING.value] + counts[OperationStatus.FINISHED.value]
+        base = {
+            "total_sheets": total,
+            "status_distribution": {
+                "waiting_dispatch": counts[OperationStatus.WAITING_DISPATCH.value],
+                "dispatched": counts[OperationStatus.DISPATCHED.value],
+                "working": counts[OperationStatus.WORKING.value],
+                "finished": counts[OperationStatus.FINISHED.value],
+                "canceled": counts[OperationStatus.CANCELED.value],
+            },
+            "dispatch_rate": round(active / total * 100, 1) if total else 0,
+            "completion_rate": round(counts[OperationStatus.FINISHED.value] / total * 100, 1) if total else 0,
+            "team_workload": sorted(
+                [{"team_name": team, "sheet_count": count} for team, count in teams.items()],
+                key=lambda item: -item["sheet_count"],
+            ),
+            "measure_type_distribution": sorted(
+                [{"measure_type": key, "count": value} for key, value in measures.items()],
+                key=lambda item: -item["count"],
+            ),
+            "anomaly_count": anomaly_count,
+        }
+    material_stmt = select(func.count()).select_from(MaterialRequirement)
+    completion_stmt = select(func.count()).select_from(WellCompletionRecord)
+    a5_stmt = select(func.count()).select_from(WorkoverOperationSheet).where(WorkoverOperationSheet.a5_status.is_not(None))
+    if query is not None:
+        sheet_ids = [sheet.id for sheet in sheets]
+        material_stmt = material_stmt.where(MaterialRequirement.operation_sheet_id.in_(sheet_ids))
+        completion_stmt = completion_stmt.where(WellCompletionRecord.operation_sheet_id.in_(sheet_ids))
+        a5_stmt = a5_stmt.where(WorkoverOperationSheet.id.in_(sheet_ids))
+        if query.material_status:
+            material_stmt = material_stmt.where(MaterialRequirement.status == query.material_status)
+        if query.measure_type:
+            completion_stmt = completion_stmt.where(WellCompletionRecord.measure_type == query.measure_type)
+        if query.team_name:
+            completion_stmt = completion_stmt.where(WellCompletionRecord.team_name.ilike(f"%{query.team_name}%"))
+        if query.start_date:
+            completion_stmt = completion_stmt.where(WellCompletionRecord.completion_date >= query.start_date)
+            material_stmt = material_stmt.where(MaterialRequirement.created_at >= datetime.combine(query.start_date, time.min))
+        if query.end_date:
+            completion_stmt = completion_stmt.where(WellCompletionRecord.completion_date <= query.end_date)
+            material_stmt = material_stmt.where(MaterialRequirement.created_at < datetime.combine(query.end_date + timedelta(days=1), time.min))
+    total_materials = db.scalar(material_stmt) or 0
+    total_completions = db.scalar(completion_stmt) or 0
+    a5_synced = db.scalar(a5_stmt) or 0
     waiting = base.get("status_distribution", {}).get("waiting_dispatch", 0)
     working = base.get("status_distribution", {}).get("working", 0)
     finished = base.get("status_distribution", {}).get("finished", 0)

@@ -55,6 +55,23 @@ export interface StatisticsAnalysis {
     total: number
     by_measure_type: { measure_type: string; count: number }[]
   }
+  data_quality_summary: {
+    checked_at: string
+    total_issues: number
+    severity_counts: { high: number; medium: number; low: number }
+    issues: {
+      rule_code: string
+      title: string
+      severity: 'low' | 'medium' | 'high'
+      message: string
+      entity_type: string
+      entity_id?: number | null
+      well_no?: string | null
+      team_name?: string | null
+      suggestion?: string | null
+    }[]
+    scope: Record<string, unknown>
+  }
   a5_statistics: {
     anomaly_total: number
     special_process_total: number
@@ -118,7 +135,7 @@ function statusNameValue(items?: Array<{ status?: string; label?: string; count?
 }
 
 export function normalizeStatisticsAnalysis(payload: any): StatisticsAnalysis {
-  if (payload?.overview_kpis && payload?.chart_series) {
+  if (payload?.overview_kpis && payload?.chart_series && payload?.data_quality_summary) {
     return payload as StatisticsAnalysis
   }
 
@@ -141,6 +158,13 @@ export function normalizeStatisticsAnalysis(payload: any): StatisticsAnalysis {
       completion_records: Number(completion.total || 0)
     },
     completion_classification: completion,
+    data_quality_summary: payload?.data_quality_summary || {
+      checked_at: new Date().toISOString(),
+      total_issues: 0,
+      severity_counts: { high: 0, medium: 0, low: 0 },
+      issues: [],
+      scope: {}
+    },
     a5_statistics: a5,
     material_usage: material,
     operation_efficiency: operation,
@@ -170,12 +194,28 @@ export function getStatisticsAnalysis(query: StatisticsAnalysisQuery) {
   return unwrap<any>(http.get('/reports/statistics-analysis', { params: compactParams(query) })).then(normalizeStatisticsAnalysis)
 }
 
-export async function downloadReport(path: '/reports/delivery-summary.xlsx' | '/reports/delivery-summary.docx', filename: string) {
-  const response = await http.get(path, { responseType: 'blob' })
+export async function downloadReport(
+  path:
+    | '/reports/delivery-summary.xlsx'
+    | '/reports/delivery-summary.docx'
+    | '/reports/statistics-analysis.xlsx'
+    | '/reports/statistics-analysis.docx',
+  filename: string,
+  params?: StatisticsAnalysisQuery
+) {
+  const response = await http.get(path, { responseType: 'blob', params: params ? compactParams(params) : undefined })
   const blob = new Blob([response.data])
   const link = document.createElement('a')
   link.href = URL.createObjectURL(blob)
   link.download = filename
   link.click()
   window.setTimeout(() => URL.revokeObjectURL(link.href), 0)
+}
+
+export function downloadStatisticsAnalysisExcel(query: StatisticsAnalysisQuery) {
+  return downloadReport('/reports/statistics-analysis.xlsx', '数据统计分析.xlsx', query)
+}
+
+export function downloadStatisticsAnalysisWord(query: StatisticsAnalysisQuery) {
+  return downloadReport('/reports/statistics-analysis.docx', '数据统计分析.docx', query)
 }

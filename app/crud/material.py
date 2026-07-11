@@ -1,8 +1,9 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from app.core.exceptions import BusinessException
 from app.core.status_codes import BAD_REQUEST, CONFLICT
@@ -11,6 +12,13 @@ from app.models.workover import WorkoverOperationSheet
 from app.schemas.material import MaterialRequirementCreate, MaterialRequirementQuery, MaterialRequirementUpdate
 
 BUSINESS_TYPE = "material_requirement"
+
+
+class MaterialAnalyticsQuery(BaseModel):
+    start_date: date | None = None
+    end_date: date | None = None
+    well_no: str | None = None
+    status: MaterialRequirementStatus | None = None
 
 ALLOWED_STATUS_TRANSITIONS: dict[MaterialRequirementStatus, set[MaterialRequirementStatus]] = {
     MaterialRequirementStatus.PENDING: {MaterialRequirementStatus.APPROVED, MaterialRequirementStatus.CANCELED},
@@ -274,10 +282,25 @@ def delete_material_requirement(
     db.commit()
 
 
-def get_material_analytics(db: Session, well_no: str | None = None) -> dict[str, Any]:
+def get_material_analytics(
+    db: Session,
+    query: MaterialAnalyticsQuery | str | None = None,
+    *,
+    well_no: str | None = None,
+) -> dict[str, Any]:
+    if isinstance(query, str):
+        query = MaterialAnalyticsQuery(well_no=query)
+    else:
+        query = query or MaterialAnalyticsQuery(well_no=well_no)
     stmt = select(MaterialRequirement)
-    if well_no:
-        stmt = stmt.where(MaterialRequirement.well_no.ilike(f"%{well_no}%"))
+    if query.well_no:
+        stmt = stmt.where(MaterialRequirement.well_no.ilike(f"%{query.well_no}%"))
+    if query.status:
+        stmt = stmt.where(MaterialRequirement.status == query.status)
+    if query.start_date:
+        stmt = stmt.where(MaterialRequirement.created_at >= datetime.combine(query.start_date, time.min))
+    if query.end_date:
+        stmt = stmt.where(MaterialRequirement.created_at < datetime.combine(query.end_date + timedelta(days=1), time.min))
     items = list(db.scalars(stmt).all())
 
     return build_material_analytics(items)

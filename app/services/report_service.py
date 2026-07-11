@@ -72,6 +72,10 @@ def _statistics_payload(db: Session) -> dict[str, Any]:
         }
 
 
+def _query_statistics_payload(db: Session, query: StatisticsAnalysisQuery | None = None) -> dict[str, Any]:
+    return build_statistics_analysis(db, query or StatisticsAnalysisQuery())
+
+
 def _append_rows(ws, rows: list[tuple[Any, ...]]) -> None:
     for row in rows:
         ws.append(row)
@@ -176,6 +180,108 @@ def export_delivery_summary_word(db: Session) -> bytes:
 
     doc.add_heading("统计结果可追溯", level=2)
     doc.add_paragraph("、".join(data.get("trace_sources", [])) or "暂无追溯来源")
+
+    output = BytesIO()
+    doc.save(output)
+    return output.getvalue()
+
+
+def export_statistics_analysis_excel(db: Session, query: StatisticsAnalysisQuery | None = None) -> bytes:
+    data = _query_statistics_payload(db, query)
+    overview = data.get("overview_kpis", {})
+    operation = data.get("operation_efficiency", {})
+    a5 = data.get("a5_statistics", {})
+    material = data.get("material_usage", {})
+    completion = data.get("completion_classification", {})
+    quality = data.get("data_quality_summary", {})
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "数据统计分析"
+    _append_rows(
+        ws,
+        [
+            ("模块", "指标", "值"),
+            ("项目总览", "项目总量", overview.get("total_projects", 0)),
+            ("项目总览", "待审批", overview.get("pending_approvals", 0)),
+            ("项目总览", "审批通过率", overview.get("approval_rate", 0)),
+            ("项目总览", "预计费用(万元)", overview.get("estimated_cost", 0)),
+            ("作业运行效率", "运行表工单", operation.get("total_sheets", 0)),
+            ("作业运行效率", "派工率", operation.get("dispatch_rate", 0)),
+            ("作业运行效率", "完工率", operation.get("completion_rate", 0)),
+            ("A5异常与特殊工序", "异常情况", a5.get("anomaly_total", 0)),
+            ("A5异常与特殊工序", "特殊工序", a5.get("special_process_total", 0)),
+            ("物料使用闭环", "物料需求", material.get("total", 0)),
+            ("物料使用闭环", "已到场", material.get("arrived", 0)),
+            ("物料使用闭环", "已使用", material.get("used", 0)),
+            ("完井分类台账", "完井记录", completion.get("total", 0)),
+            ("数据质量", "问题总数", quality.get("total_issues", 0)),
+            ("数据质量", "高风险", quality.get("severity_counts", {}).get("high", 0)),
+            ("数据质量", "中风险", quality.get("severity_counts", {}).get("medium", 0)),
+            ("数据质量", "低风险", quality.get("severity_counts", {}).get("low", 0)),
+        ],
+    )
+    _style_header(ws)
+
+    ws_quality = wb.create_sheet("数据质量明细")
+    ws_quality.append(("规则", "级别", "对象", "井号", "班组", "提示"))
+    for issue in quality.get("issues", []):
+        ws_quality.append(
+            (
+                issue.get("title"),
+                issue.get("severity"),
+                issue.get("entity_type"),
+                issue.get("well_no"),
+                issue.get("team_name"),
+                issue.get("message"),
+            )
+        )
+    _style_header(ws_quality)
+
+    output = BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+
+def export_statistics_analysis_word(db: Session, query: StatisticsAnalysisQuery | None = None) -> bytes:
+    data = _query_statistics_payload(db, query)
+    overview = data.get("overview_kpis", {})
+    operation = data.get("operation_efficiency", {})
+    a5 = data.get("a5_statistics", {})
+    material = data.get("material_usage", {})
+    completion = data.get("completion_classification", {})
+    quality = data.get("data_quality_summary", {})
+
+    doc = Document()
+    doc.add_heading("采油二厂井下作业管理系统数据统计分析报告", level=1)
+    doc.add_paragraph(
+        f"项目总量 {overview.get('total_projects', 0)}，待审批 {overview.get('pending_approvals', 0)}，"
+        f"审批通过率 {overview.get('approval_rate', 0)}%，预计费用 {overview.get('estimated_cost', 0)} 万元。"
+    )
+    doc.add_heading("作业运行效率", level=2)
+    doc.add_paragraph(
+        f"运行表工单 {operation.get('total_sheets', 0)}，派工率 {operation.get('dispatch_rate', 0)}%，"
+        f"完工率 {operation.get('completion_rate', 0)}%。"
+    )
+    doc.add_heading("A5异常与特殊工序", level=2)
+    doc.add_paragraph(f"A5异常 {a5.get('anomaly_total', 0)} 条，特殊工序 {a5.get('special_process_total', 0)} 条。")
+    doc.add_heading("物料使用闭环", level=2)
+    doc.add_paragraph(
+        f"物料需求 {material.get('total', 0)} 条，已到场 {material.get('arrived', 0)} 条，"
+        f"已使用 {material.get('used', 0)} 条。"
+    )
+    doc.add_heading("完井分类台账", level=2)
+    doc.add_paragraph(f"完井记录 {completion.get('total', 0)} 条。")
+    doc.add_heading("数据质量", level=2)
+    doc.add_paragraph(
+        f"问题总数 {quality.get('total_issues', 0)}，"
+        f"高风险 {quality.get('severity_counts', {}).get('high', 0)}，"
+        f"中风险 {quality.get('severity_counts', {}).get('medium', 0)}，"
+        f"低风险 {quality.get('severity_counts', {}).get('low', 0)}。"
+    )
+    if quality.get("issues"):
+        for issue in quality["issues"][:10]:
+            doc.add_paragraph(f"{issue.get('title')}: {issue.get('message')}", style="List Bullet")
 
     output = BytesIO()
     doc.save(output)

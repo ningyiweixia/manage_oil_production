@@ -1,4 +1,5 @@
 from app.models.approval import ApprovalLog
+from app.models.analytics import AnalyticsAlert, AnalyticsAlertStatus
 from app.models.completion import WellCompletionRecord
 from app.models.dictionary import DataDictionary
 from app.models.material import MaterialRequirement
@@ -7,6 +8,8 @@ from app.models.workover import ContractorCapacity, ContractorCapacitySyncLog, W
 
 __all__ = [
     "ApprovalLog",
+    "AnalyticsAlert",
+    "AnalyticsAlertStatus",
     "ContractorCapacity",
     "ContractorCapacitySyncLog",
     "DataDictionary",

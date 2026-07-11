@@ -1,16 +1,17 @@
 from datetime import date
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
-from app.crud.completion import get_completion_analytics
-from app.crud.material import get_material_analytics
+from app.crud.completion import CompletionAnalyticsQuery, get_completion_analytics
+from app.crud.material import MaterialAnalyticsQuery, get_material_analytics
 from app.schemas.a5_integration import A5AnalyticsQuery
+from app.services.data_quality_service import build_data_quality_summary
 from app.schemas.workover_project_pool import WorkoverAnalyticsQuery
 from app.services.a5_sync_service import build_a5_analytics
 from app.services.workover_analytics_service import build_workover_analytics
-from app.services.workover_operation_service import build_workover_operation_dashboard
+from app.services.workover_operation_service import OperationAnalyticsQuery, build_workover_operation_dashboard
 
 
 class StatisticsAnalysisQuery(BaseModel):
@@ -26,6 +27,12 @@ class StatisticsAnalysisQuery(BaseModel):
     material_status: str | None = Field(default=None, description="Material status")
     block_name: str | None = Field(default=None, description="Block name")
     status: str | None = Field(default=None, description="Project approval status")
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "StatisticsAnalysisQuery":
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValueError("start_date must be on or before end_date")
+        return self
 
 
 TRACE_SOURCES = [
@@ -122,10 +129,24 @@ def build_statistics_analysis(db: Session, query: StatisticsAnalysisQuery) -> di
     """Aggregate production analysis, review, and report data into one payload."""
 
     workover = build_workover_analytics(db, _build_workover_query(query))
-    operation_efficiency = _dump(build_workover_operation_dashboard(db))
-    material_usage = _dump(get_material_analytics(db, well_no=query.well_no))
-    completion_classification = _dump(get_completion_analytics(db))
+    operation_query = OperationAnalyticsQuery(
+        start_date=query.start_date, end_date=query.end_date, well_no=query.well_no,
+        report_unit=query.report_unit, team_name=query.team_name, block_name=query.block_name,
+        status=query.status, measure_type=query.measure_type, material_status=query.material_status,
+    )
+    operation_efficiency = _dump(build_workover_operation_dashboard(
+        db, operation_query if any(operation_query.model_dump().values()) else None
+    ))
+    material_usage = _dump(get_material_analytics(db, MaterialAnalyticsQuery(
+        start_date=query.start_date, end_date=query.end_date, well_no=query.well_no,
+        status=query.material_status,
+    )))
+    completion_classification = _dump(get_completion_analytics(db, CompletionAnalyticsQuery(
+        start_date=query.start_date, end_date=query.end_date, well_no=query.well_no,
+        measure_type=query.measure_type, team_name=query.team_name,
+    )))
     a5 = build_a5_analytics(_build_a5_query(query))
+    data_quality = _dump(build_data_quality_summary(db, query))
 
     overview_kpis = {
         "total_projects": workover.kpis.total_projects,
@@ -136,6 +157,7 @@ def build_statistics_analysis(db: Session, query: StatisticsAnalysisQuery) -> di
         "a5_anomalies": a5.anomaly_total,
         "material_requirements": material_usage.get("total", 0),
         "completion_records": completion_classification.get("total", 0),
+        "data_quality_issues": data_quality.get("total_issues", 0),
     }
 
     a5_statistics = {
@@ -164,7 +186,8 @@ def build_statistics_analysis(db: Session, query: StatisticsAnalysisQuery) -> di
         "a5_statistics": a5_statistics,
         "material_usage": material_usage,
         "completion_classification": completion_classification,
+        "data_quality_summary": data_quality,
         "trace_sources": TRACE_SOURCES,
         "chart_series": chart_series,
-        "report_outputs": ["statistics_dashboard", "excel_report", "word_report", "analysis_summary"],
+        "report_outputs": ["statistics_dashboard", "excel_report", "word_report", "analysis_summary", "data_quality_summary"],
     }
