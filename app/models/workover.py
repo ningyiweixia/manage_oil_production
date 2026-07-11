@@ -30,6 +30,32 @@ class ContractorCapacityStatus(str, enum.Enum):
     AVAILABLE = "AVAILABLE"
     BUSY = "BUSY"
     OFFLINE = "OFFLINE"
+    EXCEPTION = "EXCEPTION"
+
+
+class ContractorCapacitySourceType(str, enum.Enum):
+    EXTERNAL_SYNC = "EXTERNAL_SYNC"
+    LOCAL_SUPPLEMENT = "LOCAL_SUPPLEMENT"
+    SYNC_ERROR = "SYNC_ERROR"
+
+
+class ContractorCapacitySyncStatus(str, enum.Enum):
+    SYNCED = "SYNCED"
+    PENDING_CONFIRM = "PENDING_CONFIRM"
+    CONFLICT = "CONFLICT"
+    INVALID = "INVALID"
+
+
+class ContractorCapacitySyncType(str, enum.Enum):
+    SCHEDULED = "SCHEDULED"
+    MANUAL = "MANUAL"
+    SINGLE_TEAM = "SINGLE_TEAM"
+
+
+class ContractorCapacitySyncResultStatus(str, enum.Enum):
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+    PARTIAL = "PARTIAL"
 
 
 class WorkoverProjectPool(TimestampMixin, Base):
@@ -114,7 +140,11 @@ class ContractorCapacity(TimestampMixin, Base):
     __tablename__ = "contractor_capacity"
     __table_args__ = (
         Index("ix_contractor_capacity_report_date", "report_date"),
+        Index("ix_contractor_capacity_external_system_id", "external_system_id"),
+        Index("ix_contractor_capacity_source_type", "source_type"),
+        Index("ix_contractor_capacity_sync_status", "sync_status"),
         UniqueConstraint("contractor_name", "team_name", "report_date", name="uq_contractor_capacity_team_daily"),
+        UniqueConstraint("external_system_id", "report_date", name="uq_contractor_capacity_external_daily"),
         {"comment": "承包商运力表"},
     )
 
@@ -135,8 +165,66 @@ class ContractorCapacity(TimestampMixin, Base):
         default=dict,
         comment="特定施工能力标签JSONB",
     )
+    external_system_id: Mapped[str | None] = mapped_column(String(128), comment="外部承包商系统队伍ID")
+    external_status: Mapped[str | None] = mapped_column(String(64), comment="外部系统原始状态")
+    source_type: Mapped[ContractorCapacitySourceType] = mapped_column(
+        SQLEnum(ContractorCapacitySourceType, native_enum=False, length=32),
+        default=ContractorCapacitySourceType.LOCAL_SUPPLEMENT,
+        nullable=False,
+        comment="数据来源",
+    )
+    sync_status: Mapped[ContractorCapacitySyncStatus] = mapped_column(
+        SQLEnum(ContractorCapacitySyncStatus, native_enum=False, length=32),
+        default=ContractorCapacitySyncStatus.PENDING_CONFIRM,
+        nullable=False,
+        comment="同步状态",
+    )
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="最近同步时间")
+    sync_error_message: Mapped[str | None] = mapped_column(Text, comment="同步异常信息")
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="人工确认时间")
+    confirmed_by_id: Mapped[int | None] = mapped_column(ForeignKey("sys_user.id", ondelete="SET NULL"), comment="确认人ID")
+    contact_name: Mapped[str | None] = mapped_column(String(64), comment="联系人")
+    contact_phone: Mapped[str | None] = mapped_column(String(32), comment="联系电话")
+    qualification_expire_at: Mapped[date | None] = mapped_column(Date, comment="资质有效期")
+    equipment_summary: Mapped[str | None] = mapped_column(Text, comment="设备概况")
 
     operations: Mapped[list["WorkoverOperationSheet"]] = relationship(back_populates="contractor_capacity")
+
+    @property
+    def occupied_count(self) -> int:
+        active_statuses = {OperationStatus.WAITING_DISPATCH, OperationStatus.DISPATCHED, OperationStatus.WORKING}
+        return len([item for item in self.operations if item.status in active_statuses])
+
+
+class ContractorCapacitySyncLog(TimestampMixin, Base):
+    __tablename__ = "contractor_capacity_sync_log"
+    __table_args__ = (
+        Index("ix_contractor_capacity_sync_log_started_at", "started_at"),
+        Index("ix_contractor_capacity_sync_log_status", "status"),
+        {"comment": "承包商运力同步日志表"},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="同步日志ID")
+    sync_type: Mapped[ContractorCapacitySyncType] = mapped_column(
+        SQLEnum(ContractorCapacitySyncType, native_enum=False, length=32),
+        nullable=False,
+        comment="同步方式",
+    )
+    status: Mapped[ContractorCapacitySyncResultStatus] = mapped_column(
+        SQLEnum(ContractorCapacitySyncResultStatus, native_enum=False, length=32),
+        nullable=False,
+        comment="同步结果",
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, comment="开始时间")
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="结束时间")
+    success_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="成功数量")
+    failed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="失败数量")
+    created_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="新增数量")
+    updated_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="更新数量")
+    ignored_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="忽略数量")
+    error_message: Mapped[str | None] = mapped_column(Text, comment="失败原因")
+    operator_id: Mapped[int | None] = mapped_column(ForeignKey("sys_user.id", ondelete="SET NULL"), comment="操作人ID")
+    raw_summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict, comment="原始摘要")
 
 
 class WorkoverOperationSheet(TimestampMixin, Base):

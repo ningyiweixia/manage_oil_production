@@ -239,7 +239,7 @@ const sheetStatusText: Record<OperationStatus, string> = {
   FINISHED: '已完工',
   CANCELED: '已取消'
 }
-const contractorStatusText: Record<ContractorStatus, string> = { AVAILABLE: '可用', BUSY: '忙碌', OFFLINE: '离线' }
+const contractorStatusText: Record<ContractorStatus, string> = { AVAILABLE: '可用', BUSY: '忙碌', OFFLINE: '离线', EXCEPTION: '异常' }
 const materialStatusText: Record<string, string> = {
   NONE: '无需求',
   PENDING: '待处理',

@@ -196,7 +196,7 @@ function normalizeCoreMenuOrder(item: MenuNode): MenuNode {
     return { ...item, parent_id: null, sort_order: 22 }
   }
   if (item.route_name === 'contractor_dispatch' || item.route_path === '/contractor/dispatch') {
-    return { ...item, parent_id: null, sort_order: 23 }
+    return { ...item, title: '运力同步确认', parent_id: null, sort_order: 23 }
   }
   if (item.route_name === 'workover_operation' || item.route_path === '/workover/operation-sheets') {
     return { ...item, parent_id: null, sort_order: 24 }
@@ -291,7 +291,7 @@ const sidebarMenus = computed<MenuNode[]>(() => {
       is_visible: true, is_active: true, meta: {}, children: []
     },
     {
-      id: 32, title: '智能派工', route_name: 'contractor_dispatch', route_path: '/contractor/dispatch',
+      id: 32, title: '运力同步确认', route_name: 'contractor_dispatch', route_path: '/contractor/dispatch',
       component: null, icon: 'send', parent_id: null, sort_order: 23,
       is_visible: true, is_active: true, meta: {}, children: []
     },

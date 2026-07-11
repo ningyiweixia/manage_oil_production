@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     a5_api_secret: str = ""
     a5_ip_whitelist: str = ""
     alert_webhook_url: str = ""
+    contractor_system_base_url: str = ""
+    contractor_system_token: str = ""
+    contractor_system_timeout: float = 5.0
+    contractor_system_mock_enabled: bool = True
     @computed_field
     @property
     def database_url(self) -> str:

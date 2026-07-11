@@ -26,7 +26,7 @@ const router = createRouter({
         { path: '/workover/project-pools', component: ProjectPoolLedgerView, meta: { title: '上修项目池台账' } },
         { path: '/workover/operation-sheets', component: WorkoverOperationManageView, meta: { title: '修井运行管理' } },
         { path: '/contractor/capacity', component: ContractorDispatchView, meta: { title: '承包商运力报备' } },
-        { path: '/contractor/dispatch', component: ContractorDispatchView, meta: { title: '智能派工' } },
+        { path: '/contractor/dispatch', component: ContractorDispatchView, meta: { title: '承包商运力报备' } },
         { path: '/contractor/operation-sheets', component: WorkoverOperationManageView, meta: { title: '修井运行管理' } },
         { path: '/material/requirements', component: MaterialManageView, meta: { title: '物料需求台账' } },
         { path: '/material/delivery', component: MaterialManageView, meta: { title: '物料配送跟踪' } },
