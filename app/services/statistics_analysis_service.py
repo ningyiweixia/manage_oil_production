@@ -128,11 +128,14 @@ def build_statistics_analysis(db: Session, query: StatisticsAnalysisQuery) -> di
     """Aggregate production analysis, review, and report data into one payload."""
 
     workover = build_workover_analytics(db, _build_workover_query(query))
-    operation_efficiency = _dump(build_workover_operation_dashboard(db, OperationAnalyticsQuery(
+    operation_query = OperationAnalyticsQuery(
         start_date=query.start_date, end_date=query.end_date, well_no=query.well_no,
         report_unit=query.report_unit, team_name=query.team_name, block_name=query.block_name,
-        status=query.status,
-    )))
+        status=query.status, measure_type=query.measure_type, material_status=query.material_status,
+    )
+    operation_efficiency = _dump(build_workover_operation_dashboard(
+        db, operation_query if any(operation_query.model_dump().values()) else None
+    ))
     material_usage = _dump(get_material_analytics(db, MaterialAnalyticsQuery(
         start_date=query.start_date, end_date=query.end_date, well_no=query.well_no,
         status=query.material_status,

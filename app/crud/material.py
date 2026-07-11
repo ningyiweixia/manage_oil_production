@@ -282,8 +282,16 @@ def delete_material_requirement(
     db.commit()
 
 
-def get_material_analytics(db: Session, query: MaterialAnalyticsQuery | None = None, *, well_no: str | None = None) -> dict[str, Any]:
-    query = query or MaterialAnalyticsQuery(well_no=well_no)
+def get_material_analytics(
+    db: Session,
+    query: MaterialAnalyticsQuery | str | None = None,
+    *,
+    well_no: str | None = None,
+) -> dict[str, Any]:
+    if isinstance(query, str):
+        query = MaterialAnalyticsQuery(well_no=query)
+    else:
+        query = query or MaterialAnalyticsQuery(well_no=well_no)
     stmt = select(MaterialRequirement)
     if query.well_no:
         stmt = stmt.where(MaterialRequirement.well_no.ilike(f"%{query.well_no}%"))
