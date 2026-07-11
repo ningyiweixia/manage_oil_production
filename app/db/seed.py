@@ -99,6 +99,8 @@ PERMISSION_DEFINITIONS = [
     ("completion:delete", "删除完井记录", "/api/v1/well-completions/{record_id}", "DELETE"),
     ("report:read", "查看统计报表", "/api/v1/reports", "GET"),
     ("report:export", "导出统计报表", "/api/v1/reports", "GET"),
+    ("analytics:alert:read", "查看统计告警", "/api/v1/analytics-alerts", "GET"),
+    ("analytics:alert:handle", "处理统计告警", "/api/v1/analytics-alerts", "PATCH"),
 ]
 
 ROLE_DEFINITIONS = [
@@ -137,6 +139,8 @@ ROLE_PERMISSION_CODES = {
         "completion:read",
         "report:read",
         "report:export",
+        "analytics:alert:read",
+        "analytics:alert:handle",
     },
     "base_entry_clerk": {
         "system:dictionary:read",
@@ -166,6 +170,8 @@ ROLE_PERMISSION_CODES = {
         "completion:create",
         "report:read",
         "report:export",
+        "analytics:alert:read",
+        "analytics:alert:handle",
     },
     "geology_reviewer": {
         "system:dictionary:read",
@@ -178,6 +184,7 @@ ROLE_PERMISSION_CODES = {
         "workover_operation:dashboard",
         "operation-sheet:read",
         "report:read",
+        "analytics:alert:read",
     },
     "process_reviewer": {
         "system:dictionary:read",
@@ -190,6 +197,7 @@ ROLE_PERMISSION_CODES = {
         "workover_operation:dashboard",
         "operation-sheet:read",
         "report:read",
+        "analytics:alert:read",
     },
     "production_command_reviewer": {
         "system:dictionary:read",
@@ -202,6 +210,7 @@ ROLE_PERMISSION_CODES = {
         "workover_operation:dashboard",
         "operation-sheet:read",
         "report:read",
+        "analytics:alert:read",
     },
     "contractor_operator": {
         "system:dictionary:read",

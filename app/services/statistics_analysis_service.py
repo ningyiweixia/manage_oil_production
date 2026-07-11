@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.crud.completion import CompletionAnalyticsQuery, get_completion_analytics
 from app.crud.material import MaterialAnalyticsQuery, get_material_analytics
 from app.schemas.a5_integration import A5AnalyticsQuery
+from app.services.data_quality_service import build_data_quality_summary
 from app.schemas.workover_project_pool import WorkoverAnalyticsQuery
 from app.services.a5_sync_service import build_a5_analytics
 from app.services.workover_analytics_service import build_workover_analytics
@@ -145,6 +146,7 @@ def build_statistics_analysis(db: Session, query: StatisticsAnalysisQuery) -> di
         measure_type=query.measure_type, team_name=query.team_name,
     )))
     a5 = build_a5_analytics(_build_a5_query(query))
+    data_quality = _dump(build_data_quality_summary(db, query))
 
     overview_kpis = {
         "total_projects": workover.kpis.total_projects,
@@ -155,6 +157,7 @@ def build_statistics_analysis(db: Session, query: StatisticsAnalysisQuery) -> di
         "a5_anomalies": a5.anomaly_total,
         "material_requirements": material_usage.get("total", 0),
         "completion_records": completion_classification.get("total", 0),
+        "data_quality_issues": data_quality.get("total_issues", 0),
     }
 
     a5_statistics = {
@@ -183,7 +186,8 @@ def build_statistics_analysis(db: Session, query: StatisticsAnalysisQuery) -> di
         "a5_statistics": a5_statistics,
         "material_usage": material_usage,
         "completion_classification": completion_classification,
+        "data_quality_summary": data_quality,
         "trace_sources": TRACE_SOURCES,
         "chart_series": chart_series,
-        "report_outputs": ["statistics_dashboard", "excel_report", "word_report", "analysis_summary"],
+        "report_outputs": ["statistics_dashboard", "excel_report", "word_report", "analysis_summary", "data_quality_summary"],
     }

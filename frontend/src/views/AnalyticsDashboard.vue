@@ -7,8 +7,8 @@
       </div>
       <div class="head-actions">
         <el-button :icon="Download" @click="exportSummary">导出摘要</el-button>
-        <el-button :icon="Download" @click="downloadAcceptanceExcel">导出 Excel</el-button>
-        <el-button :icon="Download" @click="downloadAcceptanceWord">导出 Word</el-button>
+        <el-button :icon="Download" @click="downloadAcceptanceExcel">导出分析 Excel</el-button>
+        <el-button :icon="Download" @click="downloadAcceptanceWord">导出分析 Word</el-button>
       </div>
     </div>
 
@@ -245,6 +245,60 @@
           </el-tag>
         </div>
       </article>
+
+      <article class="analysis-panel wide">
+        <div class="panel-head">
+          <div>
+            <h2>数据质量</h2>
+            <span>同步缺失、时间顺序、物料超额、资质临期和同步失败</span>
+          </div>
+        </div>
+        <dl class="metric-list three">
+          <div>
+            <dt>问题总数</dt>
+            <dd>{{ stats?.data_quality_summary?.total_issues ?? 0 }}</dd>
+          </div>
+          <div>
+            <dt>高风险</dt>
+            <dd>{{ stats?.data_quality_summary?.severity_counts?.high ?? 0 }}</dd>
+          </div>
+          <div>
+            <dt>中风险</dt>
+            <dd>{{ stats?.data_quality_summary?.severity_counts?.medium ?? 0 }}</dd>
+          </div>
+        </dl>
+        <div class="row-list">
+          <div v-for="issue in stats?.data_quality_summary?.issues || []" :key="`${issue.rule_code}-${issue.entity_type}-${issue.entity_id ?? 0}`" class="row-item">
+            <span>{{ issue.title }} · {{ issue.severity }}</span>
+            <el-button size="small" @click="createAlertFromIssue(issue)">纳入待办</el-button>
+          </div>
+          <el-empty v-if="!(stats?.data_quality_summary?.issues || []).length" description="暂无数据质量问题" :image-size="68" />
+        </div>
+      </article>
+
+      <article class="analysis-panel wide" v-loading="alertsLoading">
+        <div class="panel-head">
+          <div>
+            <h2>数据质量待办</h2>
+            <span>将质量问题纳入待办后，可在此开始处理或关闭；相同问题不会重复创建。</span>
+          </div>
+          <el-tag type="warning" effect="plain">待处理 {{ analyticsAlerts.length }}</el-tag>
+        </div>
+        <div class="row-list">
+          <div v-for="alert in analyticsAlerts" :key="alert.id" class="row-item alert-row">
+            <span>
+              <strong>{{ alert.title }}</strong>
+              <small>{{ alert.message }}</small>
+            </span>
+            <span class="row-actions">
+              <el-tag size="small" :type="alert.status === 'OPEN' ? 'danger' : 'warning'">{{ alert.status === 'OPEN' ? '待处理' : '处理中' }}</el-tag>
+              <el-button v-if="alert.status === 'OPEN'" size="small" type="primary" @click="startAlertHandling(alert.id)">开始处理</el-button>
+              <el-button v-if="alert.status === 'PROCESSING'" size="small" type="success" @click="closeAlert(alert.id)">关闭待办</el-button>
+            </span>
+          </div>
+          <el-empty v-if="!alertsLoading && !analyticsAlerts.length" description="暂无待处理的数据质量告警" :image-size="68" />
+        </div>
+      </article>
     </section>
   </section>
 </template>
@@ -257,7 +311,8 @@ import { Download, Refresh } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import type { ECharts, EChartsOption } from 'echarts'
 import { listDictionaryItems, type DictionaryItem } from '../api/dictionary'
-import { downloadReport, getStatisticsAnalysis, type StatisticsAnalysis } from '../api/reports'
+import { downloadStatisticsAnalysisExcel, downloadStatisticsAnalysisWord, getStatisticsAnalysis, type StatisticsAnalysis } from '../api/reports'
+import { createAnalyticsAlert, listAnalyticsAlerts, updateAnalyticsAlert, type AnalyticsAlert } from '../api/analyticsAlerts'
 import { useProjectDataChanged } from '../composables/useProjectSync'
 import { statusLabels } from '../utils/status'
 import type { ProjectPoolStatus } from '../types/workover'
@@ -266,6 +321,8 @@ const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const stats = ref<StatisticsAnalysis | null>(null)
+const analyticsAlerts = ref<AnalyticsAlert[]>([])
+const alertsLoading = ref(false)
 const measureDictionary = ref<DictionaryItem[]>([])
 const dateRange = ref<[Date, Date] | null>(null)
 const measureFilter = ref('')
@@ -479,6 +536,7 @@ async function loadDashboard() {
   loading.value = true
   try {
     stats.value = await getStatisticsAnalysis(statisticsQuery())
+    await loadAlerts()
     await nextTick()
     renderCharts()
   } finally {
@@ -513,11 +571,63 @@ function exportSummary() {
 }
 
 async function downloadAcceptanceExcel() {
-  await downloadReport('/reports/delivery-summary.xlsx', '数据统计分析阶段报表.xlsx')
+  await downloadStatisticsAnalysisExcel(statisticsQuery())
+}
+
+async function loadAlerts() {
+  alertsLoading.value = true
+  try {
+    const result = await listAnalyticsAlerts({ status: 'OPEN', page_size: 20 })
+    const processing = await listAnalyticsAlerts({ status: 'PROCESSING', page_size: 20 })
+    analyticsAlerts.value = [...result.items, ...processing.items]
+  } catch {
+    analyticsAlerts.value = []
+    ElMessage.error('数据质量待办加载失败')
+  } finally {
+    alertsLoading.value = false
+  }
+}
+
+async function createAlertFromIssue(issue: NonNullable<StatisticsAnalysis['data_quality_summary']>['issues'][number]) {
+  try {
+    await createAnalyticsAlert({
+      alert_key: `${issue.rule_code}:${issue.entity_type}:${issue.entity_id ?? issue.well_no ?? 'global'}`,
+      title: issue.title,
+      message: issue.message,
+      severity: issue.severity,
+      source_module: 'data_quality',
+      business_type: issue.entity_type,
+      business_id: issue.entity_id ?? undefined
+    })
+    ElMessage.success('已纳入数据质量待办')
+    await loadAlerts()
+  } catch {
+    ElMessage.error('待办创建失败')
+  }
+}
+
+async function startAlertHandling(alertId: number) {
+  try {
+    await updateAnalyticsAlert(alertId, { status: 'PROCESSING', remark: '已在分析看板开始处理' })
+    ElMessage.success('待办已转为处理中')
+    await loadAlerts()
+  } catch {
+    ElMessage.error('待办状态更新失败')
+  }
+}
+
+async function closeAlert(alertId: number) {
+  try {
+    await updateAnalyticsAlert(alertId, { status: 'CLOSED', remark: '已在分析看板关闭' })
+    ElMessage.success('待办已关闭')
+    await loadAlerts()
+  } catch {
+    ElMessage.error('待办关闭失败')
+  }
 }
 
 async function downloadAcceptanceWord() {
-  await downloadReport('/reports/delivery-summary.docx', '数据统计分析阶段报告.docx')
+  await downloadStatisticsAnalysisWord(statisticsQuery())
 }
 
 function resizeCharts() {
@@ -730,6 +840,26 @@ onBeforeUnmount(() => {
   padding: 10px 12px;
   background: #f6f8fb;
   border-radius: 6px;
+}
+
+.row-item.alert-row > span:first-child {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.row-item small {
+  color: #65758c;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .chart {
