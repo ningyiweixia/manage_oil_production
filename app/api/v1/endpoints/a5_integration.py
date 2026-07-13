@@ -9,7 +9,9 @@
 
 import logging
 import uuid
-from datetime import datetime, timezone
+import hashlib
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, Request
 from sqlalchemy.orm import Session
@@ -21,7 +23,6 @@ from app.core.redis import cache_client
 from app.core.status_codes import BAD_REQUEST
 from app.db.session import get_db
 from app.models.rbac import User
-from app.models.workover import WorkoverOperationSheet
 from app.schemas.a5_integration import (
     A5AnalyticsOut,
     A5AnalyticsQuery,
@@ -34,12 +35,13 @@ from app.schemas.a5_integration import (
 from app.schemas.response import ApiResponse, success
 from app.services.a5_auth_service import generate_sso_token, verify_a5_callback_signature
 from app.services.a5_sync_service import (
+    apply_a5_update_by_operation_no,
     A5_SYNC_COUNT_PREFIX,
     A5_SYNC_STATUS_KEY,
-    apply_a5_update_to_operation_sheet,
     build_a5_analytics,
     export_a5_analytics_report,
     full_sync,
+    is_supported_a5_status,
 )
 from app.tasks.a5_tasks import sync_a5_data_task
 
@@ -66,31 +68,51 @@ async def a5_callback(
     """
     # 验证回调签名（传递请求体用于 HMAC 校验）
     headers = dict(request.headers)
+    # Do not trust caller-controlled forwarding headers on this direct callback
+    # endpoint; the transport peer is the only IP usable without proxy trust config.
+    headers["x-real-ip"] = request.client.host if request.client else ""
+    headers.pop("x-forwarded-for", None)
+    if x_a5_signature:
+        headers["x-a5-signature"] = x_a5_signature
     body = await request.body()
     body_str = body.decode("utf-8") if body else ""
     if not verify_a5_callback_signature(headers, body_str):
         raise BusinessException(BAD_REQUEST, "A5 回调签名验证失败")
+    if not is_supported_a5_status(payload.status):
+        raise BusinessException(BAD_REQUEST, "A5 回调状态不在允许白名单")
+    now = datetime.now(timezone.utc)
+    if payload.event_at is not None:
+        event_at = payload.event_at if payload.event_at.tzinfo else payload.event_at.replace(tzinfo=timezone.utc)
+        if event_at < now.replace(microsecond=0) - timedelta(days=1) or event_at > now + timedelta(minutes=5):
+            raise BusinessException(BAD_REQUEST, "A5 回调事件时间已过期或超前")
+    replay_identity = payload.event_id or hashlib.sha256(body).hexdigest()
+    replay_key = f"a5:callback:replay:{replay_identity}"
+    processing_key = f"{replay_key}:processing"
+    processing_value = {"token": uuid.uuid4().hex, "received_at": now.isoformat()}
+    if cache_client.get_json(replay_key) is not None or not cache_client.set_lock_json(processing_key, processing_value, expire_seconds=300, nx=True):
+        raise BusinessException(BAD_REQUEST, "A5 回调重复提交")
 
-    # 查找对应工单
-    sheet = db.query(WorkoverOperationSheet).filter(
-        WorkoverOperationSheet.operation_no == payload.operation_no
-    ).first()
-
-    if sheet is None:
-        logger.warning(f"A5 回调: 工单 {payload.operation_no} 不存在")
-        return success({"matched": False, "operation_no": payload.operation_no}, msg="工单未匹配")
-
-    old_status = sheet.status
-    new_status = apply_a5_update_to_operation_sheet(
-        sheet,
-        status=payload.status,
-        remark=payload.remark,
-        detail=payload.model_dump(mode="json"),
-        source="callback",
-    )
-    db.commit()
-    db.refresh(sheet)
-
+    try:
+        sheet, old_status, new_status, _ = apply_a5_update_by_operation_no(
+            db,
+            payload.operation_no,
+            status=payload.status,
+            remark=payload.remark,
+            detail=payload.model_dump(mode="json"),
+            source="callback",
+        )
+        if sheet is None:
+            logger.warning(f"A5 回调: 工单 {payload.operation_no} 不存在")
+            cache_client.set_json(replay_key, {"completed_at": datetime.now(timezone.utc).isoformat(), "matched": False}, expire_seconds=86400)
+            return success({"matched": False, "operation_no": payload.operation_no}, msg="工单未匹配")
+        db.commit()
+        db.refresh(sheet)
+        cache_client.set_json(replay_key, {"completed_at": datetime.now(timezone.utc).isoformat()}, expire_seconds=86400)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        cache_client.delete_json_if_matches(processing_key, processing_value)
     logger.info(f"A5 回调成功: {payload.operation_no} {old_status} -> {new_status}")
     return success({
         "matched": True,
@@ -119,7 +141,7 @@ def sync_status(
 ) -> ApiResponse[A5SyncStatusOut]:
     """查看最近一次 A5 数据同步状态。"""
     cached = cache_client.get_json(A5_SYNC_STATUS_KEY) or {}
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
     sync_count_today = cache_client.get_json(f"{A5_SYNC_COUNT_PREFIX}{today}") or cached.get("sync_count_today", 0)
     return success(A5SyncStatusOut(
         last_sync_time=cached.get("last_sync_time"),

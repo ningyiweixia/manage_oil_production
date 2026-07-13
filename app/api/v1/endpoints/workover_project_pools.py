@@ -152,9 +152,9 @@ def analytics_summary(
 def detail(
     project_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("workover_project_pool:read")),
+    current_user: User = Depends(require_permission("workover_project_pool:read")),
 ) -> ApiResponse[WorkoverProjectPoolOut]:
-    return success(WorkoverProjectPoolOut.model_validate(get_project_pool(db, project_id)))
+    return success(WorkoverProjectPoolOut.model_validate(get_project_pool(db, project_id, current_user=current_user)))
 
 
 @router.post("/", response_model=ApiResponse[WorkoverProjectPoolOut])
@@ -187,6 +187,7 @@ def update_item(
         payload,
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
+        current_user=current_user,
     )
     return success(WorkoverProjectPoolOut.model_validate(project), msg="更新成功")
 
@@ -204,6 +205,7 @@ async def submit_items(
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
         comment=payload.comment,
+        current_user=current_user,
     )
     await push_geology_todo(
         {
@@ -224,7 +226,7 @@ async def patch_status(
     current_user: User = Depends(require_permission("workover_project_pool:approve")),
 ) -> ApiResponse[WorkoverProjectPoolOut]:
     action = ApprovalActionCode.REJECT if payload.status == ProjectPoolStatus.REJECTED else ApprovalActionCode.APPROVE
-    current_project = get_project_pool(db, project_id)
+    current_project = get_project_pool(db, project_id, current_user=current_user)
     if current_project.status == ProjectPoolStatus.REJECTED and payload.status in {
         ProjectPoolStatus.PENDING_GEOLOGY_VERIFY,
         ProjectPoolStatus.PENDING_PROCESS_VERIFY,
@@ -263,5 +265,6 @@ def delete_item(
         project_id,
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
+        current_user=current_user,
     )
     return success(msg="已删除")

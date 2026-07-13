@@ -6,19 +6,28 @@
 
 import logging
 import base64
+import uuid
 from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 from io import BytesIO
 from typing import Any
 
 import httpx
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import settings
 from app.core.exceptions import BusinessException
 from app.core.redis import cache_client
-from app.core.status_codes import A5_LINK_FAILED
-from app.models.workover import ContractorCapacityStatus, OperationStatus, ProjectPoolStatus, WorkoverOperationSheet
+from app.crud.contractor import (
+    acquire_dispatch_lock,
+    acquire_operation_lock,
+    release_dispatch_lock,
+    release_operation_lock,
+)
+from app.core.status_codes import A5_LINK_FAILED, CONFLICT
+from app.models.workover import ContractorCapacity, ContractorCapacityStatus, OperationStatus, WorkoverOperationSheet
 from app.schemas.a5_integration import A5AnalyticsOut, A5AnalyticsQuery, A5NameValueOut, A5TrendOut, A5AnalyticsReportOut
 from app.services.a5_client import A5Client
 from app.services.a5_data_cleaner import clean_daily_report, validate_operation_data
@@ -34,6 +43,7 @@ A5_PROCESS_RECORDS_PREFIX = f"{A5_PROCESS_RECORDS_KEY}:"
 A5_ANOMALY_DATES_KEY = "a5:sync:anomaly_dates"
 A5_PROCESS_DATES_KEY = "a5:sync:process_dates"
 A5_ANALYTICS_CACHE_TTL = 604800
+BUSINESS_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _normalize_a5_status(raw_status: str | None) -> OperationStatus | None:
@@ -41,7 +51,7 @@ def _normalize_a5_status(raw_status: str | None) -> OperationStatus | None:
         return None
     status = raw_status.strip().upper()
     status_map = {
-        "通过": OperationStatus.FINISHED,
+        "通过": OperationStatus.DISPATCHED,
         "办结": OperationStatus.FINISHED,
         "完成": OperationStatus.FINISHED,
         "已完成": OperationStatus.FINISHED,
@@ -77,9 +87,44 @@ def _normalize_progress(raw_progress: Any) -> int | None:
         return None
 
 
+def _a5_event_time(detail: dict[str, Any] | None) -> datetime | None:
+    if not detail:
+        return None
+    # A date alone has no ordering within a day and must not deduplicate reports.
+    for key in ("event_at", "updated_at", "report_time"):
+        raw = detail.get(key)
+        if not raw:
+            continue
+        try:
+            value = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def is_supported_a5_status(status: str | None) -> bool:
+    """Reject unknown callback/report states instead of acknowledging unusable data."""
+    return _normalize_a5_status(status) is not None
+
+
 OCCUPIED_OPERATION_STATUSES = {OperationStatus.DISPATCHED, OperationStatus.WORKING}
 
 
+def _release_contractor_capacity_once(
+    sheet: WorkoverOperationSheet,
+    *,
+    old_status: OperationStatus,
+    new_status: OperationStatus,
+) -> None:
+    if old_status not in OCCUPIED_OPERATION_STATUSES or new_status in OCCUPIED_OPERATION_STATUSES:
+        return
+    contractor = sheet.contractor_capacity
+    if contractor is None:
+        return
+    contractor.available_count += 1
+    if contractor.status not in {ContractorCapacityStatus.OFFLINE, ContractorCapacityStatus.EXCEPTION}:
+        contractor.status = ContractorCapacityStatus.AVAILABLE
 def _cache_a5_records(
     *,
     latest_key: str,
@@ -145,11 +190,32 @@ def apply_a5_update_to_operation_sheet(
     now = datetime.now(timezone.utc)
     new_status = _normalize_a5_status(status)
     old_status = sheet.status
+    merged_detail = dict(sheet.progress_detail or {})
+    event_at = _a5_event_time(detail)
+    previous_event_at = _a5_event_time({"event_at": merged_detail.get("a5_event_at")})
+    event_version = detail.get("version") if detail else None
+    previous_version = merged_detail.get("a5_event_version")
+    if (
+        event_version is not None
+        and previous_version is not None
+        and int(event_version) <= int(previous_version)
+    ) or (
+        event_version is None
+        and event_at is not None
+        and previous_event_at is not None
+        and event_at <= previous_event_at
+    ):
+        return old_status
 
     sheet.a5_status = status
     sheet.a5_remark = remark
     sheet.last_a5_sync_at = now
-    merged_detail = dict(sheet.progress_detail or {})
+    if event_at is not None:
+        merged_detail["a5_event_at"] = event_at.isoformat()
+    if event_version is not None:
+        merged_detail["a5_event_version"] = int(event_version)
+    if detail and detail.get("event_id"):
+        merged_detail["a5_event_id"] = str(detail["event_id"])
     merged_detail[f"a5_{source}"] = {
         "status": status,
         "remark": remark,
@@ -158,16 +224,34 @@ def apply_a5_update_to_operation_sheet(
     }
     sheet.progress_detail = merged_detail
 
+    # Terminal states are immutable.  Delayed or out-of-order A5 data may add
+    # trace metadata above, but must never reopen a locally completed/cancelled job.
+    if old_status in {OperationStatus.FINISHED, OperationStatus.CANCELED}:
+        return old_status
+
     normalized_progress = _normalize_progress(progress)
     if normalized_progress is not None:
-        sheet.progress = normalized_progress
+        sheet.progress = max(sheet.progress, normalized_progress)
 
     if new_status is None:
         return None
 
-    contractor = sheet.contractor_capacity
+    allowed_transitions = {
+        OperationStatus.WAITING_DISPATCH: set(),
+        OperationStatus.DISPATCHED: {OperationStatus.WAITING_DISPATCH, OperationStatus.DISPATCHED, OperationStatus.WORKING, OperationStatus.FINISHED, OperationStatus.CANCELED},
+        OperationStatus.WORKING: {OperationStatus.WAITING_DISPATCH, OperationStatus.WORKING, OperationStatus.FINISHED, OperationStatus.CANCELED},
+    }
+    if new_status not in allowed_transitions.get(old_status, set()):
+        return old_status
+
     sheet.status = new_status
-    if new_status == OperationStatus.DISPATCHED and sheet.progress < 1:
+    if new_status == OperationStatus.WAITING_DISPATCH:
+        sheet.progress = 0
+        sheet.actual_start_at = None
+        sheet.actual_end_at = None
+        sheet.contractor_capacity_id = None
+        _release_contractor_capacity_once(sheet, old_status=old_status, new_status=new_status)
+    elif new_status == OperationStatus.DISPATCHED and sheet.progress < 1:
         sheet.progress = 1
     elif new_status == OperationStatus.WORKING:
         if sheet.progress < 1:
@@ -179,20 +263,67 @@ def apply_a5_update_to_operation_sheet(
         if sheet.actual_start_at is None:
             sheet.actual_start_at = now
         sheet.actual_end_at = now
-        if contractor is not None and old_status in OCCUPIED_OPERATION_STATUSES:
-            contractor.available_count += 1
-            contractor.status = ContractorCapacityStatus.AVAILABLE
-    elif new_status in {OperationStatus.WAITING_DISPATCH, OperationStatus.CANCELED}:
-        if new_status == OperationStatus.WAITING_DISPATCH:
-            sheet.contractor_capacity_id = None
-            sheet.progress = 0
-            if sheet.project is not None:
-                sheet.project.status = ProjectPoolStatus.APPROVED
-        if contractor is not None and old_status in OCCUPIED_OPERATION_STATUSES:
-            contractor.available_count += 1
-            contractor.status = ContractorCapacityStatus.AVAILABLE
+        _release_contractor_capacity_once(
+            sheet,
+            old_status=old_status,
+            new_status=new_status,
+        )
+    elif new_status == OperationStatus.CANCELED:
+        _release_contractor_capacity_once(
+            sheet,
+            old_status=old_status,
+            new_status=new_status,
+        )
 
     return new_status
+
+
+def apply_a5_update_by_operation_no(
+    db: Session,
+    operation_no: str,
+    *,
+    status: str | None,
+    remark: str | None = None,
+    progress: int | None = None,
+    detail: dict[str, Any] | None = None,
+    source: str,
+) -> tuple[WorkoverOperationSheet | None, OperationStatus | None, OperationStatus | None, bool]:
+    """Apply an A5 event under the same work-order and capacity locks as manual updates."""
+    sheet_id = db.scalar(select(WorkoverOperationSheet.id).where(WorkoverOperationSheet.operation_no == operation_no))
+    if sheet_id is None:
+        return None, None, None, False
+    operation_token = acquire_operation_lock(sheet_id)
+    if not operation_token:
+        raise BusinessException(CONFLICT, "该工单正在被其他流程更新，请稍后重试")
+    capacity_token: str | None = None
+    contractor_id: int | None = None
+    try:
+        sheet = db.scalar(
+            select(WorkoverOperationSheet)
+            .options(selectinload(WorkoverOperationSheet.contractor_capacity), selectinload(WorkoverOperationSheet.project))
+            .where(WorkoverOperationSheet.id == sheet_id)
+            .with_for_update()
+        )
+        if sheet is None:
+            return None, None, None, False
+        old_status = sheet.status
+        before = (sheet.status, sheet.progress, sheet.a5_status, sheet.a5_remark, sheet.contractor_capacity_id)
+        contractor_id = sheet.contractor_capacity_id
+        if contractor_id is not None:
+            capacity_token = acquire_dispatch_lock(contractor_id)
+            if not capacity_token:
+                raise BusinessException(CONFLICT, "该队伍正在被其他流程更新，请稍后重试")
+            db.scalar(select(ContractorCapacity).where(ContractorCapacity.id == contractor_id).with_for_update())
+        new_status = apply_a5_update_to_operation_sheet(
+            sheet, status=status, remark=remark, progress=progress, detail=detail, source=source
+        )
+        db.flush()
+        after = (sheet.status, sheet.progress, sheet.a5_status, sheet.a5_remark, sheet.contractor_capacity_id)
+        return sheet, old_status, new_status, before != after
+    finally:
+        if contractor_id is not None:
+            release_dispatch_lock(contractor_id, capacity_token)
+        release_operation_lock(sheet_id, operation_token)
 
 
 def build_local_daily_reports(
@@ -236,7 +367,7 @@ async def sync_daily_operations(db: Session, sync_date: str | None = None) -> di
         同步统计：{total, updated, failed}
     """
     if sync_date is None:
-        sync_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        sync_date = datetime.now(BUSINESS_TZ).strftime("%Y-%m-%d")
 
     if not settings.a5_base_url:
         raw_data = build_local_daily_reports(
@@ -256,34 +387,46 @@ async def sync_daily_operations(db: Session, sync_date: str | None = None) -> di
             return {"total": 0, "updated": 0, "failed": 0, "error": exc.msg}
 
     cleaned = clean_daily_report(raw_data)
-    stats = {"total": len(cleaned), "updated": 0, "failed": 0}
+    stats = {"total": len(cleaned), "updated": 0, "unchanged": 0, "not_found": 0, "failed": 0}
+    try:
+        for record in cleaned:
+            if not validate_operation_data(record):
+                stats["failed"] += 1
+                continue
+            try:
+                # A savepoint isolates one malformed/contended record from prior
+                # successful records in the same daily batch.
+                with db.begin_nested():
+                    status = record.get("status") or record.get("operation_status")
+                    if not status:
+                        stats["failed"] += 1
+                        continue
+                    existing, _, _, changed = apply_a5_update_by_operation_no(
+                        db,
+                        record.get("operation_no", ""),
+                        status=status,
+                        remark=record.get("remark"),
+                        progress=record.get("progress"),
+                        detail=record,
+                        source="daily_report",
+                    )
+                    if existing and changed:
+                        stats["updated"] += 1
+                    elif existing:
+                        stats["unchanged"] += 1
+                    else:
+                        stats["not_found"] += 1
+            except Exception as exc:
+                logger.exception(f"日报同步更新失败: {exc}")
+                stats["failed"] += 1
 
-    for record in cleaned:
-        if not validate_operation_data(record):
-            stats["failed"] += 1
-            continue
-        try:
-            operation_no = record.get("operation_no", "")
-            existing = db.query(WorkoverOperationSheet).filter(
-                WorkoverOperationSheet.operation_no == operation_no
-            ).first()
-            if existing:
-                apply_a5_update_to_operation_sheet(
-                    existing,
-                    status=record.get("status") or record.get("operation_status") or "施工中",
-                    remark=record.get("remark"),
-                    progress=record.get("progress"),
-                    detail=record,
-                    source="daily_report",
-                )
-                stats["updated"] += 1
-        except Exception as exc:
-            logger.exception(f"日报同步更新失败: {exc}")
-            db.rollback()
-            stats["failed"] += 1
-
-    if stats["updated"] > 0 or stats["total"] > 0:
-        db.commit()
+        if stats["updated"] > 0 or stats["total"] > 0:
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        pass
 
     logger.info(f"A5 日报同步完成: {stats}")
     return stats
@@ -292,7 +435,7 @@ async def sync_daily_operations(db: Session, sync_date: str | None = None) -> di
 async def sync_anomalies(db: Session, sync_date: str | None = None) -> dict[str, Any]:
     """同步 A5 施工异常数据。"""
     if sync_date is None:
-        sync_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        sync_date = datetime.now(BUSINESS_TZ).strftime("%Y-%m-%d")
 
     client = A5Client()
     try:
@@ -316,7 +459,7 @@ async def sync_anomalies(db: Session, sync_date: str | None = None) -> dict[str,
 async def sync_process_progress(db: Session, sync_date: str | None = None) -> dict[str, Any]:
     """同步 A5 特殊工序/工序进度数据。"""
     if sync_date is None:
-        sync_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        sync_date = datetime.now(BUSINESS_TZ).strftime("%Y-%m-%d")
 
     client = A5Client()
     try:
@@ -494,9 +637,9 @@ def export_a5_analytics_report(query: A5AnalyticsQuery, template_name: str | Non
     )
 
 
-async def full_sync(db: Session) -> dict[str, Any]:
+async def _full_sync_locked(db: Session) -> dict[str, Any]:
     """全量同步 - 组合日报 + 异常 + 工序进度。"""
-    sync_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    sync_date = datetime.now(BUSINESS_TZ).strftime("%Y-%m-%d")
 
     daily_stats = await sync_daily_operations(db, sync_date)
     anomaly_stats = await sync_anomalies(db, sync_date)
@@ -538,6 +681,26 @@ async def full_sync(db: Session) -> dict[str, Any]:
     if error_message:
         raise BusinessException(A5_LINK_FAILED, str(error_message))
     return result
+
+
+async def full_sync(db: Session) -> dict[str, Any]:
+    """Run one A5 full sync at a time across scheduler and manual triggers."""
+    key = "a5:sync:global-lock"
+    token = uuid.uuid4().hex
+    value = {"token": token}
+    lock_setter = getattr(cache_client, "set_lock_json", cache_client.set_json)
+    if not lock_setter(key, value, expire_seconds=3600, nx=True):
+        return {"overall": "already_running", "message": "A5 同步正在执行"}
+    try:
+        return await _full_sync_locked(db)
+    finally:
+        current = cache_client.get_json(key)
+        if current == value:
+            matcher = getattr(cache_client, "delete_json_if_matches", None)
+            if matcher:
+                matcher(key, value)
+            else:
+                cache_client.delete(key)
 
 
 def _trigger_alert(message: str) -> None:

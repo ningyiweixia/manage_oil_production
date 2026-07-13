@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.workover import (
     ContractorCapacitySourceType,
@@ -14,37 +14,50 @@ from app.models.workover import (
 
 
 class ContractorCapacityCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     contractor_name: str = Field(min_length=1, max_length=128)
     team_name: str = Field(min_length=1, max_length=128)
     report_date: date
     available_count: int = Field(default=0, ge=0)
     status: ContractorCapacityStatus = ContractorCapacityStatus.AVAILABLE
-    capability_tags: dict[str, Any] = Field(default_factory=dict)
-    external_system_id: str | None = Field(default=None, max_length=128)
-    external_status: str | None = Field(default=None, max_length=64)
-    source_type: ContractorCapacitySourceType = ContractorCapacitySourceType.LOCAL_SUPPLEMENT
-    sync_status: ContractorCapacitySyncStatus = ContractorCapacitySyncStatus.PENDING_CONFIRM
+    capability_tags: dict[str, Any] = Field(min_length=1)
     contact_name: str | None = Field(default=None, max_length=64)
     contact_phone: str | None = Field(default=None, max_length=32)
     qualification_expire_at: date | None = None
     equipment_summary: str | None = None
 
+    @field_validator("capability_tags")
+    @classmethod
+    def validate_capability_tags(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if not any(item is True or item == "true" or item == 1 for item in value.values()):
+            raise ValueError("capability_tags must include at least one enabled capability")
+        return value
+
 
 class ContractorCapacityUpdate(BaseModel):
+    """人工维护基础资料。
+
+    运力数量、队伍状态、来源类型和同步状态由补录、同步确认、异常处理、派工/释放等专门流程维护。
+    """
+
     contractor_name: str | None = Field(default=None, min_length=1, max_length=128)
     team_name: str | None = Field(default=None, min_length=1, max_length=128)
     report_date: date | None = None
-    available_count: int | None = Field(default=None, ge=0)
-    status: ContractorCapacityStatus | None = None
     capability_tags: dict[str, Any] | None = None
     external_status: str | None = Field(default=None, max_length=64)
-    source_type: ContractorCapacitySourceType | None = None
-    sync_status: ContractorCapacitySyncStatus | None = None
     sync_error_message: str | None = None
     contact_name: str | None = Field(default=None, max_length=64)
     contact_phone: str | None = Field(default=None, max_length=32)
     qualification_expire_at: date | None = None
     equipment_summary: str | None = None
+
+    @field_validator("capability_tags")
+    @classmethod
+    def validate_optional_capability_tags(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is not None and not any(item is True or item == "true" or item == 1 for item in value.values()):
+            raise ValueError("capability_tags must include at least one enabled capability")
+        return value
 
 
 class ContractorCapacityQuery(BaseModel):
@@ -75,6 +88,7 @@ class ContractorCapacityOut(BaseModel):
     sync_error_message: str | None = None
     confirmed_at: datetime | None = None
     confirmed_by_id: int | None = None
+    created_by_id: int | None = None
     contact_name: str | None = None
     contact_phone: str | None = None
     qualification_expire_at: date | None = None
@@ -152,8 +166,9 @@ class ContractorOperationSheetLinkOut(BaseModel):
 
 
 class WorkoverOperationSheetCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     project_id: int = Field(ge=1)
-    contractor_capacity_id: int | None = None
     planned_start_at: datetime | None = None
     planned_end_at: datetime | None = None
 

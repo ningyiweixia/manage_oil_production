@@ -90,7 +90,7 @@ def verify_a5_callback_signature(
         return False
 
     # 2. 获取请求签名
-    signature = request_headers.get("X-A5-Signature", "")
+    signature = request_headers.get("x-a5-signature") or request_headers.get("X-A5-Signature", "")
     if not signature:
         logger.warning("A5 回调缺少 X-A5-Signature 请求头")
         return False
@@ -98,9 +98,8 @@ def verify_a5_callback_signature(
     # 3. HMAC-SHA256 验证请求体签名
     secret = settings.a5_api_secret
     if not secret:
-        # 未配置 secret 时，回退为宽松模式（开发环境）
-        logger.warning("A5_API_SECRET 未配置，签名验证降级为仅检查签名头存在性")
-        return True
+        logger.error("A5_API_SECRET 未配置，拒绝 A5 回调")
+        return False
 
     expected = hmac.new(
         secret.encode("utf-8"),

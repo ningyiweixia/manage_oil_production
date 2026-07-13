@@ -39,6 +39,7 @@ def list_sheets(
         query,
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
+        current_user=current_user,
     )
     return success(PageResult(items=rows, total=total, page=query.page, page_size=query.page_size))
 
@@ -54,6 +55,7 @@ def priority_sheets(
             db,
             operator_id=current_user.id,
             operator_ip=_client_ip(request),
+            current_user=current_user,
         )
     )
 
@@ -71,6 +73,7 @@ def create_sheet(
             payload,
             operator_id=current_user.id,
             operator_ip=_client_ip(request),
+            current_user=current_user,
         ),
         msg="运行表创建成功",
     )
@@ -80,9 +83,9 @@ def create_sheet(
 def sheet_detail(
     sheet_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("workover_operation:read")),
+    current_user: User = Depends(require_permission("workover_operation:read")),
 ) -> ApiResponse[dict]:
-    return success(get_workover_operation_sheet(db, sheet_id))
+    return success(get_workover_operation_sheet(db, sheet_id, current_user=current_user))
 
 
 @router.patch("/sheets/{sheet_id}/progress", response_model=ApiResponse[dict])
@@ -100,6 +103,7 @@ def update_progress(
             payload,
             operator_id=current_user.id,
             operator_ip=_client_ip(request),
+            current_user=current_user,
         ),
         msg="进度已更新",
     )
@@ -108,6 +112,6 @@ def update_progress(
 @router.get("/dashboard", response_model=ApiResponse[dict])
 def dashboard(
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("workover_operation:dashboard")),
+    current_user: User = Depends(require_permission("workover_operation:dashboard")),
 ) -> ApiResponse[dict]:
-    return success(build_workover_operation_dashboard(db))
+    return success(build_workover_operation_dashboard(db, current_user=current_user))

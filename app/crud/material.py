@@ -8,8 +8,10 @@ from pydantic import BaseModel
 from app.core.exceptions import BusinessException
 from app.core.status_codes import BAD_REQUEST, CONFLICT
 from app.models.material import MaterialRequirement, MaterialRequirementStatus
-from app.models.workover import WorkoverOperationSheet
+from app.models.rbac import User
+from app.models.workover import OperationStatus, ProjectPoolStatus, WorkoverOperationSheet, WorkoverProjectPool
 from app.schemas.material import MaterialRequirementCreate, MaterialRequirementQuery, MaterialRequirementUpdate
+from app.services.data_scope_service import apply_workover_operation_scope
 
 BUSINESS_TYPE = "material_requirement"
 
@@ -139,6 +141,32 @@ def validate_material_quantities(obj: MaterialRequirement) -> None:
         raise BusinessException(BAD_REQUEST, "到场数量不能大于出库数量")
     if obj.used_quantity and obj.used_quantity > obj.arrived_quantity:
         raise BusinessException(BAD_REQUEST, "使用数量不能大于到场数量")
+    status = _normalize_status(obj.status or MaterialRequirementStatus.PENDING)
+    required_positive = {
+        MaterialRequirementStatus.PLANNED: ("计划数量", obj.planned_quantity),
+        MaterialRequirementStatus.DELIVERED: ("出库数量", obj.delivered_quantity),
+        MaterialRequirementStatus.ARRIVED: ("到场数量", obj.arrived_quantity),
+        MaterialRequirementStatus.USED: ("使用数量", obj.used_quantity),
+    }
+    if status in required_positive and required_positive[status][1] <= 0:
+        raise BusinessException(BAD_REQUEST, f"物料状态为{status.value}时，{required_positive[status][0]}必须大于0")
+    if status == MaterialRequirementStatus.USED and obj.used_quantity != obj.quantity:
+        raise BusinessException(BAD_REQUEST, "物料标记已使用时，使用数量必须等于需求数量")
+
+
+def _validate_sheet_link(db: Session, operation_sheet_id: int | None, well_no: str, current_user: User | None = None) -> None:
+    if operation_sheet_id is None:
+        raise BusinessException(BAD_REQUEST, "物料需求必须关联修井运行表")
+    stmt = select(WorkoverOperationSheet).join(WorkoverProjectPool).where(WorkoverOperationSheet.id == operation_sheet_id)
+    if current_user is not None:
+        stmt = apply_workover_operation_scope(stmt, current_user)
+    sheet = db.scalar(stmt)
+    if sheet is None or sheet.project.well_no != well_no:
+        raise BusinessException(BAD_REQUEST, "关联运行表不存在、无权限或井号不一致")
+    if sheet.project.is_deleted or sheet.project.status not in {ProjectPoolStatus.APPROVED, ProjectPoolStatus.DISPATCHED}:
+        raise BusinessException(BAD_REQUEST, "关联项目池生命周期状态不允许维护物料")
+    if sheet.status == OperationStatus.CANCELED:
+        raise BusinessException(BAD_REQUEST, "已取消运行工单不能维护物料")
 
 
 def build_material_analytics(items: list[MaterialRequirement]) -> dict[str, Any]:
@@ -202,8 +230,10 @@ def sync_operation_sheet_material_rollup(db: Session, operation_sheet_id: int | 
     apply_material_rollup_to_operation_sheet(sheet, items)
 
 
-def list_material_requirements(db: Session, query: MaterialRequirementQuery) -> tuple[list[MaterialRequirement], int]:
-    base_stmt = _apply_filters(select(MaterialRequirement), query)
+def list_material_requirements(db: Session, query: MaterialRequirementQuery, *, current_user: User | None = None) -> tuple[list[MaterialRequirement], int]:
+    base_stmt = _apply_filters(select(MaterialRequirement).outerjoin(WorkoverOperationSheet).outerjoin(WorkoverProjectPool), query)
+    if current_user is not None:
+        base_stmt = apply_workover_operation_scope(base_stmt, current_user)
     total = db.scalar(select(func.count()).select_from(base_stmt.subquery())) or 0
     rows = db.scalars(
         base_stmt.order_by(MaterialRequirement.created_at.desc())
@@ -213,8 +243,11 @@ def list_material_requirements(db: Session, query: MaterialRequirementQuery) -> 
     return list(rows), total
 
 
-def get_material_requirement(db: Session, req_id: int) -> MaterialRequirement:
-    obj = db.get(MaterialRequirement, req_id)
+def get_material_requirement(db: Session, req_id: int, *, current_user: User | None = None) -> MaterialRequirement:
+    stmt = select(MaterialRequirement).join(WorkoverOperationSheet).join(WorkoverProjectPool).where(MaterialRequirement.id == req_id)
+    if current_user is not None:
+        stmt = apply_workover_operation_scope(stmt, current_user)
+    obj = db.scalar(stmt)
     if obj is None:
         raise BusinessException(BAD_REQUEST, "物料需求记录不存在")
     return obj
@@ -223,9 +256,11 @@ def get_material_requirement(db: Session, req_id: int) -> MaterialRequirement:
 def create_material_requirement(
     db: Session,
     payload: MaterialRequirementCreate,
+    current_user: User | None = None,
 ) -> MaterialRequirement:
     data = payload.model_dump(mode="json")
     obj = MaterialRequirement(**data)
+    _validate_sheet_link(db, obj.operation_sheet_id, obj.well_no, current_user)
     validate_material_quantities(obj)
     db.add(obj)
     db.flush()
@@ -239,8 +274,9 @@ def update_material_requirement(
     db: Session,
     req_id: int,
     payload: MaterialRequirementUpdate,
+    current_user: User | None = None,
 ) -> MaterialRequirement:
-    obj = get_material_requirement(db, req_id)
+    obj = get_material_requirement(db, req_id, current_user=current_user)
     old_operation_sheet_id = obj.operation_sheet_id
     data = payload.model_dump(mode="json", exclude_unset=True)
     for key, value in data.items():
@@ -258,6 +294,9 @@ def update_material_requirement(
             elif target == MaterialRequirementStatus.USED:
                 obj.used_at = now
         setattr(obj, key, value)
+    _validate_sheet_link(db, obj.operation_sheet_id, obj.well_no, current_user)
+    if obj.status == MaterialRequirementStatus.USED and obj.used_quantity <= 0:
+        raise BusinessException(BAD_REQUEST, "物料标记已使用时，使用数量必须大于0")
     validate_material_quantities(obj)
     db.flush()
     if old_operation_sheet_id != obj.operation_sheet_id:
@@ -271,8 +310,9 @@ def update_material_requirement(
 def delete_material_requirement(
     db: Session,
     req_id: int,
+    current_user: User | None = None,
 ) -> None:
-    obj = get_material_requirement(db, req_id)
+    obj = get_material_requirement(db, req_id, current_user=current_user)
     if obj.status not in {MaterialRequirementStatus.PENDING, MaterialRequirementStatus.CANCELED}:
         raise BusinessException(CONFLICT, "只有待处理或已取消的物料需求才能删除")
     operation_sheet_id = obj.operation_sheet_id
@@ -287,12 +327,15 @@ def get_material_analytics(
     query: MaterialAnalyticsQuery | str | None = None,
     *,
     well_no: str | None = None,
+    current_user: User | None = None,
 ) -> dict[str, Any]:
     if isinstance(query, str):
         query = MaterialAnalyticsQuery(well_no=query)
     else:
         query = query or MaterialAnalyticsQuery(well_no=well_no)
-    stmt = select(MaterialRequirement)
+    stmt = select(MaterialRequirement).join(WorkoverOperationSheet).join(WorkoverProjectPool)
+    if current_user is not None:
+        stmt = apply_workover_operation_scope(stmt, current_user)
     if query.well_no:
         stmt = stmt.where(MaterialRequirement.well_no.ilike(f"%{query.well_no}%"))
     if query.status:

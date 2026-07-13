@@ -1,12 +1,15 @@
-from fastapi import APIRouter, Depends, Request
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_permission
+from app.api.deps import require_permission
 from app.crud.contractor import (
     confirm_contractor_capacity,
     create_contractor_capacity,
     dispatch_operation,
-    get_contractor_capacity,
+    get_contractor_capacity_for_user,
     get_contractor_overview,
     get_contractor_sync_summary,
     list_contractor_capacities,
@@ -19,6 +22,9 @@ from app.crud.contractor import (
 )
 from app.db.session import get_db
 from app.models.rbac import User
+from app.services.data_scope_service import can_view_all_data
+from app.core.exceptions import BusinessException
+from app.core.status_codes import FORBIDDEN
 from app.schemas.contractor import (
     ContractorCapacityCreate,
     ContractorCapacityOverview,
@@ -61,9 +67,9 @@ def _client_ip(request: Request) -> str | None:
 def list_items(
     query: ContractorCapacityQuery = Depends(),
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("contractor:read")),
+    current_user: User = Depends(require_permission("contractor:read")),
 ) -> ApiResponse[PageResult[ContractorCapacityOut]]:
-    rows, total = list_contractor_capacities(db, query)
+    rows, total = list_contractor_capacities(db, query, current_user=current_user)
     items = [ContractorCapacityOut.model_validate(row) for row in rows]
     return success(
         PageResult(items=items, total=total, page=query.page, page_size=query.page_size)
@@ -73,21 +79,20 @@ def list_items(
 @router.get("/sync-summary", response_model=ApiResponse[ContractorSyncSummary])
 def sync_summary(
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("contractor:read")),
+    current_user: User = Depends(require_permission("contractor:read")),
 ) -> ApiResponse[ContractorSyncSummary]:
+    if not can_view_all_data(current_user):
+        raise BusinessException(FORBIDDEN, "无权查看全局同步摘要")
     return success(ContractorSyncSummary(**get_contractor_sync_summary(db)))
 
 
 @router.get("/overview", response_model=ApiResponse[ContractorCapacityOverview])
 def capacity_overview(
-    report_date: str | None = None,
+    report_date: date | None = Query(default=None),
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("contractor:read")),
+    current_user: User = Depends(require_permission("contractor:read")),
 ) -> ApiResponse[ContractorCapacityOverview]:
-    from datetime import date
-
-    parsed_date = date.fromisoformat(report_date) if report_date else None
-    return success(ContractorCapacityOverview(**get_contractor_overview(db, report_date=parsed_date)))
+    return success(ContractorCapacityOverview(**get_contractor_overview(db, report_date=report_date, current_user=current_user)))
 
 
 @router.post("/sync", response_model=ApiResponse[ContractorCapacitySyncLogOut])
@@ -99,9 +104,11 @@ def sync_capacities(
 ) -> ApiResponse[ContractorCapacitySyncLogOut]:
     from datetime import date
 
+    if not can_view_all_data(current_user):
+        raise BusinessException(FORBIDDEN, "无权触发全量承包商运力同步")
     log = sync_contractor_capacities(
         db,
-        report_date=payload.report_date or date.today(),
+        report_date=payload.report_date or datetime.now(ZoneInfo("Asia/Shanghai")).date(),
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
     )
@@ -112,8 +119,10 @@ def sync_capacities(
 def sync_logs(
     query: ContractorCapacitySyncLogQuery = Depends(),
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("contractor:read")),
+    current_user: User = Depends(require_permission("contractor:read")),
 ) -> ApiResponse[PageResult[ContractorCapacitySyncLogOut]]:
+    if not can_view_all_data(current_user):
+        raise BusinessException(FORBIDDEN, "无权查看全局同步日志")
     rows, total = list_contractor_sync_logs(db, query)
     items = [ContractorCapacitySyncLogOut.model_validate(row) for row in rows]
     return success(PageResult(items=items, total=total, page=query.page, page_size=query.page_size))
@@ -127,7 +136,7 @@ def create_item(
     current_user: User = Depends(require_permission("contractor:create")),
 ) -> ApiResponse[ContractorCapacityOut]:
     obj = create_contractor_capacity(
-        db, payload, operator_id=current_user.id, operator_ip=_client_ip(request)
+        db, payload, operator_id=current_user.id, operator_ip=_client_ip(request), current_user=current_user
     )
     return success(ContractorCapacityOut.model_validate(obj), msg="报备成功")
 
@@ -143,6 +152,7 @@ def list_priority_sheets(
         db,
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
+        current_user=current_user,
     )
     return success(items)
 
@@ -159,6 +169,7 @@ def list_sheets(
         query,
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
+        current_user=current_user,
     )
     return success(
         PageResult(items=rows, total=total, page=query.page, page_size=query.page_size)
@@ -173,7 +184,7 @@ def create_sheet(
     current_user: User = Depends(require_permission("operation-sheet:create")),
 ) -> ApiResponse[WorkoverOperationSheetOut]:
     sheet = create_workover_operation_sheet(
-        db, payload, operator_id=current_user.id, operator_ip=_client_ip(request)
+        db, payload, operator_id=current_user.id, operator_ip=_client_ip(request), current_user=current_user
     )
     return success(sheet, msg="工单创建成功")
 
@@ -182,9 +193,9 @@ def create_sheet(
 def sheet_detail(
     sheet_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("operation-sheet:read")),
+    current_user: User = Depends(require_permission("operation-sheet:read")),
 ) -> ApiResponse[WorkoverOperationSheetOut]:
-    return success(get_workover_operation_sheet(db, sheet_id))
+    return success(get_workover_operation_sheet(db, sheet_id, current_user=current_user))
 
 
 @router.patch("/dispatch", response_model=ApiResponse[DispatchA5Out])
@@ -201,6 +212,7 @@ def dispatch(
         payload.contractor_capacity_id,
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
+        current_user=current_user,
     )
     token = generate_sso_token(
         sheet.project_well_no or sheet.operation_no,
@@ -228,7 +240,12 @@ def update_progress(
 ) -> ApiResponse[WorkoverOperationSheetOut]:
     """更新施工进度，进度到达 100% 自动推进工单状态。"""
     sheet = update_workover_operation_progress(
-        db, sheet_id, payload, operator_id=current_user.id, operator_ip=_client_ip(request)
+        db,
+        sheet_id,
+        payload,
+        operator_id=current_user.id,
+        operator_ip=_client_ip(request),
+        current_user=current_user,
     )
     return success(sheet, msg="进度已更新")
 
@@ -236,19 +253,19 @@ def update_progress(
 @router.get("/analytics/summary", response_model=ApiResponse[dict])
 def operation_analytics(
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("operation-sheet:read")),
+    current_user: User = Depends(require_permission("operation-sheet:read")),
 ) -> ApiResponse[dict]:
     """修井运行基础统计：运行状态分布、派工完成率、队伍工作量、措施类型分布。"""
-    return success(build_workover_operation_dashboard(db))
+    return success(build_workover_operation_dashboard(db, current_user=current_user))
 
 
 @router.get("/{contractor_id}", response_model=ApiResponse[ContractorCapacityOut])
 def detail(
     contractor_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("contractor:read")),
+    current_user: User = Depends(require_permission("contractor:read")),
 ) -> ApiResponse[ContractorCapacityOut]:
-    return success(ContractorCapacityOut.model_validate(get_contractor_capacity(db, contractor_id)))
+    return success(ContractorCapacityOut.model_validate(get_contractor_capacity_for_user(db, contractor_id, current_user)))
 
 
 @router.post("/{contractor_id}/sync", response_model=ApiResponse[ContractorCapacitySyncLogOut])
@@ -260,9 +277,8 @@ def sync_one_capacity(
 ) -> ApiResponse[ContractorCapacitySyncLogOut]:
     from app.models.workover import ContractorCapacitySyncType
 
-    obj = get_contractor_capacity(db, contractor_id)
+    obj = get_contractor_capacity_for_user(db, contractor_id, current_user, require_manage=True)
     if not obj.external_system_id:
-        from app.core.exceptions import BusinessException
         from app.core.status_codes import BAD_REQUEST
 
         raise BusinessException(BAD_REQUEST, "本地补录记录没有外部系统ID，不能单队伍重试")
@@ -284,7 +300,7 @@ def confirm_capacity(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("contractor:update")),
 ) -> ApiResponse[ContractorCapacityOut]:
-    obj = confirm_contractor_capacity(db, contractor_id, operator_id=current_user.id, operator_ip=_client_ip(request))
+    obj = confirm_contractor_capacity(db, contractor_id, operator_id=current_user.id, operator_ip=_client_ip(request), current_user=current_user)
     return success(ContractorCapacityOut.model_validate(obj), msg="已确认同步")
 
 
@@ -302,6 +318,7 @@ def mark_exception(
         reason=payload.reason,
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
+        current_user=current_user,
     )
     return success(ContractorCapacityOut.model_validate(obj), msg="已标记异常")
 
@@ -313,7 +330,7 @@ def resolve_exception(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_permission("contractor:update")),
 ) -> ApiResponse[ContractorCapacityOut]:
-    obj = resolve_contractor_exception(db, contractor_id, operator_id=current_user.id, operator_ip=_client_ip(request))
+    obj = resolve_contractor_exception(db, contractor_id, operator_id=current_user.id, operator_ip=_client_ip(request), current_user=current_user)
     return success(ContractorCapacityOut.model_validate(obj), msg="异常已解除")
 
 
@@ -321,9 +338,9 @@ def resolve_exception(
 def linked_operation_sheets(
     contractor_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("operation-sheet:read")),
+    current_user: User = Depends(require_permission("operation-sheet:read")),
 ) -> ApiResponse[list[ContractorOperationSheetLinkOut]]:
-    return success([ContractorOperationSheetLinkOut(**item) for item in list_contractor_operation_sheets(db, contractor_id)])
+    return success([ContractorOperationSheetLinkOut(**item) for item in list_contractor_operation_sheets(db, contractor_id, current_user=current_user)])
 
 
 @router.put("/{contractor_id}", response_model=ApiResponse[ContractorCapacityOut])
@@ -335,6 +352,11 @@ def update_item(
     current_user: User = Depends(require_permission("contractor:update")),
 ) -> ApiResponse[ContractorCapacityOut]:
     obj = update_contractor_capacity(
-        db, contractor_id, payload, operator_id=current_user.id, operator_ip=_client_ip(request)
+        db,
+        contractor_id,
+        payload,
+        operator_id=current_user.id,
+        operator_ip=_client_ip(request),
+        current_user=current_user,
     )
     return success(ContractorCapacityOut.model_validate(obj), msg="更新成功")

@@ -9,6 +9,9 @@ class A5CallbackPayload(BaseModel):
     operation_no: str = Field(min_length=1, max_length=64, description="A5 作业编号")
     status: str = Field(max_length=64, description="A5 工单状态（通过/办结/驳回等）")
     remark: str | None = Field(default=None, description="备注说明")
+    event_id: str | None = Field(default=None, max_length=128)
+    event_at: datetime | None = None
+    version: int | None = Field(default=None, ge=0)
 
 
 class A5TokenResponse(BaseModel):

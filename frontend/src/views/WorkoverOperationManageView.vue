@@ -117,8 +117,10 @@
         <template #default="{ row }">
           <div class="table-actions operation-actions">
             <el-button text type="primary" @click="openDetail(row)">查看详情</el-button>
-            <el-button v-if="row.status === 'WAITING_DISPATCH'" text type="primary" @click="openDispatch(row)">分配队伍</el-button>
-            <el-button v-else-if="row.status === 'WORKING'" text type="primary" @click="openProgress(row)">更新进度</el-button>
+            <el-button v-if="canDispatch && row.status === 'WAITING_DISPATCH'" text type="primary" @click="openDispatch(row)">分配队伍</el-button>
+            <el-button v-else-if="canUpdateProgress && (row.status === 'DISPATCHED' || row.status === 'WORKING')" text type="primary" @click="openProgress(row)">
+              {{ row.status === 'DISPATCHED' ? '开始施工' : '更新进度' }}
+            </el-button>
           </div>
         </template>
       </el-table-column>
@@ -158,7 +160,7 @@
   <el-dialog v-model="progressVisible" title="更新进度" width="480px">
     <el-form label-position="top">
       <el-form-item label="施工进度">
-        <el-slider v-model="progressValue" :max="100" show-input />
+        <el-slider v-model="progressValue" :min="progressMinimum" :max="100" show-input />
       </el-form-item>
       <el-form-item label="备注">
         <el-input v-model="progressRemark" type="textarea" :rows="3" placeholder="填写现场进展、异常或交接说明" />
@@ -261,6 +263,7 @@ const progressVisible = ref(false)
 const progressTarget = ref<ManagedOperationSheet | null>(null)
 const progressValue = ref(0)
 const progressRemark = ref('')
+const progressMinimum = computed(() => Math.max(1, progressTarget.value?.progress || 0))
 const dispatchVisible = ref(false)
 const dispatchTarget = ref<ManagedOperationSheet | null>(null)
 const dispatchContractorId = ref<number>()
@@ -268,6 +271,15 @@ const availableContractors = ref<ContractorCapacity[]>([])
 const detailVisible = ref(false)
 const detailTarget = ref<ManagedOperationSheet | null>(null)
 const query = reactive<OperationSheetQuery>({ page: 1, page_size: 10, status: '' })
+const permissions = (() => {
+  try { return new Set<string>(JSON.parse(localStorage.getItem('permissions') || '[]')) } catch { return new Set<string>() }
+})()
+const canDispatch = computed(() => permissions.has('operation-sheet:dispatch'))
+const canUpdateProgress = computed(() => permissions.has('workover_operation:update') || permissions.has('operation-sheet:update'))
+const capabilityAlias: Record<string, string> = {
+  major_workover: 'major_repair', pump_repair: 'major_repair', pump_inspection: 'major_repair',
+  sand_washing: 'sand_control', tubing_replacement: 'major_repair', casing_damage_treatment: 'major_repair'
+}
 
 const statusCounts = computed(() => ({
   waiting: dashboard.value?.status_distribution.waiting_dispatch || 0,
@@ -374,8 +386,27 @@ async function openDispatch(row: ManagedOperationSheet) {
   dispatchTarget.value = row
   dispatchContractorId.value = row.contractor_capacity_id || undefined
   dispatchVisible.value = true
-  const result = await listContractors({ page: 1, page_size: 100, status: 'AVAILABLE' })
-  availableContractors.value = result.items
+  const today = formatLocalDate(new Date())
+  const requiredCapabilities = measureTypes(row)
+  const result = await listContractors({
+    page: 1,
+    page_size: 100,
+    status: 'AVAILABLE',
+    sync_status: 'SYNCED',
+    report_date: today
+  })
+  availableContractors.value = result.items.filter((item) => {
+    const qualificationValid = Boolean(item.qualification_expire_at && item.qualification_expire_at >= today)
+    const capabilityMatched = requiredCapabilities.every((capability) => item.capability_tags?.[capabilityAlias[capability] || capability] === true)
+    return item.available_count > 0 && qualificationValid && capabilityMatched
+  })
+}
+
+function formatLocalDate(value: Date) {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 async function saveDispatch() {

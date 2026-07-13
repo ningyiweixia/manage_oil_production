@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+
+import httpx
 
 from app.core.config import settings
 from app.models.workover import ContractorCapacityStatus
+
+logger = logging.getLogger(__name__)
 
 
 class ContractorExternalClientError(RuntimeError):
@@ -77,6 +80,7 @@ class ContractorExternalClient:
         self.token = settings.contractor_system_token if token is None else token
         self.timeout = settings.contractor_system_timeout if timeout is None else timeout
         self.mock_enabled = settings.contractor_system_mock_enabled if mock_enabled is None else mock_enabled
+        self.invalid_rows: list[dict[str, str]] = []
 
     @property
     def connection_status(self) -> str:
@@ -87,10 +91,13 @@ class ContractorExternalClient:
         return "异常"
 
     def fetch_capacities(self, *, report_date: date, external_system_id: str | None = None) -> list[ExternalContractorTeam]:
+        self.invalid_rows = []
         if not self.base_url:
             if self.mock_enabled:
                 return self._mock_capacities(report_date, external_system_id=external_system_id)
             raise ContractorExternalClientError("外部承包商系统未配置 base_url")
+        if not self.base_url.startswith("https://"):
+            raise ContractorExternalClientError("外部承包商系统 base_url 必须使用 HTTPS")
         if not self.token:
             raise ContractorExternalClientError("外部承包商系统未配置 token")
 
@@ -98,15 +105,16 @@ class ContractorExternalClient:
         if external_system_id:
             params["external_system_id"] = external_system_id
         url = f"{self.base_url}/api/capacities?{urlencode(params)}"
-        request = Request(url, headers={"Authorization": f"Bearer {self.token}", "Accept": "application/json"})
         try:
-            with urlopen(request, timeout=self.timeout) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            if exc.code in {401, 403}:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.get(url, headers={"Authorization": f"Bearer {self.token}", "Accept": "application/json"})
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in {401, 403}:
                 raise ContractorExternalClientError("外部承包商系统鉴权失败") from exc
-            raise ContractorExternalClientError(f"外部承包商系统请求失败：HTTP {exc.code}") from exc
-        except URLError as exc:
+            raise ContractorExternalClientError(f"外部承包商系统请求失败：HTTP {exc.response.status_code}") from exc
+        except httpx.RequestError as exc:
             raise ContractorExternalClientError("外部承包商系统网络异常") from exc
         except json.JSONDecodeError as exc:
             raise ContractorExternalClientError("外部承包商系统响应不是有效 JSON") from exc
@@ -114,7 +122,14 @@ class ContractorExternalClient:
         rows = payload.get("items") if isinstance(payload, dict) else payload
         if not isinstance(rows, list):
             raise ContractorExternalClientError("外部承包商系统响应格式异常：缺少 items 列表")
-        return [self._parse_team(row, default_report_date=report_date) for row in rows]
+        teams: list[ExternalContractorTeam] = []
+        for index, row in enumerate(rows):
+            try:
+                teams.append(self._parse_team(row, default_report_date=report_date))
+            except (ContractorExternalClientError, TypeError, ValueError) as exc:
+                logger.warning("忽略外部承包商坏数据: %s", exc)
+                self.invalid_rows.append({"row_index": str(index), "error": str(exc)})
+        return teams
 
     def _parse_team(self, row: Any, *, default_report_date: date) -> ExternalContractorTeam:
         if not isinstance(row, dict):
@@ -127,11 +142,14 @@ class ContractorExternalClient:
         if not isinstance(capability_tags, dict):
             raise ContractorExternalClientError("外部承包商系统能力标签格式异常")
         expire_at = row.get("qualification_expire_at")
+        row_report_date = _parse_date(row.get("report_date") or default_report_date, "report_date")
+        if row_report_date != default_report_date:
+            raise ContractorExternalClientError("外部承包商运力日期与请求日期不一致")
         return ExternalContractorTeam(
             external_system_id=str(row["external_system_id"]),
             contractor_name=str(row["contractor_name"]),
             team_name=str(row["team_name"]),
-            report_date=_parse_date(row.get("report_date") or default_report_date, "report_date"),
+            report_date=row_report_date,
             available_count=max(int(row.get("available_count") or 0), 0),
             status=_normalize_status(row.get("status")),
             external_status=str(row.get("external_status") or row.get("status") or ""),

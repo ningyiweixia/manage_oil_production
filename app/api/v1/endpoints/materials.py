@@ -49,9 +49,9 @@ def ensure_material_update_allowed(user: User, target_status: object | None) -> 
 def list_items(
     query: MaterialRequirementQuery = Depends(),
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("material:read")),
+    current_user: User = Depends(require_permission("material:read")),
 ) -> ApiResponse[PageResult[MaterialRequirementOut]]:
-    rows, total = list_material_requirements(db, query)
+    rows, total = list_material_requirements(db, query, current_user=current_user)
     items = [MaterialRequirementOut.model_validate(row) for row in rows]
     return success(
         PageResult(items=items, total=total, page=query.page, page_size=query.page_size)
@@ -62,9 +62,9 @@ def list_items(
 def create_item(
     payload: MaterialRequirementCreate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("material:create")),
+    current_user: User = Depends(require_permission("material:create")),
 ) -> ApiResponse[MaterialRequirementOut]:
-    obj = create_material_requirement(db, payload)
+    obj = create_material_requirement(db, payload, current_user=current_user)
     return success(MaterialRequirementOut.model_validate(obj), msg="物料需求创建成功")
 
 
@@ -72,18 +72,18 @@ def create_item(
 def analytics(
     well_no: str | None = None,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("material:read")),
+    current_user: User = Depends(require_permission("material:read")),
 ) -> ApiResponse[dict]:
-    return success(get_material_analytics(db, well_no))
+    return success(get_material_analytics(db, well_no, current_user=current_user))
 
 
 @router.get("/{req_id}", response_model=ApiResponse[MaterialRequirementOut])
 def detail(
     req_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("material:read")),
+    current_user: User = Depends(require_permission("material:read")),
 ) -> ApiResponse[MaterialRequirementOut]:
-    return success(MaterialRequirementOut.model_validate(get_material_requirement(db, req_id)))
+    return success(MaterialRequirementOut.model_validate(get_material_requirement(db, req_id, current_user=current_user)))
 
 
 @router.put("/{req_id}", response_model=ApiResponse[MaterialRequirementOut])
@@ -94,7 +94,7 @@ def update_item(
     current_user: User = Depends(require_permission("material:update")),
 ) -> ApiResponse[MaterialRequirementOut]:
     ensure_material_update_allowed(current_user, payload.status)
-    obj = update_material_requirement(db, req_id, payload)
+    obj = update_material_requirement(db, req_id, payload, current_user=current_user)
     return success(MaterialRequirementOut.model_validate(obj), msg="物料需求已更新")
 
 
@@ -102,9 +102,7 @@ def update_item(
 def delete_item(
     req_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("material:delete")),
+    current_user: User = Depends(require_permission("material:delete")),
 ) -> ApiResponse[None]:
-    delete_material_requirement(db, req_id)
+    delete_material_requirement(db, req_id, current_user=current_user)
     return success(msg="物料需求已删除")
-
-

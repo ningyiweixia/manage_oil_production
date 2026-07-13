@@ -1,14 +1,17 @@
 import uuid
 from datetime import date, datetime, time, timezone
+from zoneinfo import ZoneInfo
 from typing import Any
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, case, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.exceptions import BusinessException
 from app.core.redis import cache_client
-from app.core.status_codes import BAD_REQUEST, CONFLICT
+from app.core.status_codes import BAD_REQUEST, CONFLICT, FORBIDDEN
 from app.models.approval import ApprovalAction
+from app.models.rbac import User
 from app.models.workover import (
     ContractorCapacity,
     ContractorCapacitySourceType,
@@ -34,6 +37,11 @@ from app.schemas.contractor import (
     WorkoverOperationSheetUpdate,
 )
 from app.services.audit_service import write_approval_log
+from app.services.data_scope_service import (
+    apply_contractor_capacity_read_scope,
+    apply_workover_operation_scope,
+    can_manage_contractor_capacity,
+)
 from app.services.dictionary_service import ensure_dictionary_values
 from app.services.contractor_external_client import ContractorExternalClient, ContractorExternalClientError, ExternalContractorTeam
 
@@ -42,6 +50,25 @@ BUSINESS_TYPE_OPERATION = "workover_operation_sheet"
 
 LOCK_PREFIX = "dispatch:lock:"
 LOCK_TTL = 30  # seconds
+ACTIVE_OPERATION_STATUSES = {OperationStatus.DISPATCHED, OperationStatus.WORKING}
+BUSINESS_TZ = ZoneInfo("Asia/Shanghai")
+CAPABILITY_ALIASES = {
+    "major_workover": "major_repair", "pump_repair": "major_repair", "pump_inspection": "major_repair",
+    "sand_washing": "sand_control", "tubing_replacement": "major_repair", "casing_damage_treatment": "major_repair",
+}
+CONTRACTOR_CREATE_UPSERT_FIELDS = {
+    "available_count",
+    "status",
+    "capability_tags",
+    "external_system_id",
+    "external_status",
+    "source_type",
+    "sync_status",
+    "contact_name",
+    "contact_phone",
+    "qualification_expire_at",
+    "equipment_summary",
+}
 
 
 def _contractor_snapshot(obj: ContractorCapacity) -> dict[str, Any]:
@@ -59,6 +86,7 @@ def _contractor_snapshot(obj: ContractorCapacity) -> dict[str, Any]:
         "sync_status": obj.sync_status.value if isinstance(obj.sync_status, ContractorCapacitySyncStatus) else obj.sync_status,
         "last_synced_at": obj.last_synced_at.isoformat() if obj.last_synced_at else None,
         "sync_error_message": obj.sync_error_message,
+        "created_by_id": obj.created_by_id,
         "contact_name": obj.contact_name,
         "contact_phone": obj.contact_phone,
         "qualification_expire_at": str(obj.qualification_expire_at) if obj.qualification_expire_at else None,
@@ -116,34 +144,57 @@ def _apply_sheet_filters(stmt: Select[tuple[WorkoverOperationSheet]], query: Wor
                 ContractorCapacity.team_name.ilike(keyword),
             )
         )
+    effective_start = func.coalesce(
+        WorkoverOperationSheet.actual_start_at,
+        WorkoverOperationSheet.planned_start_at,
+    )
+    effective_end = func.coalesce(
+        WorkoverOperationSheet.actual_end_at,
+        WorkoverOperationSheet.planned_end_at,
+    )
     if query.start_date:
         start_at = datetime.combine(query.start_date, time.min)
-        stmt = stmt.where(
-            or_(
-                WorkoverOperationSheet.planned_start_at >= start_at,
-                WorkoverOperationSheet.actual_start_at >= start_at,
-            )
-        )
+        stmt = stmt.where(or_(effective_end.is_(None), effective_end >= start_at))
     if query.end_date:
         end_at = datetime.combine(query.end_date, time.max)
-        stmt = stmt.where(
-            or_(
-                WorkoverOperationSheet.planned_end_at <= end_at,
-                WorkoverOperationSheet.actual_end_at <= end_at,
-            )
-        )
+        stmt = stmt.where(effective_start <= end_at)
     return stmt
 
 
-def list_contractor_capacities(db: Session, query: ContractorCapacityQuery) -> tuple[list[ContractorCapacity], int]:
-    base_stmt = _apply_contractor_filters(select(ContractorCapacity).options(selectinload(ContractorCapacity.operations)), query)
+def _occupied_count_subquery():
+    return (
+        select(
+            WorkoverOperationSheet.contractor_capacity_id.label("contractor_capacity_id"),
+            func.count(WorkoverOperationSheet.id).label("occupied_count"),
+        )
+        .where(
+            WorkoverOperationSheet.contractor_capacity_id.is_not(None),
+            WorkoverOperationSheet.status.in_(ACTIVE_OPERATION_STATUSES),
+        )
+        .group_by(WorkoverOperationSheet.contractor_capacity_id)
+        .subquery()
+    )
+
+
+def list_contractor_capacities(db: Session, query: ContractorCapacityQuery, *, current_user: User | None = None) -> tuple[list[ContractorCapacity], int]:
+    base_stmt = _apply_contractor_filters(select(ContractorCapacity), query)
+    if current_user is not None:
+        base_stmt = apply_contractor_capacity_read_scope(base_stmt, current_user)
     total = db.scalar(select(func.count()).select_from(base_stmt.subquery())) or 0
-    rows = db.scalars(
-        base_stmt.order_by(ContractorCapacity.report_date.desc(), ContractorCapacity.created_at.desc())
+    occupied_counts = _occupied_count_subquery()
+    rows = db.execute(
+        base_stmt
+        .outerjoin(occupied_counts, ContractorCapacity.id == occupied_counts.c.contractor_capacity_id)
+        .add_columns(func.coalesce(occupied_counts.c.occupied_count, 0))
+        .order_by(ContractorCapacity.report_date.desc(), ContractorCapacity.created_at.desc())
         .offset((query.page - 1) * query.page_size)
         .limit(query.page_size)
     ).all()
-    return list(rows), total
+    items: list[ContractorCapacity] = []
+    for obj, occupied_count in rows:
+        obj._occupied_count = occupied_count
+        items.append(obj)
+    return items, total
 
 
 def get_contractor_capacity(db: Session, contractor_id: int) -> ContractorCapacity:
@@ -153,26 +204,94 @@ def get_contractor_capacity(db: Session, contractor_id: int) -> ContractorCapaci
     return obj
 
 
+def get_contractor_capacity_for_user(db: Session, contractor_id: int, user: User, *, require_manage: bool = False) -> ContractorCapacity:
+    obj = get_contractor_capacity(db, contractor_id)
+    if require_manage:
+        allowed = can_manage_contractor_capacity(user, obj)
+    else:
+        scoped = apply_contractor_capacity_read_scope(
+            select(ContractorCapacity.id).where(ContractorCapacity.id == contractor_id),
+            user,
+        )
+        allowed = db.scalar(scoped.limit(1)) is not None
+    if not allowed:
+        raise BusinessException(FORBIDDEN, "无权访问该承包商运力记录")
+    return obj
+
+
 def create_contractor_capacity(
     db: Session,
     payload: ContractorCapacityCreate,
     *,
     operator_id: int,
     operator_ip: str | None,
+    current_user: User | None = None,
     commit: bool = True,
 ) -> ContractorCapacity:
-    data = payload.model_dump(mode="json")
-    obj = ContractorCapacity(**data)
-    db.add(obj)
-    db.flush()
+    data = payload.model_dump()
+    # Provenance and confirmation are server-owned for locally supplemented data.
+    data.update({
+        "external_system_id": None,
+        "external_status": None,
+        "source_type": ContractorCapacitySourceType.LOCAL_SUPPLEMENT,
+        "sync_status": ContractorCapacitySyncStatus.PENDING_CONFIRM,
+    })
+    existing = db.scalar(
+        select(ContractorCapacity)
+        .where(
+            ContractorCapacity.contractor_name == payload.contractor_name,
+            ContractorCapacity.team_name == payload.team_name,
+            ContractorCapacity.report_date == payload.report_date,
+        )
+        .limit(1)
+    )
+    if (
+        existing is not None
+        and existing.source_type == ContractorCapacitySourceType.EXTERNAL_SYNC
+        and existing.sync_status not in {ContractorCapacitySyncStatus.CONFLICT, ContractorCapacitySyncStatus.INVALID}
+    ):
+        raise BusinessException(CONFLICT, "同日同队伍已存在外部同步运力，请在同步确认流程中处理")
+    if existing is not None:
+        if current_user is not None:
+            if not can_manage_contractor_capacity(current_user, existing):
+                raise BusinessException(FORBIDDEN, "无权覆盖其他用户的同日同队伍报备")
+        elif existing.created_by_id is not None and existing.created_by_id != operator_id:
+            raise BusinessException(FORBIDDEN, "无权覆盖其他用户的同日同队伍报备")
+
+    obj = existing or ContractorCapacity(
+        contractor_name=payload.contractor_name,
+        team_name=payload.team_name,
+        report_date=payload.report_date,
+        created_by_id=operator_id,
+    )
+    before = _contractor_snapshot(obj) if existing is not None else None
+    if existing is None:
+        db.add(obj)
+    for key, value in data.items():
+        if existing is None or key in CONTRACTOR_CREATE_UPSERT_FIELDS:
+            setattr(obj, key, value)
+    if existing is not None:
+        obj.created_by_id = operator_id
+        obj.sync_status = ContractorCapacitySyncStatus.PENDING_CONFIRM
+        obj.confirmed_at = None
+        obj.confirmed_by_id = None
+    else:
+        obj.source_type = ContractorCapacitySourceType.LOCAL_SUPPLEMENT
+        obj.sync_status = ContractorCapacitySyncStatus.PENDING_CONFIRM
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise BusinessException(CONFLICT, "同日同队伍运力已存在，请刷新后修改现有报备") from exc
     write_approval_log(
         db,
         business_type=BUSINESS_TYPE_CONTRACTOR,
         business_id=obj.id,
-        node_code="CONTRACTOR_CAPACITY_CREATE",
-        action=ApprovalAction.CREATE,
+        node_code="CONTRACTOR_CAPACITY_CREATE" if existing is None else "CONTRACTOR_CAPACITY_REDECLARE",
+        action=ApprovalAction.CREATE if existing is None else ApprovalAction.UPDATE,
         operator_id=operator_id,
         operator_ip=operator_ip,
+        before_snapshot=before,
         after_snapshot=_contractor_snapshot(obj),
     )
     if commit:
@@ -182,8 +301,7 @@ def create_contractor_capacity(
 
 
 def _active_occupied_count(obj: ContractorCapacity) -> int:
-    active_statuses = {OperationStatus.WAITING_DISPATCH, OperationStatus.DISPATCHED, OperationStatus.WORKING}
-    return sum(1 for sheet in obj.operations if sheet.status in active_statuses)
+    return sum(1 for sheet in obj.operations if sheet.status in ACTIVE_OPERATION_STATUSES)
 
 
 def _local_status_from_external(team: ExternalContractorTeam, available_count: int) -> ContractorCapacityStatus:
@@ -191,7 +309,7 @@ def _local_status_from_external(team: ExternalContractorTeam, available_count: i
         return team.status
     if available_count <= 0:
         return ContractorCapacityStatus.BUSY
-    return team.status
+    return ContractorCapacityStatus.AVAILABLE
 
 
 def _mark_missing_external_capacity(obj: ContractorCapacity, *, synced_at: datetime) -> None:
@@ -201,6 +319,18 @@ def _mark_missing_external_capacity(obj: ContractorCapacity, *, synced_at: datet
     else:
         obj.sync_status = ContractorCapacitySyncStatus.INVALID
         obj.sync_error_message = "外部系统本次未返回该队伍，已标记失效"
+        obj.status = ContractorCapacityStatus.OFFLINE
+        obj.available_count = 0
+    obj.last_synced_at = synced_at
+
+
+def _mark_missing_local_capacity(obj: ContractorCapacity, *, synced_at: datetime) -> None:
+    if _active_occupied_count(obj) > 0:
+        obj.sync_status = ContractorCapacitySyncStatus.CONFLICT
+        obj.sync_error_message = "外部系统本次未返回该本地补录队伍，但本地存在未完成关联工单"
+    else:
+        obj.sync_status = ContractorCapacitySyncStatus.INVALID
+        obj.sync_error_message = "外部系统本次未返回该本地补录队伍，已标记失效"
         obj.status = ContractorCapacityStatus.OFFLINE
         obj.available_count = 0
     obj.last_synced_at = synced_at
@@ -221,6 +351,17 @@ def _upsert_external_team(
         )
         .limit(1)
     )
+    if existing is None:
+        existing = db.scalar(
+            select(ContractorCapacity)
+            .options(selectinload(ContractorCapacity.operations))
+            .where(
+                ContractorCapacity.contractor_name == team.contractor_name,
+                ContractorCapacity.team_name == team.team_name,
+                ContractorCapacity.report_date == team.report_date,
+            )
+            .limit(1)
+        )
     action = "updated" if existing is not None else "created"
     obj = existing or ContractorCapacity(
         external_system_id=team.external_system_id,
@@ -234,6 +375,8 @@ def _upsert_external_team(
     occupied_count = _active_occupied_count(obj) if existing is not None else 0
     has_local_occupation = occupied_count > 0
     external_unavailable = team.status in {ContractorCapacityStatus.OFFLINE, ContractorCapacityStatus.EXCEPTION} or team.available_count <= 0
+    # The external snapshot is total capacity; keep locally occupied sheets
+    # deducted until they have reached a terminal state.
     available_count = max(team.available_count - occupied_count, 0)
 
     obj.contractor_name = team.contractor_name
@@ -259,7 +402,7 @@ def _upsert_external_team(
     return obj, action
 
 
-def sync_contractor_capacities(
+def _sync_contractor_capacities_locked(
     db: Session,
     *,
     report_date: date,
@@ -286,9 +429,32 @@ def sync_contractor_capacities(
     ignored_count = 0
     failed_count = 0
     synced_ids: set[int] = set()
+    synced_external_ids: set[str] = set()
+    synced_team_keys: set[tuple[str, str]] = set()
+    failed_teams: list[dict[str, str]] = []
     try:
         teams = client.fetch_capacities(report_date=report_date, external_system_id=external_system_id)
+        invalid_rows = list(getattr(client, "invalid_rows", []) or [])
+        failed_count += len(invalid_rows)
+        failed_teams.extend(invalid_rows)
+        if not teams and external_system_id is None:
+            raise ContractorExternalClientError("外部承包商系统返回空响应或无有效运力数据，已保留本地日快照")
         for team in teams:
+            # A returned record must never be treated as externally deleted merely because
+            # its local upsert failed.
+            synced_external_ids.add(team.external_system_id)
+            synced_team_keys.add((team.contractor_name, team.team_name))
+            capacity_id = db.scalar(
+                select(ContractorCapacity.id).where(
+                    ContractorCapacity.external_system_id == team.external_system_id,
+                    ContractorCapacity.report_date == team.report_date,
+                )
+            )
+            capacity_lock: str | None = acquire_dispatch_lock(capacity_id) if capacity_id is not None else None
+            if capacity_id is not None and not capacity_lock:
+                failed_count += 1
+                failed_teams.append({"external_system_id": team.external_system_id, "contractor_name": team.contractor_name, "team_name": team.team_name, "error": "队伍正在被派工操作"})
+                continue
             try:
                 with db.begin_nested():
                     obj, action = _upsert_external_team(db, team, synced_at=started_at)
@@ -297,8 +463,17 @@ def sync_contractor_capacities(
                     created_count += 1
                 else:
                     updated_count += 1
-            except Exception:
+            except Exception as exc:
                 failed_count += 1
+                failed_teams.append({
+                    "external_system_id": team.external_system_id,
+                    "contractor_name": team.contractor_name,
+                    "team_name": team.team_name,
+                    "error": str(exc),
+                })
+            finally:
+                if capacity_id is not None:
+                    release_dispatch_lock(capacity_id, capacity_lock)
 
         existing_stmt = (
             select(ContractorCapacity)
@@ -312,7 +487,9 @@ def sync_contractor_capacities(
             existing_stmt = existing_stmt.where(ContractorCapacity.external_system_id == external_system_id)
         existing_rows = db.scalars(existing_stmt).all()
         for obj in existing_rows:
-            if obj.id in synced_ids:
+            if obj.id in synced_ids or (
+                obj.external_system_id is not None and obj.external_system_id in synced_external_ids
+            ) or (obj.contractor_name, obj.team_name) in synced_team_keys:
                 continue
             _mark_missing_external_capacity(obj, synced_at=started_at)
             ignored_count += 1
@@ -335,6 +512,7 @@ def sync_contractor_capacities(
             "report_date": report_date.isoformat(),
             "external_system_id": external_system_id,
             "connection_status": client.connection_status,
+            "failed_teams": failed_teams,
         }
         write_approval_log(
             db,
@@ -376,6 +554,35 @@ def sync_contractor_capacities(
         return log
 
 
+def sync_contractor_capacities(
+    db: Session,
+    *,
+    report_date: date,
+    operator_id: int | None,
+    operator_ip: str | None,
+    client: ContractorExternalClient | None = None,
+    sync_type: ContractorCapacitySyncType = ContractorCapacitySyncType.MANUAL,
+    external_system_id: str | None = None,
+) -> ContractorCapacitySyncLog:
+    """Serialize a daily snapshot sync across API workers and schedulers."""
+    lock_key = f"contractor:capacity-sync:{report_date.isoformat()}"
+    lock_value = {"token": uuid.uuid4().hex}
+    if not cache_client.set_lock_json(lock_key, lock_value, expire_seconds=900, nx=True):
+        raise BusinessException(CONFLICT, "该日期的运力同步正在执行，请勿重复触发")
+    try:
+        return _sync_contractor_capacities_locked(
+            db,
+            report_date=report_date,
+            operator_id=operator_id,
+            operator_ip=operator_ip,
+            client=client,
+            sync_type=sync_type,
+            external_system_id=external_system_id,
+        )
+    finally:
+        cache_client.delete_json_if_matches(lock_key, lock_value)
+
+
 def list_contractor_sync_logs(db: Session, query: ContractorCapacitySyncLogQuery) -> tuple[list[ContractorCapacitySyncLog], int]:
     stmt = select(ContractorCapacitySyncLog)
     if query.status:
@@ -411,18 +618,49 @@ def get_contractor_sync_summary(db: Session) -> dict[str, Any]:
     }
 
 
-def get_contractor_overview(db: Session, *, report_date: date | None = None) -> dict[str, int]:
-    stmt = select(ContractorCapacity)
+def get_contractor_overview(db: Session, *, report_date: date | None = None, current_user: User | None = None) -> dict[str, int]:
+    filters = []
     if report_date:
-        stmt = stmt.where(ContractorCapacity.report_date == report_date)
-    rows = list(db.scalars(stmt).all())
+        filters.append(ContractorCapacity.report_date == report_date)
+    stmt = select(
+        func.count(ContractorCapacity.id),
+        func.coalesce(
+            func.sum(case((ContractorCapacity.status == ContractorCapacityStatus.AVAILABLE, ContractorCapacity.available_count), else_=0)),
+            0,
+        ),
+        func.coalesce(func.sum(case((ContractorCapacity.status == ContractorCapacityStatus.BUSY, 1), else_=0)), 0),
+        func.coalesce(func.sum(case((ContractorCapacity.status == ContractorCapacityStatus.OFFLINE, 1), else_=0)), 0),
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        ContractorCapacity.sync_status.in_(
+                            [ContractorCapacitySyncStatus.CONFLICT, ContractorCapacitySyncStatus.INVALID]
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        ),
+        func.coalesce(
+            func.sum(case((ContractorCapacity.capability_tags["major_repair"].as_boolean().is_(True), 1), else_=0)),
+            0,
+        ),
+    )
+    if filters:
+        stmt = stmt.where(*filters)
+    if current_user is not None:
+        stmt = apply_contractor_capacity_read_scope(stmt, current_user)
+    row = db.execute(stmt).one()
     return {
-        "reported_team_count": len(rows),
-        "available_team_count": sum(max(row.available_count, 0) for row in rows),
-        "busy_team_count": sum(1 for row in rows if row.status == ContractorCapacityStatus.BUSY),
-        "offline_team_count": sum(1 for row in rows if row.status == ContractorCapacityStatus.OFFLINE),
-        "sync_exception_count": sum(1 for row in rows if row.sync_status in {ContractorCapacitySyncStatus.CONFLICT, ContractorCapacitySyncStatus.INVALID}),
-        "major_repair_team_count": sum(1 for row in rows if bool((row.capability_tags or {}).get("major_repair"))),
+        "reported_team_count": int(row[0] or 0),
+        "available_team_count": int(row[1] or 0),
+        "busy_team_count": int(row[2] or 0),
+        "offline_team_count": int(row[3] or 0),
+        "sync_exception_count": int(row[4] or 0),
+        "major_repair_team_count": int(row[5] or 0),
     }
 
 
@@ -432,8 +670,13 @@ def confirm_contractor_capacity(
     *,
     operator_id: int,
     operator_ip: str | None,
+    current_user: User | None = None,
 ) -> ContractorCapacity:
-    obj = get_contractor_capacity(db, contractor_id)
+    obj = get_contractor_capacity_for_user(db, contractor_id, current_user, require_manage=True) if current_user is not None else get_contractor_capacity(db, contractor_id)
+    if obj.sync_status != ContractorCapacitySyncStatus.PENDING_CONFIRM:
+        raise BusinessException(CONFLICT, "仅待确认的正常运力可以确认")
+    if obj.status in {ContractorCapacityStatus.OFFLINE, ContractorCapacityStatus.EXCEPTION}:
+        raise BusinessException(CONFLICT, "离线或异常运力不能确认")
     before = _contractor_snapshot(obj)
     obj.sync_status = ContractorCapacitySyncStatus.SYNCED
     obj.confirmed_at = datetime.now(timezone.utc)
@@ -463,11 +706,13 @@ def mark_contractor_exception(
     reason: str,
     operator_id: int,
     operator_ip: str | None,
+    current_user: User | None = None,
 ) -> ContractorCapacity:
-    obj = get_contractor_capacity(db, contractor_id)
+    obj = get_contractor_capacity_for_user(db, contractor_id, current_user, require_manage=True) if current_user is not None else get_contractor_capacity(db, contractor_id)
     before = _contractor_snapshot(obj)
     obj.status = ContractorCapacityStatus.EXCEPTION
-    obj.source_type = ContractorCapacitySourceType.SYNC_ERROR
+    # Exception is operational state, not provenance; retain external/local source
+    # so later missing-record reconciliation continues to include this capacity.
     obj.sync_status = ContractorCapacitySyncStatus.CONFLICT
     obj.sync_error_message = reason
     db.flush()
@@ -494,13 +739,18 @@ def resolve_contractor_exception(
     *,
     operator_id: int,
     operator_ip: str | None,
+    current_user: User | None = None,
 ) -> ContractorCapacity:
-    obj = get_contractor_capacity(db, contractor_id)
+    obj = get_contractor_capacity_for_user(db, contractor_id, current_user, require_manage=True) if current_user is not None else get_contractor_capacity(db, contractor_id)
     before = _contractor_snapshot(obj)
     obj.sync_status = ContractorCapacitySyncStatus.PENDING_CONFIRM
     obj.sync_error_message = None
     if obj.status == ContractorCapacityStatus.EXCEPTION:
-        obj.status = ContractorCapacityStatus.AVAILABLE if obj.available_count > 0 else ContractorCapacityStatus.BUSY
+        external_status = (obj.external_status or "").upper()
+        if external_status in {"OFFLINE", "EXCEPTION"}:
+            obj.status = ContractorCapacityStatus(external_status)
+        else:
+            obj.status = ContractorCapacityStatus.AVAILABLE if obj.available_count > 0 else ContractorCapacityStatus.BUSY
     db.flush()
     write_approval_log(
         db,
@@ -518,8 +768,11 @@ def resolve_contractor_exception(
     return obj
 
 
-def list_contractor_operation_sheets(db: Session, contractor_id: int) -> list[dict[str, Any]]:
-    get_contractor_capacity(db, contractor_id)
+def list_contractor_operation_sheets(db: Session, contractor_id: int, *, current_user: User | None = None) -> list[dict[str, Any]]:
+    if current_user is not None:
+        get_contractor_capacity_for_user(db, contractor_id, current_user)
+    else:
+        get_contractor_capacity(db, contractor_id)
     rows = db.scalars(
         select(WorkoverOperationSheet)
         .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)
@@ -533,7 +786,7 @@ def list_contractor_operation_sheets(db: Session, contractor_id: int) -> list[di
             "operation_no": row.operation_no,
             "status": row.status,
             "well_no": row.project.well_no if row.project else None,
-            "dispatch_time": row.last_a5_sync_at,
+            "dispatch_time": row.dispatched_at,
             "a5_status": row.a5_status,
             "created_at": row.created_at,
         }
@@ -548,13 +801,25 @@ def update_contractor_capacity(
     *,
     operator_id: int,
     operator_ip: str | None,
+    current_user: User | None = None,
 ) -> ContractorCapacity:
-    obj = get_contractor_capacity(db, contractor_id)
+    obj = get_contractor_capacity_for_user(db, contractor_id, current_user, require_manage=True) if current_user is not None else get_contractor_capacity(db, contractor_id)
     before = _contractor_snapshot(obj)
-    data = payload.model_dump(mode="json", exclude_unset=True)
+    data = payload.model_dump(exclude_unset=True)
+    identity_fields = {"contractor_name", "team_name", "report_date", "capability_tags"}
+    if data.keys() & identity_fields and _active_occupied_count(obj) > 0:
+        raise BusinessException(CONFLICT, "存在施工中或已派工工单时，不允许修改队伍身份、报备日期或能力标签")
     for key, value in data.items():
         setattr(obj, key, value)
-    db.flush()
+    if data:
+        obj.sync_status = ContractorCapacitySyncStatus.PENDING_CONFIRM
+        obj.confirmed_at = None
+        obj.confirmed_by_id = None
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise BusinessException(CONFLICT, "修改后与同日报备队伍重复") from exc
     write_approval_log(
         db,
         business_type=BUSINESS_TYPE_CONTRACTOR,
@@ -571,7 +836,18 @@ def update_contractor_capacity(
     return obj
 
 
-def list_operation_sheets(db: Session, query: WorkoverOperationSheetQuery) -> tuple[list[WorkoverOperationSheet], int]:
+def _release_contractor_capacity(contractor: ContractorCapacity) -> None:
+    contractor.available_count += 1
+    if contractor.status not in {ContractorCapacityStatus.OFFLINE, ContractorCapacityStatus.EXCEPTION}:
+        contractor.status = ContractorCapacityStatus.AVAILABLE
+
+
+def list_operation_sheets(
+    db: Session,
+    query: WorkoverOperationSheetQuery,
+    *,
+    current_user: User | None = None,
+) -> tuple[list[WorkoverOperationSheet], int]:
     base_stmt = _apply_sheet_filters(
         select(WorkoverOperationSheet)
         .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)
@@ -582,6 +858,8 @@ def list_operation_sheets(db: Session, query: WorkoverOperationSheetQuery) -> tu
         ),
         query,
     )
+    if current_user is not None:
+        base_stmt = apply_workover_operation_scope(base_stmt, current_user)
     total = db.scalar(select(func.count()).select_from(base_stmt.subquery())) or 0
     rows = db.scalars(
         base_stmt.order_by(WorkoverOperationSheet.created_at.desc())
@@ -595,6 +873,22 @@ def get_operation_sheet(db: Session, sheet_id: int) -> WorkoverOperationSheet:
     obj = db.get(WorkoverOperationSheet, sheet_id)
     if obj is None:
         raise BusinessException(BAD_REQUEST, "修井运行表记录不存在")
+    return obj
+
+
+def get_operation_sheet_for_user(db: Session, sheet_id: int, current_user: User) -> WorkoverOperationSheet:
+    stmt = (
+        select(WorkoverOperationSheet)
+        .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)
+        .options(
+            selectinload(WorkoverOperationSheet.project),
+            selectinload(WorkoverOperationSheet.contractor_capacity),
+        )
+        .where(WorkoverOperationSheet.id == sheet_id)
+    )
+    obj = db.scalar(apply_workover_operation_scope(stmt, current_user))
+    if obj is None:
+        raise BusinessException(FORBIDDEN, "无权访问该修井运行表")
     return obj
 
 
@@ -630,8 +924,18 @@ def ensure_operation_sheet_for_project(
         operation_no=_new_operation_no(),
         status=OperationStatus.WAITING_DISPATCH,
     )
-    db.add(sheet)
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(sheet)
+            db.flush()
+    except IntegrityError:
+        # A concurrent creator won the project-level unique constraint.
+        existing = db.scalar(
+            select(WorkoverOperationSheet).where(WorkoverOperationSheet.project_id == project.id).limit(1)
+        )
+        if existing is not None:
+            return existing
+        raise
     write_approval_log(
         db,
         business_type=BUSINESS_TYPE_OPERATION,
@@ -679,11 +983,15 @@ def create_operation_sheet(
     *,
     operator_id: int,
     operator_ip: str | None,
+    current_user: User | None = None,
 ) -> WorkoverOperationSheet:
     data = payload.model_dump(mode="json")
-    project = db.get(WorkoverProjectPool, payload.project_id)
+    project_stmt = select(WorkoverProjectPool).where(WorkoverProjectPool.id == payload.project_id)
+    if current_user is not None:
+        project_stmt = apply_workover_operation_scope(project_stmt, current_user)
+    project = db.scalar(project_stmt)
     if project is None or project.is_deleted:
-        raise BusinessException(BAD_REQUEST, "上修项目池记录不存在")
+        raise BusinessException(FORBIDDEN if current_user is not None else BAD_REQUEST, "无权访问该上修项目池记录" if current_user is not None else "上修项目池记录不存在")
     if project.status != ProjectPoolStatus.APPROVED:
         raise BusinessException(CONFLICT, "只有已入库项目才能创建修井运行表")
     existing = db.scalar(
@@ -699,8 +1007,17 @@ def create_operation_sheet(
         operation_no=operation_no,
         status=OperationStatus.WAITING_DISPATCH,
     )
-    db.add(obj)
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.add(obj)
+            db.flush()
+    except IntegrityError:
+        existing = db.scalar(
+            select(WorkoverOperationSheet).where(WorkoverOperationSheet.project_id == payload.project_id).limit(1)
+        )
+        if existing is not None:
+            return existing
+        raise
     write_approval_log(
         db,
         business_type=BUSINESS_TYPE_OPERATION,
@@ -716,21 +1033,86 @@ def create_operation_sheet(
     return obj
 
 
-def acquire_dispatch_lock(contractor_capacity_id: int) -> bool:
-    """获取 Redis 分布式派工锁，防止并发派工冲突。"""
-    lock_key = f"{LOCK_PREFIX}{contractor_capacity_id}"
-    return cache_client.set_json(
-        lock_key,
-        {"locked_at": datetime.now(timezone.utc).isoformat()},
+def _dispatch_lock_key(resource: str, resource_id: int) -> str:
+    return f"{LOCK_PREFIX}{resource}:{resource_id}"
+
+
+def _acquire_lock(resource: str, resource_id: int) -> str | None:
+    if not getattr(cache_client, "distributed_lock_available", True):
+        raise BusinessException(CONFLICT, "Redis 不可用，无法安全执行并发敏感操作")
+    token = uuid.uuid4().hex
+    set_lock = getattr(cache_client, "set_lock_json", cache_client.set_json)
+    if set_lock(
+        _dispatch_lock_key(resource, resource_id),
+        {"token": token, "locked_at": datetime.now(timezone.utc).isoformat()},
         expire_seconds=LOCK_TTL,
         nx=True,
+    ):
+        return token
+    return None
+
+
+def _release_lock(resource: str, resource_id: int, token: str | bool | None) -> None:
+    if not token:
+        return
+    key = _dispatch_lock_key(resource, resource_id)
+    # bool is retained solely for legacy test doubles which return True from acquire.
+    if isinstance(token, bool):
+        cache_client.delete(key)
+        return
+    current = cache_client.get_json(key)
+    if isinstance(current, dict) and current.get("token") == token:
+        cache_client.delete_json_if_matches(key, current)
+
+
+def acquire_dispatch_lock(contractor_capacity_id: int) -> str | None:
+    """Acquire a capacity lock and return its ownership token."""
+    return _acquire_lock("capacity", contractor_capacity_id)
+
+
+def release_dispatch_lock(contractor_capacity_id: int, token: str | bool | None = None) -> None:
+    """Release a capacity lock only if its token still owns it."""
+    _release_lock("capacity", contractor_capacity_id, token)
+
+
+def acquire_operation_lock(sheet_id: int) -> str | None:
+    return _acquire_lock("operation", sheet_id)
+
+
+def release_operation_lock(sheet_id: int, token: str | bool | None = None) -> None:
+    _release_lock("operation", sheet_id, token)
+
+
+def _get_operation_sheet_for_update(
+    db: Session, sheet_id: int, current_user: User | None = None
+) -> WorkoverOperationSheet:
+    stmt = (
+        select(WorkoverOperationSheet)
+        .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)
+        .options(selectinload(WorkoverOperationSheet.project), selectinload(WorkoverOperationSheet.contractor_capacity))
+        .where(WorkoverOperationSheet.id == sheet_id)
+        .with_for_update()
     )
+    if current_user is not None:
+        stmt = apply_workover_operation_scope(stmt, current_user)
+    obj = db.scalar(stmt)
+    if obj is None:
+        raise BusinessException(FORBIDDEN if current_user is not None else BAD_REQUEST, "无权访问该修井运行表" if current_user is not None else "修井运行表记录不存在")
+    return obj
 
 
-def release_dispatch_lock(contractor_capacity_id: int) -> None:
-    """释放 Redis 分布式派工锁。"""
-    lock_key = f"{LOCK_PREFIX}{contractor_capacity_id}"
-    cache_client.delete(lock_key)
+def _get_contractor_capacity_for_update(
+    db: Session, contractor_id: int, current_user: User | None = None
+) -> ContractorCapacity:
+    stmt = select(ContractorCapacity).where(ContractorCapacity.id == contractor_id).with_for_update()
+    if current_user is not None:
+        stmt = apply_contractor_capacity_read_scope(stmt, current_user)
+    obj = db.scalar(stmt)
+    if obj is None:
+        raise BusinessException(FORBIDDEN if current_user is not None else BAD_REQUEST, "无权访问该承包商运力" if current_user is not None else "承包商运力记录不存在")
+    if current_user is not None and not can_manage_contractor_capacity(current_user, obj):
+        raise BusinessException(FORBIDDEN, "无权操作该承包商运力")
+    return obj
 
 
 def dispatch_operation(
@@ -740,35 +1122,69 @@ def dispatch_operation(
     *,
     operator_id: int,
     operator_ip: str | None,
+    current_user: User | None = None,
 ) -> WorkoverOperationSheet:
     """分配上修队伍并发起 A5 措施审核办理，含 Redis 分布式锁防重机制。"""
-    # 1. 获取分布式锁
-    if not acquire_dispatch_lock(contractor_capacity_id):
+    # Always lock the work order before its capacity to avoid deadlocks.
+    operation_lock = acquire_operation_lock(sheet_id)
+    if not operation_lock:
+        raise BusinessException(CONFLICT, "该工单正在被其他调度员操作，请稍后重试")
+    capacity_lock = acquire_dispatch_lock(contractor_capacity_id)
+    if not capacity_lock:
+        release_operation_lock(sheet_id, operation_lock)
         raise BusinessException(CONFLICT, "该队伍正在被其他调度员操作，请稍后重试")
 
     try:
-        # 2. 获取工单
-        sheet = get_operation_sheet(db, sheet_id)
+        # Re-read under row locks after acquiring distributed locks.
+        sheet = _get_operation_sheet_for_update(db, sheet_id, current_user)
         if sheet.status != OperationStatus.WAITING_DISPATCH:
             raise BusinessException(CONFLICT, f"工单 {sheet.operation_no} 当前状态不允许派工")
         if sheet.contractor_capacity_id is not None:
             raise BusinessException(CONFLICT, f"工单 {sheet.operation_no} 已分配队伍，等待 A5 审核下发")
 
         # 3. 检查承包商状态
-        contractor = get_contractor_capacity(db, contractor_capacity_id)
+        contractor = _get_contractor_capacity_for_update(db, contractor_capacity_id, current_user)
         if contractor.status != ContractorCapacityStatus.AVAILABLE:
             raise BusinessException(CONFLICT, f"承包商 {contractor.contractor_name} 当前状态不可用")
-        if contractor.sync_status in {ContractorCapacitySyncStatus.CONFLICT, ContractorCapacitySyncStatus.INVALID}:
-            raise BusinessException(CONFLICT, f"承包商 {contractor.contractor_name} 存在同步异常，确认处理后才能派工")
+        if contractor.sync_status != ContractorCapacitySyncStatus.SYNCED:
+            raise BusinessException(CONFLICT, f"承包商 {contractor.contractor_name} 的运力尚未确认，不能派工")
+        today = datetime.now(BUSINESS_TZ).date()
+        if contractor.report_date != today:
+            raise BusinessException(CONFLICT, f"承包商 {contractor.contractor_name} 不是当日报备运力，不能派工")
+        if contractor.qualification_expire_at is None:
+            raise BusinessException(CONFLICT, f"承包商 {contractor.contractor_name} 未维护施工资质有效期")
+        if contractor.qualification_expire_at < today:
+            raise BusinessException(CONFLICT, f"承包商 {contractor.contractor_name} 的施工资质已过期")
+        measures = (sheet.project.measures_jsonb or {}).get("measures", []) if sheet.project else []
+        required_capabilities = {
+            str(item.get("measure_type")).strip()
+            for item in measures
+            if isinstance(item, dict) and item.get("measure_type")
+        }
+        missing_capabilities = sorted(
+            capability
+            for capability in required_capabilities
+            if contractor.capability_tags.get(CAPABILITY_ALIASES.get(capability, capability)) not in {True, "true", 1}
+        )
+        if missing_capabilities:
+            raise BusinessException(
+                CONFLICT,
+                f"承包商 {contractor.contractor_name} 缺少施工能力：{', '.join(missing_capabilities)}",
+            )
         if contractor.available_count <= 0:
             raise BusinessException(CONFLICT, f"承包商 {contractor.contractor_name} 今日可用队伍数不足")
 
-        # 4. 仅完成本地队伍分配，A5 审核/下发回写后再推进本地作业状态
+        # 4. 完成本地队伍分配，并推进到已下发，后续由 A5 回写施工进度
         before = _sheet_snapshot(sheet)
         sheet.contractor_capacity_id = contractor_capacity_id
-        sheet.a5_status = "待A5措施审核"
+        sheet.status = OperationStatus.DISPATCHED
+        if sheet.project is not None and sheet.project.status == ProjectPoolStatus.APPROVED:
+            sheet.project.status = ProjectPoolStatus.DISPATCHED
+        sheet.a5_status = None
         sheet.a5_remark = "已分配上修队伍，等待进入A5完成措施审核及下发"
-        sheet.last_a5_sync_at = datetime.now(timezone.utc)
+        sheet.last_a5_sync_at = None
+        dispatched_at = datetime.now(timezone.utc)
+        sheet.dispatched_at = dispatched_at
         detail = dict(sheet.progress_detail or {})
         detail["dispatch"] = {
             "source": "local_dispatch",
@@ -776,7 +1192,7 @@ def dispatch_operation(
             "contractor_name": contractor.contractor_name,
             "team_name": contractor.team_name,
             "a5_next_step": "measure_review",
-            "updated_at": sheet.last_a5_sync_at.isoformat(),
+            "updated_at": dispatched_at.isoformat(),
         }
         sheet.progress_detail = detail
         db.flush()
@@ -807,7 +1223,8 @@ def dispatch_operation(
         db.rollback()
         raise
     finally:
-        release_dispatch_lock(contractor_capacity_id)
+        release_dispatch_lock(contractor_capacity_id, capacity_lock)
+        release_operation_lock(sheet_id, operation_lock)
 
 
 def update_sheet_progress(
@@ -817,44 +1234,90 @@ def update_sheet_progress(
     *,
     operator_id: int,
     operator_ip: str | None,
+    current_user: User | None = None,
 ) -> WorkoverOperationSheet:
-    sheet = get_operation_sheet(db, sheet_id)
-    before = _sheet_snapshot(sheet)
-    sheet.progress = payload.progress
-    detail = dict(sheet.progress_detail or {})
-    detail.update(payload.progress_detail or {})
-    sheet.progress_detail = detail
-    now = datetime.now(timezone.utc)
+    operation_lock = acquire_operation_lock(sheet_id)
+    if not operation_lock:
+        raise BusinessException(CONFLICT, "该工单正在被其他调度员操作，请稍后重试")
+    capacity_lock: str | bool | None = None
+    contractor_id: int | None = None
+    try:
+        sheet = _get_operation_sheet_for_update(db, sheet_id, current_user)
+        if sheet.status == OperationStatus.CANCELED:
+            raise BusinessException(CONFLICT, "已取消工单不允许更新施工进度")
+        if sheet.status == OperationStatus.FINISHED:
+            if payload.progress != 100:
+                raise BusinessException(CONFLICT, "已完工工单不允许撤销完工或回退进度")
+            return sheet
+        if sheet.status == OperationStatus.WAITING_DISPATCH:
+            raise BusinessException(CONFLICT, "待派工工单尚未分配队伍，不能更新施工进度")
+        if payload.progress < sheet.progress:
+            raise BusinessException(CONFLICT, "施工进度不允许回退")
+        if sheet.status in {OperationStatus.DISPATCHED, OperationStatus.WORKING} and payload.progress == 0:
+            raise BusinessException(CONFLICT, "已派工或施工中工单的进度必须大于 0")
+        if payload.progress == 100 and not sheet.a5_status:
+            raise BusinessException(CONFLICT, "A5 审核并下发前不允许直接完工")
 
-    if 0 < payload.progress < 100 and sheet.status == OperationStatus.DISPATCHED:
-        sheet.status = OperationStatus.WORKING
-        sheet.actual_start_at = sheet.actual_start_at or now
-    elif payload.progress == 100 and sheet.status in {OperationStatus.DISPATCHED, OperationStatus.WORKING}:
-        sheet.status = OperationStatus.FINISHED
-        sheet.actual_start_at = sheet.actual_start_at or now
-        sheet.actual_end_at = now
-        if sheet.contractor_capacity is not None:
-            sheet.contractor_capacity.available_count += 1
-            sheet.contractor_capacity.status = ContractorCapacityStatus.AVAILABLE
+        contractor_id = sheet.contractor_capacity_id
+        finishing_with_contractor = (
+            payload.progress == 100
+            and sheet.status in {OperationStatus.DISPATCHED, OperationStatus.WORKING}
+            and contractor_id is not None
+        )
+        if finishing_with_contractor:
+            capacity_lock = acquire_dispatch_lock(contractor_id)
+            if not capacity_lock:
+                raise BusinessException(CONFLICT, "该队伍正在被其他调度员操作，请稍后重试")
+            # Redis may have been waited on; obtain fresh state before releasing capacity.
+            db.expire_all()
+            sheet = _get_operation_sheet_for_update(db, sheet_id, current_user)
+            if sheet.status == OperationStatus.FINISHED:
+                return sheet
 
-    db.flush()
-    write_approval_log(
-        db,
-        business_type=BUSINESS_TYPE_OPERATION,
-        business_id=sheet.id,
-        node_code="PROGRESS_UPDATE",
-        action=ApprovalAction.UPDATE,
-        operator_id=operator_id,
-        operator_ip=operator_ip,
-        before_snapshot=before,
-        after_snapshot=_sheet_snapshot(sheet),
-    )
-    db.commit()
-    db.refresh(sheet)
-    return sheet
+        before = _sheet_snapshot(sheet)
+        sheet.progress = payload.progress
+        detail = dict(sheet.progress_detail or {})
+        if payload.progress_detail:
+            # User input must not overwrite system-owned dispatch/material/A5 snapshots.
+            detail["runtime_management"] = dict(payload.progress_detail)
+        sheet.progress_detail = detail
+        now = datetime.now(timezone.utc)
+
+        if 0 < payload.progress < 100 and sheet.status == OperationStatus.DISPATCHED:
+            sheet.status = OperationStatus.WORKING
+            sheet.actual_start_at = sheet.actual_start_at or now
+        elif payload.progress == 100 and sheet.status in {OperationStatus.DISPATCHED, OperationStatus.WORKING}:
+            sheet.status = OperationStatus.FINISHED
+            sheet.actual_start_at = sheet.actual_start_at or now
+            sheet.actual_end_at = now
+            if sheet.contractor_capacity is not None:
+                _release_contractor_capacity(sheet.contractor_capacity)
+
+        db.flush()
+        write_approval_log(
+            db,
+            business_type=BUSINESS_TYPE_OPERATION,
+            business_id=sheet.id,
+            node_code="PROGRESS_UPDATE",
+            action=ApprovalAction.UPDATE,
+            operator_id=operator_id,
+            operator_ip=operator_ip,
+            before_snapshot=before,
+            after_snapshot=_sheet_snapshot(sheet),
+        )
+        db.commit()
+        db.refresh(sheet)
+        return sheet
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        if capacity_lock and contractor_id is not None:
+            release_dispatch_lock(contractor_id, capacity_lock)
+        release_operation_lock(sheet_id, operation_lock)
 
 
-def select_priority_sheets(db: Session) -> list[WorkoverOperationSheet]:
+def select_priority_sheets(db: Session, *, current_user: User | None = None) -> list[WorkoverOperationSheet]:
     """查询待派工工单，按审批通过时间升序+产量优先级降序排列。"""
     stmt = (
         select(WorkoverOperationSheet)
@@ -868,15 +1331,27 @@ def select_priority_sheets(db: Session) -> list[WorkoverOperationSheet]:
             WorkoverProjectPool.production_priority.desc(),
         )
     )
+    if current_user is not None:
+        stmt = apply_workover_operation_scope(stmt, current_user)
     return list(db.scalars(stmt).all())
 
 
-def get_operation_analytics(db: Session) -> dict[str, Any]:
+def get_operation_analytics(db: Session, *, current_user: User | None = None) -> dict[str, Any]:
     """修井运行基础统计。
 
     统计内容：运行状态分布、派工情况、队伍工作量、措施类型分布、近30天趋势。
     """
-    sheets = list(db.scalars(select(WorkoverOperationSheet)).all())
+    stmt = (
+        select(WorkoverOperationSheet)
+        .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)
+        .options(
+            selectinload(WorkoverOperationSheet.project),
+            selectinload(WorkoverOperationSheet.contractor_capacity),
+        )
+    )
+    if current_user is not None:
+        stmt = apply_workover_operation_scope(stmt, current_user)
+    sheets = list(db.scalars(stmt).all())
 
     total = len(sheets)
     status_counts = {}

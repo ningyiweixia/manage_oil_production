@@ -1,7 +1,9 @@
 import asyncio
 import base64
 import unittest
+from contextlib import nullcontext
 from datetime import date
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.core.exceptions import BusinessException
@@ -29,6 +31,29 @@ class MemoryCache:
 
 
 class A5SyncServiceTest(unittest.TestCase):
+    def test_status_whitelist_and_version_ordering_reject_unknown_and_stale_events(self):
+        self.assertFalse(service.is_supported_a5_status("UNKNOWN_STATE"))
+        sheet = SimpleNamespace(
+            status=OperationStatus.WORKING,
+            progress=40,
+            progress_detail={},
+            a5_status=None,
+            a5_remark=None,
+            last_a5_sync_at=None,
+            contractor_capacity=None,
+            contractor_capacity_id=None,
+            actual_start_at=None,
+            actual_end_at=None,
+        )
+        service.apply_a5_update_to_operation_sheet(
+            sheet, status="施工中", detail={"event_id": "evt-2", "version": 2}, source="callback"
+        )
+        service.apply_a5_update_to_operation_sheet(
+            sheet, status="办结", detail={"event_id": "evt-1", "version": 1}, source="callback"
+        )
+        self.assertEqual(sheet.status, OperationStatus.WORKING)
+        self.assertEqual(sheet.progress_detail["a5_event_version"], 2)
+
     def test_local_daily_report_simulation_advances_dispatched_sheets(self):
         sheet = WorkoverOperationSheet(project_id=1, operation_no="OP-LOCAL")
         sheet.status = OperationStatus.DISPATCHED
@@ -149,8 +174,90 @@ class A5SyncServiceTest(unittest.TestCase):
             status="取消",
             source="callback",
         )
-        self.assertEqual(sheet.status, OperationStatus.CANCELED)
+        self.assertEqual(sheet.status, OperationStatus.FINISHED)
         self.assertEqual(contractor.available_count, 1)
+
+    def test_a5_terminal_sheet_rejects_late_status_and_progress_regression(self):
+        contractor = ContractorCapacity(
+            contractor_name="测试承包商",
+            team_name="一队",
+            report_date=date(2026, 6, 30),
+            available_count=0,
+            status=ContractorCapacityStatus.BUSY,
+            capability_tags={},
+        )
+        sheet = WorkoverOperationSheet(
+            project_id=1,
+            operation_no="OP-LOCK-001",
+            status=OperationStatus.DISPATCHED,
+            progress=1,
+            progress_detail={},
+        )
+        sheet.contractor_capacity = contractor
+        service.apply_a5_update_to_operation_sheet(sheet, status="完成", progress=100, source="callback")
+        service.apply_a5_update_to_operation_sheet(sheet, status="施工中", progress=60, source="daily_report")
+
+        self.assertEqual(sheet.status, OperationStatus.FINISHED)
+        self.assertEqual(sheet.progress, 100)
+        self.assertEqual(contractor.available_count, 1)
+
+    def test_a5_non_terminal_progress_same_day_and_rejection_are_applied(self):
+        contractor = ContractorCapacity(
+            contractor_name="测试承包商", team_name="一队", report_date=date(2026, 7, 12),
+            available_count=0, status=ContractorCapacityStatus.BUSY, capability_tags={},
+        )
+        sheet = WorkoverOperationSheet(
+            project_id=1, operation_no="OP-A5-PROGRESS", status=OperationStatus.DISPATCHED,
+            progress=1, progress_detail={},
+        )
+        sheet.contractor_capacity = contractor
+
+        service.apply_a5_update_to_operation_sheet(
+            sheet, status="施工中", progress="35%", detail={"report_date": "2026-07-12"}, source="daily_report"
+        )
+        service.apply_a5_update_to_operation_sheet(
+            sheet, status="施工中", progress=65, detail={"report_date": "2026-07-12"}, source="daily_report"
+        )
+        self.assertEqual(sheet.status, OperationStatus.WORKING)
+        self.assertEqual(sheet.progress, 65)
+
+        service.apply_a5_update_to_operation_sheet(sheet, status="驳回", source="callback")
+        self.assertEqual(sheet.status, OperationStatus.WAITING_DISPATCH)
+        self.assertIsNone(sheet.contractor_capacity_id)
+        self.assertEqual(sheet.progress, 0)
+        self.assertEqual(contractor.available_count, 1)
+
+    def test_daily_sync_keeps_prior_updates_when_one_record_fails(self):
+        class FakeDb:
+            commits = 0
+            rollbacks = 0
+
+            def begin_nested(self):
+                return nullcontext()
+
+            def commit(self):
+                self.commits += 1
+
+            def rollback(self):
+                self.rollbacks += 1
+
+        class FakeClient:
+            async def fetch_daily_reports(self, _sync_date):
+                return [{"operation_no": "OP-1"}, {"operation_no": "OP-2"}]
+
+        db = FakeDb()
+        with (
+            patch.object(service.settings, "a5_base_url", "https://a5.example"),
+            patch.object(service, "A5Client", return_value=FakeClient()),
+            patch.object(service, "clean_daily_report", return_value=[{"operation_no": "OP-1", "status": "WORKING"}, {"operation_no": "OP-2", "status": "WORKING"}]),
+            patch.object(service, "validate_operation_data", return_value=True),
+            patch.object(service, "apply_a5_update_by_operation_no", side_effect=[(object(), OperationStatus.DISPATCHED, OperationStatus.WORKING, True), RuntimeError("坏记录")]),
+        ):
+            result = asyncio.run(service.sync_daily_operations(db, "2026-07-12"))
+
+        self.assertEqual(result, {"total": 2, "updated": 1, "unchanged": 0, "not_found": 0, "failed": 1})
+        self.assertEqual(db.commits, 1)
+        self.assertEqual(db.rollbacks, 0)
 
     def test_a5_sso_redirect_includes_operation_no_when_provided(self):
         from app.services.a5_auth_service import generate_sso_token
@@ -159,6 +266,12 @@ class A5SyncServiceTest(unittest.TestCase):
 
         self.assertIn("well_no=WELL-001", token.redirect_url)
         self.assertIn("operation_no=OP-TEST-001", token.redirect_url)
+
+    def test_a5_signature_fails_closed_when_secret_missing(self):
+        from app.services.a5_auth_service import verify_a5_callback_signature
+
+        with patch.object(service.settings, "a5_api_secret", ""):
+            self.assertFalse(verify_a5_callback_signature({"x-a5-signature": "anything"}, "{}"))
 
 
 if __name__ == "__main__":
