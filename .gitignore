@@ -16,6 +16,7 @@ venv/
 *.swo
 Thumbs.db
 .local/
+.worktrees/
 *.log
 runtime-pids.json
 local_dev.db*
