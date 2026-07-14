@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     a5_api_key: str = ""
     a5_api_secret: str = ""
     a5_ip_whitelist: str = ""
+    a5_mock_enabled: bool = False
+    a5_mock_frontend_base_url: str = "http://127.0.0.1:5173"
+    a5_timeout_seconds: float = 30.0
     alert_webhook_url: str = ""
     contractor_system_base_url: str = ""
     contractor_system_token: str = ""

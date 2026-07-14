@@ -6,12 +6,14 @@
 
 import logging
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 
 from app.core.config import settings
 from app.core.exceptions import BusinessException
 from app.core.status_codes import A5_LINK_FAILED
+from app.services.a5_auth_service import ensure_a5_integration_configured
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +25,7 @@ class A5Client:
         self.base_url = settings.a5_base_url.rstrip("/") if settings.a5_base_url else ""
         self.api_key = settings.a5_api_key
         self.api_secret = settings.a5_api_secret
-        self.timeout = 30
+        self.timeout = settings.a5_timeout_seconds
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -35,15 +37,21 @@ class A5Client:
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         """通用请求方法，统一异常处理。"""
-        if not self.base_url:
-            logger.warning("A5 系统未配置（A5_BASE_URL 为空），返回空数据")
+        ensure_a5_integration_configured()
+        if not self.base_url and settings.a5_mock_enabled and settings.environment == "local":
             return {"data": []}
         url = f"{self.base_url}{path}"
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             try:
                 response = await client.request(method, url, headers=self._headers(), **kwargs)
                 response.raise_for_status()
-                return response.json()
+                try:
+                    payload = response.json()
+                except ValueError as exc:
+                    raise BusinessException(A5_LINK_FAILED, f"A5 系统响应不是有效 JSON: {path}") from exc
+                if not isinstance(payload, dict):
+                    raise BusinessException(A5_LINK_FAILED, f"A5 系统响应格式异常: {path}")
+                return payload
             except httpx.TimeoutException as exc:
                 logger.error(f"A5 请求超时: {method} {url} -> {exc}")
                 raise BusinessException(A5_LINK_FAILED, f"A5 系统请求超时: {path}")
@@ -54,7 +62,14 @@ class A5Client:
                 logger.error(f"A5 连接失败: {method} {url} -> {exc}")
                 raise BusinessException(A5_LINK_FAILED, f"A5 系统连接失败: {path}")
 
-    async def fetch_daily_reports(self, date: str) -> list[dict[str, Any]]:
+    async def fetch_daily_reports(
+        self,
+        date: str,
+        *,
+        operation_no: str | None = None,
+        updated_since: str | None = None,
+        cursor: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
         """获取 A5 日报数据。
 
         Args:
@@ -63,8 +78,15 @@ class A5Client:
         Returns:
             日报数据列表
         """
-        result = await self._request("GET", f"/api/daily-reports?date={date}")
-        return result.get("data", [])
+        params = {"date": date}
+        if operation_no:
+            params["operation_no"] = operation_no
+        if updated_since:
+            params["updated_since"] = updated_since
+        if cursor:
+            params["cursor"] = cursor
+        result = await self._request("GET", f"/api/daily-reports?{urlencode(params)}")
+        return result.get("data", []), result.get("next_cursor") or result.get("cursor")
 
     async def fetch_operation_status(self, operation_no: str) -> dict[str, Any]:
         """获取单个作业最新状态。

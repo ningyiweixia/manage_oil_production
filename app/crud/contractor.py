@@ -50,7 +50,7 @@ BUSINESS_TYPE_OPERATION = "workover_operation_sheet"
 
 LOCK_PREFIX = "dispatch:lock:"
 LOCK_TTL = 30  # seconds
-ACTIVE_OPERATION_STATUSES = {OperationStatus.DISPATCHED, OperationStatus.WORKING}
+ACTIVE_OPERATION_STATUSES = {OperationStatus.PENDING_A5, OperationStatus.DISPATCHED, OperationStatus.WORKING}
 BUSINESS_TZ = ZoneInfo("Asia/Shanghai")
 CAPABILITY_ALIASES = {
     "major_workover": "major_repair", "pump_repair": "major_repair", "pump_inspection": "major_repair",
@@ -102,6 +102,9 @@ def _sheet_snapshot(obj: WorkoverOperationSheet) -> dict[str, Any]:
         "operation_no": obj.operation_no,
         "status": obj.status.value if isinstance(obj.status, OperationStatus) else obj.status,
         "progress": obj.progress,
+        "a5_status": obj.a5_status,
+        "a5_sync_result": obj.a5_sync_result,
+        "last_a5_report_date": obj.last_a5_report_date.isoformat() if obj.last_a5_report_date else None,
         "planned_start_at": obj.planned_start_at.isoformat() if obj.planned_start_at else None,
         "planned_end_at": obj.planned_end_at.isoformat() if obj.planned_end_at else None,
     }
@@ -433,7 +436,12 @@ def _sync_contractor_capacities_locked(
     synced_team_keys: set[tuple[str, str]] = set()
     failed_teams: list[dict[str, str]] = []
     try:
-        teams = client.fetch_capacities(report_date=report_date, external_system_id=external_system_id)
+        try:
+            teams = client.fetch_capacities(report_date=report_date, external_system_id=external_system_id)
+        except ContractorExternalClientError:
+            raise
+        except Exception as exc:
+            raise ContractorExternalClientError(f"外部承包商系统调用异常：{exc}") from exc
         invalid_rows = list(getattr(client, "invalid_rows", []) or [])
         failed_count += len(invalid_rows)
         failed_teams.extend(invalid_rows)
@@ -485,14 +493,16 @@ def _sync_contractor_capacities_locked(
         )
         if external_system_id is not None:
             existing_stmt = existing_stmt.where(ContractorCapacity.external_system_id == external_system_id)
-        existing_rows = db.scalars(existing_stmt).all()
-        for obj in existing_rows:
-            if obj.id in synced_ids or (
-                obj.external_system_id is not None and obj.external_system_id in synced_external_ids
-            ) or (obj.contractor_name, obj.team_name) in synced_team_keys:
-                continue
-            _mark_missing_external_capacity(obj, synced_at=started_at)
-            ignored_count += 1
+        missing_reconciliation_skipped = bool(invalid_rows)
+        if not missing_reconciliation_skipped:
+            existing_rows = db.scalars(existing_stmt).all()
+            for obj in existing_rows:
+                if obj.id in synced_ids or (
+                    obj.external_system_id is not None and obj.external_system_id in synced_external_ids
+                ) or (obj.contractor_name, obj.team_name) in synced_team_keys:
+                    continue
+                _mark_missing_external_capacity(obj, synced_at=started_at)
+                ignored_count += 1
 
         success_count = created_count + updated_count
         log.success_count = success_count
@@ -513,6 +523,7 @@ def _sync_contractor_capacities_locked(
             "external_system_id": external_system_id,
             "connection_status": client.connection_status,
             "failed_teams": failed_teams,
+            "missing_reconciliation_skipped": missing_reconciliation_skipped,
         }
         write_approval_log(
             db,
@@ -552,6 +563,9 @@ def _sync_contractor_capacities_locked(
         db.commit()
         db.refresh(log)
         return log
+    except Exception:
+        db.rollback()
+        raise
 
 
 def sync_contractor_capacities(
@@ -672,7 +686,7 @@ def confirm_contractor_capacity(
     operator_ip: str | None,
     current_user: User | None = None,
 ) -> ContractorCapacity:
-    obj = get_contractor_capacity_for_user(db, contractor_id, current_user, require_manage=True) if current_user is not None else get_contractor_capacity(db, contractor_id)
+    obj = _get_contractor_capacity_for_update(db, contractor_id, current_user)
     if obj.sync_status != ContractorCapacitySyncStatus.PENDING_CONFIRM:
         raise BusinessException(CONFLICT, "仅待确认的正常运力可以确认")
     if obj.status in {ContractorCapacityStatus.OFFLINE, ContractorCapacityStatus.EXCEPTION}:
@@ -708,7 +722,7 @@ def mark_contractor_exception(
     operator_ip: str | None,
     current_user: User | None = None,
 ) -> ContractorCapacity:
-    obj = get_contractor_capacity_for_user(db, contractor_id, current_user, require_manage=True) if current_user is not None else get_contractor_capacity(db, contractor_id)
+    obj = _get_contractor_capacity_for_update(db, contractor_id, current_user)
     before = _contractor_snapshot(obj)
     obj.status = ContractorCapacityStatus.EXCEPTION
     # Exception is operational state, not provenance; retain external/local source
@@ -741,7 +755,7 @@ def resolve_contractor_exception(
     operator_ip: str | None,
     current_user: User | None = None,
 ) -> ContractorCapacity:
-    obj = get_contractor_capacity_for_user(db, contractor_id, current_user, require_manage=True) if current_user is not None else get_contractor_capacity(db, contractor_id)
+    obj = _get_contractor_capacity_for_update(db, contractor_id, current_user)
     before = _contractor_snapshot(obj)
     obj.sync_status = ContractorCapacitySyncStatus.PENDING_CONFIRM
     obj.sync_error_message = None
@@ -773,13 +787,16 @@ def list_contractor_operation_sheets(db: Session, contractor_id: int, *, current
         get_contractor_capacity_for_user(db, contractor_id, current_user)
     else:
         get_contractor_capacity(db, contractor_id)
-    rows = db.scalars(
+    stmt = (
         select(WorkoverOperationSheet)
         .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)
         .options(selectinload(WorkoverOperationSheet.project))
         .where(WorkoverOperationSheet.contractor_capacity_id == contractor_id)
         .order_by(WorkoverOperationSheet.created_at.desc())
-    ).all()
+    )
+    if current_user is not None:
+        stmt = apply_workover_operation_scope(stmt, current_user)
+    rows = db.scalars(stmt).all()
     return [
         {
             "id": row.id,
@@ -803,7 +820,7 @@ def update_contractor_capacity(
     operator_ip: str | None,
     current_user: User | None = None,
 ) -> ContractorCapacity:
-    obj = get_contractor_capacity_for_user(db, contractor_id, current_user, require_manage=True) if current_user is not None else get_contractor_capacity(db, contractor_id)
+    obj = _get_contractor_capacity_for_update(db, contractor_id, current_user)
     before = _contractor_snapshot(obj)
     data = payload.model_dump(exclude_unset=True)
     identity_fields = {"contractor_name", "team_name", "report_date", "capability_tags"}
@@ -911,7 +928,7 @@ def ensure_operation_sheet_for_project(
     if existing is not None:
         if (
             project.status == ProjectPoolStatus.APPROVED
-            and existing.status in {OperationStatus.DISPATCHED, OperationStatus.WORKING, OperationStatus.FINISHED}
+            and existing.status in {OperationStatus.PENDING_A5, OperationStatus.DISPATCHED, OperationStatus.WORKING, OperationStatus.FINISHED}
         ):
             project.status = ProjectPoolStatus.DISPATCHED
             db.flush()
@@ -1174,15 +1191,18 @@ def dispatch_operation(
         if contractor.available_count <= 0:
             raise BusinessException(CONFLICT, f"承包商 {contractor.contractor_name} 今日可用队伍数不足")
 
-        # 4. 完成本地队伍分配，并推进到已下发，后续由 A5 回写施工进度
+        # 4. 完成本地队伍分配，等待 A5 措施审核及下发
         before = _sheet_snapshot(sheet)
         sheet.contractor_capacity_id = contractor_capacity_id
-        sheet.status = OperationStatus.DISPATCHED
+        sheet.status = OperationStatus.PENDING_A5
         if sheet.project is not None and sheet.project.status == ProjectPoolStatus.APPROVED:
             sheet.project.status = ProjectPoolStatus.DISPATCHED
-        sheet.a5_status = None
+        sheet.a5_status = "待措施审核"
         sheet.a5_remark = "已分配上修队伍，等待进入A5完成措施审核及下发"
         sheet.last_a5_sync_at = None
+        sheet.last_a5_report_date = None
+        sheet.a5_sync_result = "PENDING"
+        sheet.a5_sync_error = None
         dispatched_at = datetime.now(timezone.utc)
         sheet.dispatched_at = dispatched_at
         detail = dict(sheet.progress_detail or {})
@@ -1249,8 +1269,9 @@ def update_sheet_progress(
             if payload.progress != 100:
                 raise BusinessException(CONFLICT, "已完工工单不允许撤销完工或回退进度")
             return sheet
-        if sheet.status == OperationStatus.WAITING_DISPATCH:
-            raise BusinessException(CONFLICT, "待派工工单尚未分配队伍，不能更新施工进度")
+        if sheet.status in {OperationStatus.WAITING_DISPATCH, OperationStatus.PENDING_A5}:
+            message = "待派工工单尚未分配队伍" if sheet.status == OperationStatus.WAITING_DISPATCH else "A5措施尚未审核下发"
+            raise BusinessException(CONFLICT, f"{message}，不能更新施工进度")
         if payload.progress < sheet.progress:
             raise BusinessException(CONFLICT, "施工进度不允许回退")
         if sheet.status in {OperationStatus.DISPATCHED, OperationStatus.WORKING} and payload.progress == 0:
@@ -1374,18 +1395,20 @@ def get_operation_analytics(db: Session, *, current_user: User | None = None) ->
                         measure_type_counts[mt] = measure_type_counts.get(mt, 0) + 1
 
     dispatched = status_counts.get("DISPATCHED", 0)
+    pending_a5 = status_counts.get("PENDING_A5", 0)
     working = status_counts.get("WORKING", 0)
     finished = status_counts.get("FINISHED", 0)
     waiting = status_counts.get("WAITING_DISPATCH", 0)
     canceled = status_counts.get("CANCELED", 0)
 
-    dispatch_rate = round((dispatched + working + finished) / total * 100, 1) if total > 0 else 0
+    dispatch_rate = round((pending_a5 + dispatched + working + finished) / total * 100, 1) if total > 0 else 0
     completion_rate = round(finished / total * 100, 1) if total > 0 else 0
 
     return {
         "total_sheets": total,
         "status_distribution": {
             "waiting_dispatch": waiting,
+            "pending_a5": pending_a5,
             "dispatched": dispatched,
             "working": working,
             "finished": finished,

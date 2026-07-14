@@ -22,6 +22,12 @@ class FailingSession:
 
 
 class DatabaseUnavailableTest(unittest.TestCase):
+    def test_protected_api_returns_real_http_401_without_token(self):
+        response = TestClient(app, raise_server_exceptions=False).get("/api/v1/contractors/")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json(), {"code": 40100, "msg": "身份失效", "data": None})
+
     def test_login_returns_503_when_database_is_unavailable(self):
         with patch.object(db_session, "SessionLocal", return_value=FailingSession()):
             response = TestClient(app, raise_server_exceptions=False).post(

@@ -7,6 +7,7 @@ os.environ.setdefault("POSTGRES_PASSWORD", "test-postgres-password")
 os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret")
 
 from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy.exc import IntegrityError  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
@@ -20,7 +21,7 @@ from app.crud.contractor import (  # noqa: E402
     select_priority_sheets,
 )
 from app.crud.contractor import confirm_contractor_capacity, sync_contractor_capacities  # noqa: E402
-from app.crud.contractor import create_contractor_capacity, list_contractor_capacities, update_contractor_capacity, update_sheet_progress  # noqa: E402
+from app.crud.contractor import create_contractor_capacity, list_contractor_capacities, list_contractor_operation_sheets, update_contractor_capacity, update_sheet_progress  # noqa: E402
 from app.crud.completion import create_completion_record, delete_completion_record, update_completion_record  # noqa: E402
 from app.db.base import Base  # noqa: E402
 from app.models import *  # noqa: F401,F403,E402
@@ -37,7 +38,7 @@ from app.models.workover import (  # noqa: E402
     WorkoverOperationSheet,
     WorkoverProjectPool,
 )
-from app.services.contractor_external_client import ContractorExternalClient, ContractorExternalClientError, ExternalContractorTeam  # noqa: E402
+from app.services.contractor_external_client import ContractorExternalClient, ContractorExternalClientError, ExternalContractorTeam, _normalize_status  # noqa: E402
 from app.schemas.contractor import ContractorCapacityCreate, ContractorCapacityQuery, ContractorCapacityUpdate, ProgressPatch  # noqa: E402
 from app.schemas.completion import WellCompletionCreate, WellCompletionUpdate  # noqa: E402
 
@@ -78,7 +79,7 @@ class ContractorDispatchTest(unittest.TestCase):
         Base.metadata.create_all(engine)
         self.SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
-    def test_dispatch_assigns_team_and_marks_sheet_dispatched(self):
+    def test_dispatch_assigns_team_and_marks_sheet_pending_a5(self):
         from app.crud import contractor as contractor_crud
 
         cache = MemoryCache()
@@ -126,14 +127,27 @@ class ContractorDispatchTest(unittest.TestCase):
                 contractor_crud.cache_client = original_cache
 
             self.assertEqual(updated.contractor_capacity_id, contractor.id)
-            self.assertEqual(updated.status, OperationStatus.DISPATCHED)
+            self.assertEqual(updated.status, OperationStatus.PENDING_A5)
+            self.assertEqual(updated.a5_status, "待措施审核")
             self.assertEqual(updated.project.status, ProjectPoolStatus.DISPATCHED)
-            self.assertIsNone(updated.a5_status)
             self.assertIsNone(updated.last_a5_sync_at)
             self.assertEqual(contractor.available_count, 0)
             self.assertEqual(contractor.status, ContractorCapacityStatus.BUSY)
             self.assertEqual(cache.last_expire_seconds, 30)
             self.assertEqual(select_priority_sheets(db), [])
+
+    def test_database_rejects_negative_available_capacity(self):
+        with self.SessionLocal() as db:
+            db.add(ContractorCapacity(
+                contractor_name="非法运力",
+                team_name="负数队伍",
+                report_date=date(2026, 7, 10),
+                available_count=-1,
+                status=ContractorCapacityStatus.AVAILABLE,
+                capability_tags={},
+            ))
+            with self.assertRaises(IntegrityError):
+                db.commit()
 
     def test_capacity_report_requires_enabled_capability_tag(self):
         with self.assertRaises(ValueError):
@@ -177,6 +191,7 @@ class ContractorDispatchTest(unittest.TestCase):
                     status=ContractorCapacityStatus.AVAILABLE,
                     capability_tags={"major_repair": True},
                     contact_name="张三",
+                    sync_error_message="外部接口超时，人工补录",
                 ),
                 operator_id=1,
                 operator_ip="127.0.0.1",
@@ -201,6 +216,7 @@ class ContractorDispatchTest(unittest.TestCase):
             self.assertEqual(second.available_count, 3)
             self.assertEqual(second.capability_tags["fracturing"], True)
             self.assertEqual(second.contact_name, "李四")
+            self.assertEqual(first.sync_error_message, "外部接口超时，人工补录")
             self.assertEqual(second.sync_status, ContractorCapacitySyncStatus.PENDING_CONFIRM)
             self.assertEqual(second.created_by_id, 1)
 
@@ -405,6 +421,42 @@ class ContractorDispatchTest(unittest.TestCase):
                 )
             self.assertEqual(ctx.exception.code, FORBIDDEN)
 
+    def test_linked_operation_sheets_also_respect_project_data_scope(self):
+        regular_user = SimpleNamespace(id=1, is_superuser=False, department=None, roles=[])
+        with self.SessionLocal() as db:
+            contractor = ContractorCapacity(
+                contractor_name="本方承包商",
+                team_name="本方队",
+                report_date=date(2026, 7, 10),
+                available_count=0,
+                status=ContractorCapacityStatus.BUSY,
+                capability_tags={"major_repair": True},
+                created_by_id=1,
+            )
+            visible_project = WorkoverProjectPool(
+                well_no="VISIBLE-WELL", report_unit="本单位", status=ProjectPoolStatus.DISPATCHED,
+                measures_jsonb={"measures": []}, photo_urls=[], is_deleted=False, created_by_id=1,
+            )
+            hidden_project = WorkoverProjectPool(
+                well_no="HIDDEN-WELL", report_unit="其他单位", status=ProjectPoolStatus.DISPATCHED,
+                measures_jsonb={"measures": []}, photo_urls=[], is_deleted=False, created_by_id=2,
+            )
+            db.add_all([
+                WorkoverOperationSheet(
+                    project=visible_project, contractor_capacity=contractor, operation_no="OP-VISIBLE",
+                    status=OperationStatus.WORKING, progress=20, progress_detail={},
+                ),
+                WorkoverOperationSheet(
+                    project=hidden_project, contractor_capacity=contractor, operation_no="OP-HIDDEN",
+                    status=OperationStatus.WORKING, progress=20, progress_detail={},
+                ),
+            ])
+            db.commit()
+
+            rows = list_contractor_operation_sheets(db, contractor.id, current_user=regular_user)
+
+            self.assertEqual([row["operation_no"] for row in rows], ["OP-VISIBLE"])
+
     def test_finish_progress_releases_occupied_capacity_once(self):
         from app.crud import contractor as contractor_crud
 
@@ -593,6 +645,25 @@ class ContractorDispatchTest(unittest.TestCase):
         with self.assertRaises(ContractorExternalClientError) as ctx:
             client.fetch_capacities(report_date=date(2026, 7, 10))
         self.assertIn("HTTPS", str(ctx.exception))
+
+    def test_external_client_rejects_unknown_status_instead_of_treating_it_as_exception(self):
+        with self.assertRaises(ContractorExternalClientError):
+            _normalize_status("UNKNOWN_VENDOR_STATE")
+
+    def test_unexpected_external_client_error_is_recorded_as_failed_sync(self):
+        class BrokenClient:
+            connection_status = "异常"
+
+            def fetch_capacities(self, *, report_date, external_system_id=None):
+                raise RuntimeError("连接池损坏")
+
+        with self.SessionLocal() as db:
+            log = sync_contractor_capacities(
+                db, report_date=date(2026, 7, 10), operator_id=1, operator_ip=None, client=BrokenClient()
+            )
+
+            self.assertEqual(log.status, ContractorCapacitySyncResultStatus.FAILED)
+            self.assertIn("连接池损坏", log.error_message)
 
     def test_sync_marks_conflict_when_external_unavailable_but_local_occupied(self):
         class BusyExternalClient:
@@ -941,6 +1012,83 @@ class ContractorDispatchTest(unittest.TestCase):
             self.assertEqual(log.ignored_count, 0)
             self.assertNotEqual(contractor.sync_status, ContractorCapacitySyncStatus.INVALID)
             self.assertEqual(log.raw_summary["failed_teams"][0]["external_system_id"], "EXT-RETURNED-FAIL")
+
+    def test_invalid_external_row_skips_missing_reconciliation(self):
+        class PartiallyInvalidClient:
+            connection_status = "异常数据"
+            invalid_rows = [{
+                "row_index": "0",
+                "external_system_id": "EXT-BAD-ROW",
+                "error": "available_count 格式异常",
+            }]
+
+            def fetch_capacities(self, *, report_date, external_system_id=None):
+                return []
+
+        with self.SessionLocal() as db:
+            contractor = ContractorCapacity(
+                external_system_id="EXT-BAD-ROW",
+                contractor_name="坏数据承包商",
+                team_name="坏数据队",
+                report_date=date(2026, 7, 10),
+                available_count=1,
+                status=ContractorCapacityStatus.AVAILABLE,
+                sync_status=ContractorCapacitySyncStatus.SYNCED,
+                source_type=ContractorCapacitySourceType.EXTERNAL_SYNC,
+                capability_tags={},
+            )
+            db.add(contractor)
+            db.commit()
+
+            log = sync_contractor_capacities(
+                db,
+                report_date=date(2026, 7, 10),
+                operator_id=1,
+                operator_ip=None,
+                client=PartiallyInvalidClient(),
+                sync_type=ContractorCapacitySyncType.SINGLE_TEAM,
+                external_system_id="EXT-BAD-ROW",
+            )
+
+            db.refresh(contractor)
+            self.assertEqual(log.status, ContractorCapacitySyncResultStatus.FAILED)
+            self.assertTrue(log.raw_summary["missing_reconciliation_skipped"])
+            self.assertEqual(contractor.status, ContractorCapacityStatus.AVAILABLE)
+            self.assertEqual(contractor.sync_status, ContractorCapacitySyncStatus.SYNCED)
+
+    def test_sync_audit_failure_rolls_back_all_capacity_mutations(self):
+        class OneTeamClient:
+            connection_status = "正常"
+            invalid_rows = []
+
+            def fetch_capacities(self, *, report_date, external_system_id=None):
+                return [ExternalContractorTeam(
+                    external_system_id="EXT-ATOMIC",
+                    contractor_name="原子性承包商",
+                    team_name="原子性队",
+                    report_date=report_date,
+                    available_count=1,
+                    status=ContractorCapacityStatus.AVAILABLE,
+                    external_status="AVAILABLE",
+                    capability_tags={},
+                )]
+
+        from unittest.mock import patch
+
+        with self.SessionLocal() as db, patch(
+            "app.crud.contractor.write_approval_log", side_effect=RuntimeError("审计写入失败")
+        ):
+            with self.assertRaisesRegex(RuntimeError, "审计写入失败"):
+                sync_contractor_capacities(
+                    db,
+                    report_date=date(2026, 7, 10),
+                    operator_id=1,
+                    operator_ip=None,
+                    client=OneTeamClient(),
+                )
+
+            self.assertIsNone(db.query(ContractorCapacity).filter_by(external_system_id="EXT-ATOMIC").first())
+            self.assertEqual(db.query(ContractorCapacitySyncLog).count(), 0)
 
     def test_overview_sums_available_team_capacity(self):
         with self.SessionLocal() as db:

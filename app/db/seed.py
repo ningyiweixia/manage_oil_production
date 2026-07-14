@@ -24,8 +24,7 @@ MENU_DEFINITIONS = [
     ("system_support", "system", "基础支撑", "system_support", "/system/support", "system/support/index", "monitor", 18),
     ("workover_project_pool", None, "项目池台账", "workover_project_pool", "/workover/project-pools", "workover/project-pools/index", "table", 20),
     ("approval_workbench", None, "审核审批工作台", "approval", "/approval", "approval/index", "tickets", 21),
-    ("contractor_capacity", None, "运力报备", "contractor_capacity", "/contractor/capacity", "contractor/capacity/index", "list", 22),
-    ("contractor_dispatch", None, "智能派工", "contractor_dispatch", "/contractor/dispatch", "contractor/dispatch/index", "send", 23),
+    ("contractor_dispatch", None, "运力同步确认", "contractor_dispatch", "/contractor/dispatch", "contractor/dispatch/index", "send", 23),
     ("workover_operation", None, "修井运行管理", "workover_operation", "/workover/operation-sheets", "workover/operation-sheets/index", "document", 24),
     ("analytics", None, "统计分析", "analytics", "/dashboard", "analytics/dashboard", "trend-charts", 25),
     ("material", None, "物料管理", "material", "/material", "Layout", "goods", 35),
@@ -74,7 +73,9 @@ PERMISSION_DEFINITIONS = [
     ("workover_operation:read", "查看修井运行管理", "/api/v1/workover-operations/sheets", "GET"),
     ("workover_operation:create", "创建修井运行表", "/api/v1/workover-operations/sheets", "POST"),
     ("workover_operation:update", "更新修井运行进度", "/api/v1/workover-operations/sheets/{sheet_id}/progress", "PATCH"),
+    ("workover_operation:dispatch", "分配修井作业队伍", "/api/v1/contractors/dispatch", "PATCH"),
     ("workover_operation:dashboard", "查看修井运行看板", "/api/v1/workover-operations/dashboard", "GET"),
+    ("workover_operation:a5_sync", "同步单个修井运行表A5日报", "/api/v1/workover-operations/sheets/{sheet_id}/a5-sync", "POST"),
     # 承包商管理权限
     ("contractor:read", "查看承包商运力", "/api/v1/contractors", "GET"),
     ("contractor:create", "报承包商运力", "/api/v1/contractors", "POST"),
@@ -160,11 +161,13 @@ ROLE_PERMISSION_CODES = {
         "workover_operation:read",
         "workover_operation:update",
         "workover_operation:dashboard",
+        "workover_operation:dispatch",
         "operation-sheet:read",
         "operation-sheet:dispatch",
         "contractor:read",
         "a5:sso",
         "a5:read",
+        "workover_operation:a5_sync",
         "material:read",
         "material:update",
         "completion:read",
@@ -196,7 +199,13 @@ ROLE_PERMISSION_CODES = {
         "approval:timeline:read",
         "workover_operation:read",
         "workover_operation:dashboard",
+        "workover_operation:dispatch",
         "operation-sheet:read",
+        "operation-sheet:dispatch",
+        "contractor:read",
+        "a5:sso",
+        "a5:read",
+        "workover_operation:a5_sync",
         "report:read",
         "analytics:alert:read",
     },
@@ -366,6 +375,17 @@ DEMO_CONTRACTORS = [
     ("渤海钻修技术服务", "大修二队", 0, ContractorCapacityStatus.BUSY),
 ]
 
+# Keep the local dispatch demonstration internally consistent: a team marked as
+# available must also carry the qualification and capability data required by
+# the dispatch gate.  Production data continues to come from the contractor
+# capacity source and is validated independently.
+DEMO_CONTRACTOR_CAPABILITIES = {
+    "修井一队": {"major_repair": True, "acidizing": True},
+    "作业三队": {"major_repair": True, "sand_control": True},
+    "酸化班组": {"acidizing": True},
+    "大修二队": {"major_repair": True, "deep_well": True},
+}
+
 DEMO_OPERATION_ROWS = [
     {
         "operation_no": "OP-DEMO-20260709-001",
@@ -489,17 +509,22 @@ def _seed_demo_runtime_data(db) -> None:
                 ContractorCapacity.report_date == today,
             )
         )
+        capability_tags = {
+            "demo": True,
+            **DEMO_CONTRACTOR_CAPABILITIES.get(team_name, {}),
+        }
         if contractor is None:
             contractor = ContractorCapacity(
                 contractor_name=contractor_name,
                 team_name=team_name,
                 report_date=today,
-                capability_tags={"demo": True, "major_repair": team_name.startswith("大修")},
+                capability_tags=capability_tags,
             )
             db.add(contractor)
         contractor.available_count = available_count
         contractor.status = status
-        contractor.capability_tags = {**(contractor.capability_tags or {}), "demo": True}
+        contractor.capability_tags = capability_tags
+        contractor.qualification_expire_at = date(today.year + 1, 12, 31)
         contractors_by_key[(contractor_name, team_name)] = contractor
 
     db.flush()
@@ -620,6 +645,7 @@ def _seed_demo_runtime_data(db) -> None:
 STALE_MENU_ROUTE_NAMES = [
     "engineering",
     "engineering_designs",
+    "contractor_capacity",
 ]
 
 STALE_PERMISSION_CODES = [
@@ -750,10 +776,14 @@ def seed() -> None:
         ]
         reviewer_menus = [menus_by_key["approval_workbench"], menus_by_key["workover_project_pool"], menus_by_key["workover_operation"], menus_by_key["analytics"]]
         roles_by_code["geology_reviewer"].menus = reviewer_menus
-        roles_by_code["process_reviewer"].menus = reviewer_menus
+        roles_by_code["process_reviewer"].menus = [
+            *reviewer_menus,
+            menus_by_key["contractor_dispatch"],
+            menus_by_key["a5"],
+        ]
         roles_by_code["production_command_reviewer"].menus = reviewer_menus
         roles_by_code["contractor_operator"].menus = [
-            menus_by_key["contractor_capacity"],
+            menus_by_key["contractor_dispatch"],
             menus_by_key["material"], menus_by_key["material_requirements"], menus_by_key["material_delivery"],
         ]
 

@@ -6,6 +6,8 @@
 
 import logging
 import base64
+import hashlib
+import json
 import uuid
 from collections import Counter, defaultdict
 from datetime import date, datetime, timezone
@@ -27,7 +29,15 @@ from app.crud.contractor import (
     release_operation_lock,
 )
 from app.core.status_codes import A5_LINK_FAILED, CONFLICT
-from app.models.workover import ContractorCapacity, ContractorCapacityStatus, OperationStatus, WorkoverOperationSheet
+from app.models.workover import (
+    A5DailyReportRecord,
+    A5SyncBatch,
+    ContractorCapacity,
+    ContractorCapacityStatus,
+    OperationStatus,
+    ProjectPoolStatus,
+    WorkoverOperationSheet,
+)
 from app.schemas.a5_integration import A5AnalyticsOut, A5AnalyticsQuery, A5NameValueOut, A5TrendOut, A5AnalyticsReportOut
 from app.services.a5_client import A5Client
 from app.services.a5_data_cleaner import clean_daily_report, validate_operation_data
@@ -70,7 +80,9 @@ def _normalize_a5_status(raw_status: str | None) -> OperationStatus | None:
         "WORKING": OperationStatus.WORKING,
         "下发": OperationStatus.DISPATCHED,
         "已下发": OperationStatus.DISPATCHED,
-        "审核中": OperationStatus.DISPATCHED,
+        "待措施审核": OperationStatus.PENDING_A5,
+        "审核中": OperationStatus.PENDING_A5,
+        "PENDING_A5": OperationStatus.PENDING_A5,
         "DISPATCHED": OperationStatus.DISPATCHED,
     }
     return status_map.get(status)
@@ -108,7 +120,7 @@ def is_supported_a5_status(status: str | None) -> bool:
     return _normalize_a5_status(status) is not None
 
 
-OCCUPIED_OPERATION_STATUSES = {OperationStatus.DISPATCHED, OperationStatus.WORKING}
+OCCUPIED_OPERATION_STATUSES = {OperationStatus.PENDING_A5, OperationStatus.DISPATCHED, OperationStatus.WORKING}
 
 
 def _release_contractor_capacity_once(
@@ -193,12 +205,12 @@ def apply_a5_update_to_operation_sheet(
     merged_detail = dict(sheet.progress_detail or {})
     event_at = _a5_event_time(detail)
     previous_event_at = _a5_event_time({"event_at": merged_detail.get("a5_event_at")})
-    event_version = detail.get("version") if detail else None
-    previous_version = merged_detail.get("a5_event_version")
+    event_version = _optional_int(detail.get("version")) if detail else None
+    previous_version = _optional_int(merged_detail.get("a5_event_version"))
     if (
         event_version is not None
         and previous_version is not None
-        and int(event_version) <= int(previous_version)
+        and event_version <= previous_version
     ) or (
         event_version is None
         and event_at is not None
@@ -207,50 +219,65 @@ def apply_a5_update_to_operation_sheet(
     ):
         return old_status
 
-    sheet.a5_status = status
-    sheet.a5_remark = remark
-    sheet.last_a5_sync_at = now
-    if event_at is not None:
-        merged_detail["a5_event_at"] = event_at.isoformat()
-    if event_version is not None:
-        merged_detail["a5_event_version"] = int(event_version)
-    if detail and detail.get("event_id"):
-        merged_detail["a5_event_id"] = str(detail["event_id"])
     merged_detail[f"a5_{source}"] = {
         "status": status,
         "remark": remark,
         "synced_at": now.isoformat(),
         "raw": detail or {},
     }
-    sheet.progress_detail = merged_detail
+    if new_status is None:
+        sheet.progress_detail = merged_detail
+        sheet.last_a5_sync_at = now
+        sheet.a5_sync_result = "IGNORED"
+        sheet.a5_sync_error = "A5状态无法识别，事件未应用"
+        return None
 
-    # Terminal states are immutable.  Delayed or out-of-order A5 data may add
-    # trace metadata above, but must never reopen a locally completed/cancelled job.
-    if old_status in {OperationStatus.FINISHED, OperationStatus.CANCELED}:
+    allowed_transitions = {
+        OperationStatus.WAITING_DISPATCH: set(),
+        OperationStatus.PENDING_A5: {OperationStatus.WAITING_DISPATCH, OperationStatus.PENDING_A5, OperationStatus.DISPATCHED, OperationStatus.WORKING, OperationStatus.FINISHED, OperationStatus.CANCELED},
+        OperationStatus.DISPATCHED: {OperationStatus.WAITING_DISPATCH, OperationStatus.DISPATCHED, OperationStatus.WORKING, OperationStatus.FINISHED, OperationStatus.CANCELED},
+        OperationStatus.WORKING: {OperationStatus.WORKING, OperationStatus.FINISHED, OperationStatus.CANCELED},
+        OperationStatus.FINISHED: {OperationStatus.FINISHED},
+        OperationStatus.CANCELED: {OperationStatus.CANCELED},
+    }
+    if new_status not in allowed_transitions.get(old_status, set()):
+        sheet.progress_detail = merged_detail
+        sheet.last_a5_sync_at = now
+        sheet.a5_sync_result = "IGNORED"
+        sheet.a5_sync_error = f"忽略不允许的状态迁移：{old_status.value} -> {new_status.value}"
         return old_status
+
+    sheet.a5_status = status
+    sheet.a5_remark = remark
+    sheet.last_a5_sync_at = now
+    sheet.a5_sync_result = "SUCCESS"
+    sheet.a5_sync_error = None
+    report_day = _record_day(detail or {})
+    if report_day is not None:
+        sheet.last_a5_report_date = report_day
+    if event_at is not None:
+        merged_detail["a5_event_at"] = event_at.isoformat()
+    if event_version is not None:
+        merged_detail["a5_event_version"] = event_version
+    if detail and detail.get("event_id"):
+        merged_detail["a5_event_id"] = str(detail["event_id"])
+    sheet.progress_detail = merged_detail
 
     normalized_progress = _normalize_progress(progress)
     if normalized_progress is not None:
         sheet.progress = max(sheet.progress, normalized_progress)
 
-    if new_status is None:
-        return None
-
-    allowed_transitions = {
-        OperationStatus.WAITING_DISPATCH: set(),
-        OperationStatus.DISPATCHED: {OperationStatus.WAITING_DISPATCH, OperationStatus.DISPATCHED, OperationStatus.WORKING, OperationStatus.FINISHED, OperationStatus.CANCELED},
-        OperationStatus.WORKING: {OperationStatus.WAITING_DISPATCH, OperationStatus.WORKING, OperationStatus.FINISHED, OperationStatus.CANCELED},
-    }
-    if new_status not in allowed_transitions.get(old_status, set()):
-        return old_status
-
     sheet.status = new_status
     if new_status == OperationStatus.WAITING_DISPATCH:
+        _release_contractor_capacity_once(sheet, old_status=old_status, new_status=new_status)
         sheet.progress = 0
         sheet.actual_start_at = None
         sheet.actual_end_at = None
         sheet.contractor_capacity_id = None
-        _release_contractor_capacity_once(sheet, old_status=old_status, new_status=new_status)
+        if sheet.project is not None:
+            sheet.project.status = ProjectPoolStatus.APPROVED
+    elif new_status == OperationStatus.PENDING_A5:
+        sheet.progress = 0
     elif new_status == OperationStatus.DISPATCHED and sheet.progress < 1:
         sheet.progress = 1
     elif new_status == OperationStatus.WORKING:
@@ -332,6 +359,9 @@ def build_local_daily_reports(
 ) -> list[dict[str, Any]]:
     reports: list[dict[str, Any]] = []
     for sheet in sheets:
+        # A local A5 review must be decided in the simulator page.  A manual
+        # "sync" is only allowed to retrieve reports after that decision; it
+        # must never silently approve a PENDING_A5 operation.
         if sheet.status == OperationStatus.DISPATCHED:
             reports.append(
                 {
@@ -356,7 +386,98 @@ def build_local_daily_reports(
     return reports
 
 
-async def sync_daily_operations(db: Session, sync_date: str | None = None) -> dict[str, Any]:
+def _daily_fingerprint(record: dict[str, Any]) -> str:
+    identity = record.get("event_id") or record.get("id")
+    if identity:
+        # The A5 event ID is stable across revisions.  Including its version
+        # (or source update time when no version is available) makes retries
+        # idempotent without dropping legitimate later revisions.
+        version = _optional_int(record.get("version"))
+        if version is not None:
+            value = f"event:{identity}:version:{version}"
+        else:
+            updated_at = _parse_source_datetime(record)
+            value = f"event:{identity}:updated:{updated_at.isoformat() if updated_at else ''}"
+    else:
+        value = json.dumps(record, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _json_safe(value: dict[str, Any]) -> dict[str, Any]:
+    return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+
+
+def _parse_source_datetime(record: dict[str, Any]) -> datetime | None:
+    for key in ("updated_at", "report_time", "event_at"):
+        raw = record.get(key)
+        if not raw:
+            continue
+        try:
+            value = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def _create_sync_batch(db: Session, *, sync_type: str, operation_no: str | None) -> A5SyncBatch:
+    batch = A5SyncBatch(
+        sync_type=sync_type,
+        status="RUNNING",
+        started_at=datetime.now(timezone.utc),
+        requested_operation_no=operation_no,
+        raw_summary={},
+    )
+    db.add(batch)
+    db.flush()
+    return batch
+
+
+def _mark_operation_sync_failure(db: Session, operation_no: str, message: str) -> None:
+    if not operation_no:
+        return
+    sheet = db.scalar(select(WorkoverOperationSheet).where(WorkoverOperationSheet.operation_no == operation_no))
+    if sheet is None:
+        return
+    sheet.a5_sync_result = "FAILED"
+    sheet.a5_sync_error = message
+    sheet.last_a5_sync_at = datetime.now(timezone.utc)
+
+
+def _finish_batch_as_failed(
+    db: Session,
+    batch: A5SyncBatch,
+    *,
+    message: str,
+    operation_no: str | None,
+) -> dict[str, Any]:
+    batch.status = "FAILED"
+    batch.finished_at = datetime.now(timezone.utc)
+    batch.error_message = message
+    batch.failed_count = 1
+    batch.raw_summary = {"error": message}
+    if operation_no:
+        _mark_operation_sync_failure(db, operation_no, message)
+    db.commit()
+    return {"total": 0, "updated": 0, "failed": 1, "error": message}
+
+
+async def _sync_daily_operations_locked(
+    db: Session,
+    sync_date: str | None = None,
+    *,
+    operation_no: str | None = None,
+    sync_type: str = "SCHEDULED",
+) -> dict[str, Any]:
     """同步 A5 日报数据到修井运行表。
 
     Args:
@@ -369,11 +490,15 @@ async def sync_daily_operations(db: Session, sync_date: str | None = None) -> di
     if sync_date is None:
         sync_date = datetime.now(BUSINESS_TZ).strftime("%Y-%m-%d")
 
-    if not settings.a5_base_url:
+    batch = _create_sync_batch(db, sync_type=sync_type, operation_no=operation_no)
+    sync_started_at = batch.started_at
+    next_cursor: str | None = None
+    if settings.a5_mock_enabled and settings.environment == "local":
         raw_data = build_local_daily_reports(
             list(
                 db.query(WorkoverOperationSheet)
-                .filter(WorkoverOperationSheet.status.in_([OperationStatus.DISPATCHED, OperationStatus.WORKING]))
+                .filter(WorkoverOperationSheet.status.in_([OperationStatus.PENDING_A5, OperationStatus.DISPATCHED, OperationStatus.WORKING]))
+                .filter(WorkoverOperationSheet.operation_no == operation_no if operation_no else True)
                 .all()
             ),
             sync_date,
@@ -381,16 +506,57 @@ async def sync_daily_operations(db: Session, sync_date: str | None = None) -> di
     else:
         client = A5Client()
         try:
-            raw_data = await client.fetch_daily_reports(sync_date)
+            previous = db.scalar(
+                select(A5SyncBatch)
+                .where(A5SyncBatch.status == "SUCCESS", A5SyncBatch.requested_operation_no.is_(None))
+                .order_by(A5SyncBatch.finished_at.desc())
+                .limit(1)
+            )
+            updated_since = previous.finished_at.isoformat() if previous and previous.finished_at else None
+            raw_data, next_cursor = await client.fetch_daily_reports(
+                sync_date,
+                operation_no=operation_no,
+                updated_since=updated_since if operation_no is None else None,
+                cursor=previous.sync_cursor if previous and operation_no is None else None,
+            )
         except BusinessException as exc:
             logger.error(f"A5 日报拉取失败: {exc.msg}")
-            return {"total": 0, "updated": 0, "failed": 0, "error": exc.msg}
+            return _finish_batch_as_failed(db, batch, message=exc.msg, operation_no=operation_no)
+        except Exception as exc:
+            logger.exception("A5 日报拉取出现未预期异常")
+            return _finish_batch_as_failed(db, batch, message=f"A5日报拉取失败：{exc}", operation_no=operation_no)
 
-    cleaned = clean_daily_report(raw_data)
+    try:
+        cleaned = clean_daily_report(raw_data)
+    except Exception as exc:
+        logger.exception("A5 日报清洗失败")
+        return _finish_batch_as_failed(db, batch, message=f"A5日报清洗失败：{exc}", operation_no=operation_no)
     stats = {"total": len(cleaned), "updated": 0, "unchanged": 0, "not_found": 0, "failed": 0}
     try:
         for record in cleaned:
+            operation_number = str(record.get("operation_no") or "").strip()
+            report_day = _record_day(record) or datetime.strptime(sync_date, "%Y-%m-%d").date()
+            fingerprint = _daily_fingerprint(record)
+            if db.scalar(select(A5DailyReportRecord.id).where(A5DailyReportRecord.fingerprint == fingerprint)) is not None:
+                stats["unchanged"] += 1
+                continue
+            persisted = A5DailyReportRecord(
+                batch_id=batch.id,
+                operation_no=operation_number or "UNKNOWN",
+                report_date=report_day,
+                fingerprint=fingerprint,
+                external_event_id=str(record.get("event_id") or record.get("id") or "") or None,
+                external_version=_optional_int(record.get("version")),
+                a5_status=record.get("status") or record.get("operation_status"),
+                progress=_normalize_progress(record.get("progress")),
+                remark=record.get("remark"),
+                source_updated_at=_parse_source_datetime(record),
+                raw_payload=_json_safe(record),
+            )
+            db.add(persisted)
             if not validate_operation_data(record):
+                persisted.failure_reason = "日报关键字段不完整"
+                _mark_operation_sync_failure(db, operation_number, persisted.failure_reason)
                 stats["failed"] += 1
                 continue
             try:
@@ -399,11 +565,18 @@ async def sync_daily_operations(db: Session, sync_date: str | None = None) -> di
                 with db.begin_nested():
                     status = record.get("status") or record.get("operation_status")
                     if not status:
+                        persisted.failure_reason = "日报缺少状态"
+                        _mark_operation_sync_failure(db, operation_number, persisted.failure_reason)
+                        stats["failed"] += 1
+                        continue
+                    if not is_supported_a5_status(str(status)):
+                        persisted.failure_reason = f"不支持的A5状态: {status}"
+                        _mark_operation_sync_failure(db, operation_number, persisted.failure_reason)
                         stats["failed"] += 1
                         continue
                     existing, _, _, changed = apply_a5_update_by_operation_no(
                         db,
-                        record.get("operation_no", ""),
+                        operation_number,
                         status=status,
                         remark=record.get("remark"),
                         progress=record.get("progress"),
@@ -411,25 +584,84 @@ async def sync_daily_operations(db: Session, sync_date: str | None = None) -> di
                         source="daily_report",
                     )
                     if existing and changed:
+                        persisted.operation_sheet_id = existing.id
+                        persisted.matched = True
+                        persisted.applied = True
                         stats["updated"] += 1
                     elif existing:
+                        persisted.operation_sheet_id = existing.id
+                        persisted.matched = True
                         stats["unchanged"] += 1
                     else:
+                        persisted.failure_reason = "未匹配本地修井运行表"
                         stats["not_found"] += 1
             except Exception as exc:
                 logger.exception(f"日报同步更新失败: {exc}")
+                persisted.failure_reason = str(exc)
+                _mark_operation_sync_failure(db, operation_number, persisted.failure_reason)
                 stats["failed"] += 1
 
-        if stats["updated"] > 0 or stats["total"] > 0:
-            db.commit()
-    except Exception:
+        batch.status = "SUCCESS" if stats["failed"] == 0 else "PARTIAL"
+        batch.finished_at = datetime.now(timezone.utc)
+        batch.sync_cursor = next_cursor
+        batch.total_count = stats["total"]
+        batch.updated_count = stats["updated"]
+        batch.unchanged_count = stats["unchanged"]
+        batch.not_found_count = stats["not_found"]
+        batch.failed_count = stats["failed"]
+        batch.raw_summary = dict(stats)
+        db.commit()
+    except Exception as exc:
         db.rollback()
+        try:
+            failed_batch = A5SyncBatch(
+                sync_type=sync_type,
+                status="FAILED",
+                started_at=sync_started_at,
+                finished_at=datetime.now(timezone.utc),
+                requested_operation_no=operation_no,
+                failed_count=1,
+                error_message=str(exc),
+                raw_summary={"error": str(exc)},
+            )
+            db.add(failed_batch)
+            if operation_no:
+                _mark_operation_sync_failure(db, operation_no, str(exc))
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("A5日报同步失败批次落库失败")
         raise
-    finally:
-        pass
-
     logger.info(f"A5 日报同步完成: {stats}")
     return stats
+
+
+async def sync_daily_operations(
+    db: Session,
+    sync_date: str | None = None,
+    *,
+    operation_no: str | None = None,
+    sync_type: str = "SCHEDULED",
+) -> dict[str, Any]:
+    """Run one daily-report import at a time across every API and scheduler entry point."""
+    lock_key = "a5:sync:daily-lock"
+    lock_value = {"token": uuid.uuid4().hex}
+    lock_setter = getattr(cache_client, "set_lock_json", cache_client.set_json)
+    if not lock_setter(lock_key, lock_value, expire_seconds=3600, nx=True):
+        raise BusinessException(CONFLICT, "A5 日报同步正在执行，请稍后重试")
+    try:
+        return await _sync_daily_operations_locked(
+            db,
+            sync_date,
+            operation_no=operation_no,
+            sync_type=sync_type,
+        )
+    finally:
+        matcher = getattr(cache_client, "delete_json_if_matches", None)
+        if matcher:
+            matcher(lock_key, lock_value)
+        elif cache_client.get_json(lock_key) == lock_value:
+            cache_client.delete(lock_key)
 
 
 async def sync_anomalies(db: Session, sync_date: str | None = None) -> dict[str, Any]:
@@ -485,6 +717,9 @@ def _record_day(record: dict[str, Any]) -> date | None:
         record.get("date")
         or record.get("report_date")
         or record.get("created_at")
+        or record.get("updated_at")
+        or record.get("event_at")
+        or record.get("report_time")
         or record.get("time")
         or record.get("occurred_at")
     )
@@ -637,11 +872,14 @@ def export_a5_analytics_report(query: A5AnalyticsQuery, template_name: str | Non
     )
 
 
-async def _full_sync_locked(db: Session) -> dict[str, Any]:
+async def _full_sync_locked(db: Session, *, sync_type: str = "SCHEDULED") -> dict[str, Any]:
     """全量同步 - 组合日报 + 异常 + 工序进度。"""
     sync_date = datetime.now(BUSINESS_TZ).strftime("%Y-%m-%d")
 
-    daily_stats = await sync_daily_operations(db, sync_date)
+    if sync_type == "SCHEDULED":
+        daily_stats = await sync_daily_operations(db, sync_date)
+    else:
+        daily_stats = await sync_daily_operations(db, sync_date, sync_type=sync_type)
     anomaly_stats = await sync_anomalies(db, sync_date)
     process_stats = await sync_process_progress(db, sync_date)
 
@@ -683,7 +921,7 @@ async def _full_sync_locked(db: Session) -> dict[str, Any]:
     return result
 
 
-async def full_sync(db: Session) -> dict[str, Any]:
+async def full_sync(db: Session, *, sync_type: str = "SCHEDULED") -> dict[str, Any]:
     """Run one A5 full sync at a time across scheduler and manual triggers."""
     key = "a5:sync:global-lock"
     token = uuid.uuid4().hex
@@ -692,7 +930,7 @@ async def full_sync(db: Session) -> dict[str, Any]:
     if not lock_setter(key, value, expire_seconds=3600, nx=True):
         return {"overall": "already_running", "message": "A5 同步正在执行"}
     try:
-        return await _full_sync_locked(db)
+        return await _full_sync_locked(db, sync_type=sync_type)
     finally:
         current = cache_client.get_json(key)
         if current == value:

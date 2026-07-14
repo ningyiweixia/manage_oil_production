@@ -15,6 +15,7 @@ celery_app = Celery(
     "manage_factory",
     broker=settings.redis_url or "redis://127.0.0.1:6379/0",
     backend=settings.redis_url or "redis://127.0.0.1:6379/0",
+    include=["app.tasks.a5_tasks"],
 )
 
 celery_app.conf.update(

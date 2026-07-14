@@ -20,8 +20,6 @@ if [ ! -f deploy/nginx/ssl/server.crt ] || [ ! -f deploy/nginx/ssl/server.key ];
 fi
 
 docker compose -f docker-compose.yml up -d --build
-docker compose -f docker-compose.yml exec -T backend alembic upgrade head
-docker compose -f docker-compose.yml exec -T backend python -m app.db.seed
 docker compose -f docker-compose.yml ps
 
 echo "DMZ HTTPS entry: https://localhost/"

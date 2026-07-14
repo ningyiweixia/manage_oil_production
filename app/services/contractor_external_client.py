@@ -58,7 +58,10 @@ def _normalize_status(value: Any) -> ContractorCapacityStatus:
         "离线": ContractorCapacityStatus.OFFLINE,
         "异常": ContractorCapacityStatus.EXCEPTION,
     }
-    return mapping.get(raw, ContractorCapacityStatus.EXCEPTION)
+    normalized = mapping.get(raw)
+    if normalized is None:
+        raise ContractorExternalClientError(f"外部承包商系统返回未知队伍状态：{value!s}")
+    return normalized
 
 
 class ContractorExternalClient:
@@ -128,7 +131,12 @@ class ContractorExternalClient:
                 teams.append(self._parse_team(row, default_report_date=report_date))
             except (ContractorExternalClientError, TypeError, ValueError) as exc:
                 logger.warning("忽略外部承包商坏数据: %s", exc)
-                self.invalid_rows.append({"row_index": str(index), "error": str(exc)})
+                invalid = {"row_index": str(index), "error": str(exc)}
+                if isinstance(row, dict):
+                    for key in ("external_system_id", "contractor_name", "team_name"):
+                        if row.get(key) is not None:
+                            invalid[key] = str(row[key])
+                self.invalid_rows.append(invalid)
         return teams
 
     def _parse_team(self, row: Any, *, default_report_date: date) -> ExternalContractorTeam:

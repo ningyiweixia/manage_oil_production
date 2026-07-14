@@ -6,7 +6,7 @@ export type ContractorSourceType = 'EXTERNAL_SYNC' | 'LOCAL_SUPPLEMENT' | 'SYNC_
 export type ContractorSyncStatus = 'SYNCED' | 'PENDING_CONFIRM' | 'CONFLICT' | 'INVALID'
 export type ContractorSyncResultStatus = 'SUCCESS' | 'FAILED' | 'PARTIAL'
 export type ContractorSyncType = 'SCHEDULED' | 'MANUAL' | 'SINGLE_TEAM'
-export type OperationStatus = 'WAITING_DISPATCH' | 'DISPATCHED' | 'WORKING' | 'FINISHED' | 'CANCELED'
+export type OperationStatus = 'WAITING_DISPATCH' | 'PENDING_A5' | 'DISPATCHED' | 'WORKING' | 'FINISHED' | 'CANCELED'
 
 export interface ContractorCapacity {
   id: number
@@ -132,6 +132,9 @@ export interface OperationSheet {
   a5_status?: string | null
   a5_remark?: string | null
   last_a5_sync_at?: string | null
+  last_a5_report_date?: string | null
+  a5_sync_result?: string | null
+  a5_sync_error?: string | null
   created_at: string
   updated_at: string
 }
@@ -244,6 +247,7 @@ export interface OperationAnalytics {
   total_sheets: number
   status_distribution: {
     waiting_dispatch: number
+    pending_a5: number
     dispatched: number
     working: number
     finished: number

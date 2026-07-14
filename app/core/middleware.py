@@ -17,7 +17,7 @@ from app.services.auth_service import is_access_token_revoked
 
 def _unauthorized_response() -> JSONResponse:
     return JSONResponse(
-        status_code=200,
+        status_code=401,
         content=ApiResponse(code=UNAUTHORIZED, msg="身份失效", data=None).model_dump(),
     )
 

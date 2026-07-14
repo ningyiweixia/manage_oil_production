@@ -262,23 +262,26 @@ REFRESH_TOKEN_EXPIRE_MINUTES=10080
 AUTH_WHITELIST=/docs,/docs/oauth2-redirect,/redoc,/openapi.json,/health,/metrics,/api/v1/auth/login,/api/v1/auth/refresh,/api/v1/auth/logout,/api/v1/a5/callback
 CORS_ALLOW_ORIGINS=http://127.0.0.1:5173,http://localhost:5173
 A5_BASE_URL=
+A5_MOCK_ENABLED=false
+A5_MOCK_FRONTEND_BASE_URL=http://127.0.0.1:5173
 ```
 
-> `.env` 已加入 `.gitignore`，禁止提交。Redis 不可用时自动降级为进程内缓存；本地未配置 A5 时，系统会使用空数据继续完成联调。
+> `.env` 已加入 `.gitignore`，禁止提交。Redis 不可用时本地可降级为进程内缓存；A5 未配置时默认闭锁，需显式设置 `A5_MOCK_ENABLED=true` 才能在本地使用演示数据。演示模式的“进入 A5”会跳转至本地模拟审核页，可执行“审核通过并下发”或“驳回至待派工”；该页面只在 `ENVIRONMENT=local` 生效。
 
 ### 外部系统对接配置
 
 ```env
 # A5 系统集成
-A5_BASE_URL=           # A5 系统地址（空则使用模拟降级）
+A5_BASE_URL=           # A5 系统 HTTPS 地址
 A5_API_KEY=            # A5 API 密钥
 A5_API_SECRET=         # A5 API 密钥（HMAC 签名）
 A5_IP_WHITELIST=       # IP 白名单
+A5_MOCK_ENABLED=false  # 仅本地演示可显式开启
 ALERT_WEBHOOK_URL=     # 企业微信告警 Webhook
 
 ```
 
-> 生产/联调环境接入真实系统时再填入 `A5_BASE_URL`。A5 系统的回调路径 `/api/v1/a5/callback` 已在 `AUTH_WHITELIST` 中免鉴权，由 HMAC 签名验证保障安全。
+> 生产/联调环境必须同时配置 HTTPS `A5_BASE_URL`、`A5_API_KEY` 和 `A5_API_SECRET`。缺少配置时系统会拒绝跳转和同步，不会伪造 A5 数据。
 
 ### 本地降级模式
 
@@ -286,7 +289,7 @@ ALERT_WEBHOOK_URL=     # 企业微信告警 Webhook
 |------|---------------|
 | PostgreSQL | 自动使用 SQLite（`local_dev.db`），JSONB -> JSON 兼容适配 |
 | Redis | 缓存和分布式锁回退到进程内存实现 |
-| A5 系统 | 同步任务返回空数据并记录成功状态，前端正常展示 |
+| A5 系统 | 默认闭锁并返回未接入错误；仅本地显式开启 `A5_MOCK_ENABLED` 时使用演示数据 |
 
 ## API 规范
 
@@ -430,7 +433,7 @@ GET    /api/v1/workover-project-pools/analytics/summary  统计分析
 1. 项目池审批通过后自动进入修井运行表。
 2. 工艺所根据上修队伍情况，在待分配运行表中选择承包商队伍。
 3. 点击“分配”后，系统占用本地队伍运力，并通过 SSO 跳转到 A5 系统的措施审核页面。
-4. 措施审核、下发在 A5 系统完成；本系统不提前把运行表标记为已下发。
+4. 本地派工后运行表进入 `PENDING_A5`；措施审核、下发在 A5 系统完成，本系统不提前标记为已下发。
 5. A5 通过回调接口或日报同步把审核、下发、施工、完工等状态回写到修井运行表。
 
 ### 待分配排序
@@ -447,7 +450,7 @@ PATCH /api/v1/contractors/dispatch
 
 - 接口返回 A5 跳转地址，前端打开 A5 措施审核页面。
 - 跳转参数包含 `well_no` 和 `operation_no`，便于 A5 完成后回写本地修井运行表。
-- 本地状态保持 `WAITING_DISPATCH`，同时记录 `a5_status=待A5措施审核`；A5 下发后由回调或日报同步推进为 `DISPATCHED`。
+- 本地状态进入 `PENDING_A5`，同时记录 `a5_status=待措施审核`；A5 下发后由回调或日报同步推进为 `DISPATCHED`。
 - 锁 KEY：`dispatch:lock:{contractor_capacity_id}`
 - TTL：30 秒（防死锁）
 - 加锁失败返回 `40900` 并发冲突
@@ -455,7 +458,7 @@ PATCH /api/v1/contractors/dispatch
 ### 施工进度状态机
 
 ```
-WAITING_DISPATCH -> A5措施审核/下发 -> DISPATCHED -> WORKING -> FINISHED
+WAITING_DISPATCH -> PENDING_A5 -> DISPATCHED -> WORKING -> FINISHED
                         |            |
                         |-- CANCELED -|
 ```

@@ -107,7 +107,6 @@ const routeIconMap: Record<string, any> = {
   '/system/operation-logs': Files,
   '/workover/project-pools': Tickets,
   '/workover/operation-sheets': Document,
-  '/contractor/capacity': OfficeBuilding,
   '/contractor/dispatch': Promotion,
   '/contractor/operation-sheets': Document,
   '/material/requirements': List,
@@ -177,7 +176,7 @@ function normalizeDeprecatedMenus(items: MenuNode[]): MenuNode[] {
     const children = normalizeDeprecatedMenus(item.children || [])
     if (item.route_name === 'contractor' || item.route_path === '/contractor') {
       return children
-        .filter((child) => child.route_name === 'contractor_capacity' || child.route_name === 'contractor_dispatch')
+        .filter((child) => child.route_name === 'contractor_dispatch')
         .map((child) => normalizeCoreMenuOrder({ ...child, parent_id: null }))
     }
     if (item.route_name === 'workover' || item.route_path === '/workover') {
@@ -192,9 +191,6 @@ function normalizeDeprecatedMenus(items: MenuNode[]): MenuNode[] {
 }
 
 function normalizeCoreMenuOrder(item: MenuNode): MenuNode {
-  if (item.route_name === 'contractor_capacity' || item.route_path === '/contractor/capacity') {
-    return { ...item, parent_id: null, sort_order: 22 }
-  }
   if (item.route_name === 'contractor_dispatch' || item.route_path === '/contractor/dispatch') {
     return { ...item, title: '运力同步确认', parent_id: null, sort_order: 23 }
   }
@@ -283,11 +279,6 @@ const sidebarMenus = computed<MenuNode[]>(() => {
     {
       id: 2, title: '统计分析大屏', route_name: 'dashboard', route_path: '/dashboard',
       component: null, icon: 'TrendCharts', parent_id: null, sort_order: 2,
-      is_visible: true, is_active: true, meta: {}, children: []
-    },
-    {
-      id: 3, title: '运力报备', route_name: 'contractor_capacity', route_path: '/contractor/capacity',
-      component: null, icon: 'team', parent_id: null, sort_order: 22,
       is_visible: true, is_active: true, meta: {}, children: []
     },
     {

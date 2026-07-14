@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -19,6 +19,31 @@ class A5TokenResponse(BaseModel):
     token: str = Field(description="SSO 临时令牌")
     expire_at: datetime = Field(description="令牌过期时间")
     redirect_url: str = Field(description="A5 系统跳转 URL")
+
+
+class A5MockMeasureReviewOut(BaseModel):
+    operation_no: str
+    well_no: str
+    status: str
+    a5_status: str | None = None
+    a5_remark: str | None = None
+    contractor_name: str | None = None
+    team_name: str | None = None
+    measures: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class A5MockReviewDecisionPayload(BaseModel):
+    token: str = Field(min_length=1)
+    operation_no: str = Field(min_length=1, max_length=64)
+    decision: Literal["DISPATCH", "REJECT"]
+    remark: str | None = Field(default=None, max_length=500)
+
+
+class A5MockReviewDecisionOut(BaseModel):
+    operation_no: str
+    old_status: str
+    new_status: str
+    message: str
 
 
 class A5DataSyncLog(BaseModel):
@@ -43,6 +68,25 @@ class A5SyncTriggerOut(BaseModel):
     """手动触发同步的响应。"""
     task_id: str = Field(description="Celery 任务 ID")
     message: str = Field(description="描述信息")
+    updated_count: int = 0
+    failed_count: int = 0
+
+
+class A5SyncBatchOut(BaseModel):
+    id: int
+    sync_type: str
+    status: str
+    started_at: datetime
+    finished_at: datetime | None = None
+    requested_operation_no: str | None = None
+    total_count: int = 0
+    updated_count: int = 0
+    unchanged_count: int = 0
+    not_found_count: int = 0
+    failed_count: int = 0
+    error_message: str | None = None
+
+    model_config = {"from_attributes": True}
 
 
 class A5AnalyticsQuery(BaseModel):

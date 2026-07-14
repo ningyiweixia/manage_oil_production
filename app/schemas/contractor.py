@@ -22,6 +22,7 @@ class ContractorCapacityCreate(BaseModel):
     available_count: int = Field(default=0, ge=0)
     status: ContractorCapacityStatus = ContractorCapacityStatus.AVAILABLE
     capability_tags: dict[str, Any] = Field(min_length=1)
+    sync_error_message: str | None = Field(default=None, max_length=500)
     contact_name: str | None = Field(default=None, max_length=64)
     contact_phone: str | None = Field(default=None, max_length=32)
     qualification_expire_at: date | None = None
@@ -212,6 +213,9 @@ class WorkoverOperationSheetOut(BaseModel):
     a5_status: str | None = None
     a5_remark: str | None = None
     last_a5_sync_at: datetime | None = None
+    last_a5_report_date: date | None = None
+    a5_sync_result: str | None = None
+    a5_sync_error: str | None = None
     created_at: datetime
     updated_at: datetime
 

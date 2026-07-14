@@ -34,3 +34,22 @@ def require_permission(permission_code: str) -> Callable[[Request, Session, User
         return current_user
 
     return dependency
+
+
+def require_any_permission(*permission_codes: str) -> Callable[[Request, Session, User], User]:
+    """Allow a route to bridge renamed permissions without weakening RBAC."""
+    if not permission_codes:
+        raise ValueError("at least one permission code is required")
+
+    def dependency(
+        request: Request,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
+    ) -> User:
+        request.state.permission_code = "|".join(permission_codes)
+        permissions = get_user_permission_codes(db, current_user.id)
+        if "*" not in permissions and permissions.isdisjoint(permission_codes):
+            raise BusinessException(FORBIDDEN, "越权访问")
+        return current_user
+
+    return dependency

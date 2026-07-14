@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_permission
+from app.api.deps import require_any_permission, require_permission
 from app.crud.contractor import (
     confirm_contractor_capacity,
     create_contractor_capacity,
@@ -203,9 +203,17 @@ def dispatch(
     payload: DispatchPayload,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permission("operation-sheet:dispatch")),
+    current_user: User = Depends(
+        require_any_permission("workover_operation:dispatch", "operation-sheet:dispatch")
+    ),
 ) -> ApiResponse[DispatchA5Out]:
     """分配上修队伍，并返回 A5 措施审核跳转地址。"""
+    pending_sheet = get_workover_operation_sheet(db, payload.operation_sheet_id, current_user=current_user)
+    token = generate_sso_token(
+        pending_sheet.get("project_well_no") or pending_sheet["operation_no"],
+        payload.redirect_path,
+        operation_no=pending_sheet["operation_no"],
+    )
     sheet = dispatch_operation(
         db,
         payload.operation_sheet_id,
@@ -213,11 +221,6 @@ def dispatch(
         operator_id=current_user.id,
         operator_ip=_client_ip(request),
         current_user=current_user,
-    )
-    token = generate_sso_token(
-        sheet.project_well_no or sheet.operation_no,
-        payload.redirect_path,
-        operation_no=sheet.operation_no,
     )
     return success(
         DispatchA5Out(

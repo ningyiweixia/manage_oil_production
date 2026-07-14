@@ -30,6 +30,7 @@ from app.services.workover_operation_service import (
     build_closed_loop_status,
     build_workover_operation_dashboard,
     get_workover_operation_sheet,
+    update_workover_operation_progress,
 )
 from app.crud.workover_project_pool import delete_project_pool
 from app.crud.material import create_material_requirement, get_material_analytics
@@ -115,6 +116,7 @@ class WorkoverOperationSafetyTest(unittest.TestCase):
             (OperationStatus.WORKING, 50, 0),
             (OperationStatus.WORKING, 50, 49),
             (OperationStatus.WAITING_DISPATCH, 0, 10),
+            (OperationStatus.PENDING_A5, 0, 10),
         ]
         for index, (status, current, requested) in enumerate(cases):
             with self.subTest(status=status, requested=requested), self.SessionLocal() as db:
@@ -154,6 +156,17 @@ class WorkoverOperationSafetyTest(unittest.TestCase):
             )
             self.assertEqual(updated.status, OperationStatus.WORKING)
             self.assertIsNotNone(updated.actual_start_at)
+
+    def test_runtime_management_service_rejects_manual_progress_updates(self):
+        with self.assertRaises(BusinessException) as raised:
+            update_workover_operation_progress(
+                None,
+                1,
+                ProgressPatch(progress=10),
+                operator_id=1,
+                operator_ip=None,
+            )
+        self.assertIn("由A5日报同步", raised.exception.msg)
 
     def test_operation_list_and_dashboard_apply_project_data_scope(self):
         regular_user = SimpleNamespace(id=1, is_superuser=False, department="一部", roles=[])

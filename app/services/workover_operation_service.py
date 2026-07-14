@@ -1,7 +1,7 @@
 from datetime import date, datetime, time, timedelta
 from typing import Any
 
-from sqlalchemy import String, cast, func, select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -16,6 +16,8 @@ from app.crud.contractor import (
     sync_approved_projects_to_operation_sheets,
     update_sheet_progress,
 )
+from app.core.exceptions import BusinessException
+from app.core.status_codes import CONFLICT
 from app.models.completion import WellCompletionRecord
 from app.models.material import MaterialRequirement
 from app.models.rbac import User
@@ -74,7 +76,11 @@ def build_closed_loop_status(
     operation_status = sheet.status.value if getattr(sheet.status, "value", None) else str(sheet.status)
     material_code = str(material_status.get("status") or "NONE")
     completion_code = str(completion_status.get("status") or "NONE")
-    a5_synced = bool(sheet.a5_status and sheet.last_a5_sync_at)
+    a5_synced = bool(
+        sheet.a5_status
+        and sheet.last_a5_sync_at
+        and sheet.a5_sync_result in {None, "SUCCESS"}
+    )
     a5_code = "SYNCED" if a5_synced else "PENDING"
 
     stages = [
@@ -140,6 +146,9 @@ def enrich_workover_operation_sheet(
         "a5_status": sheet.a5_status,
         "a5_remark": sheet.a5_remark,
         "last_a5_sync_at": sheet.last_a5_sync_at,
+        "last_a5_report_date": sheet.last_a5_report_date,
+        "a5_sync_result": sheet.a5_sync_result,
+        "a5_sync_error": sheet.a5_sync_error,
         "material_status": material_status,
         "completion_status": completion_status,
         "closed_loop_status": build_closed_loop_status(sheet, material_status, completion_status),
@@ -215,12 +224,10 @@ def update_workover_operation_progress(
     operator_ip: str | None,
     current_user: User | None = None,
 ) -> dict[str, Any]:
-    if current_user is not None:
-        get_operation_sheet_for_user(db, sheet_id, current_user)
-    sheet = update_sheet_progress(
-        db, sheet_id, payload, operator_id=operator_id, operator_ip=operator_ip, current_user=current_user
-    )
-    return enrich_workover_operation_sheet(db, sheet)
+    # A5 daily reports are the sole authority for construction state and
+    # progress.  Keep this compatibility boundary fail-closed so no caller can
+    # bypass the A5 review/report chain through an old manual-progress API.
+    raise BusinessException(CONFLICT, "施工状态和进度由A5日报同步，本系统不支持手工更新")
 
 
 def build_workover_operation_dashboard(
@@ -272,11 +279,12 @@ def build_workover_operation_dashboard(
             if str(sheet.a5_status or "").upper() in {"ANOMALY", "ERROR", "EXCEPTION", "FAILED"}:
                 anomaly_count += 1
         total = len(sheets)
-        active = counts[OperationStatus.DISPATCHED.value] + counts[OperationStatus.WORKING.value] + counts[OperationStatus.FINISHED.value]
+        active = counts[OperationStatus.PENDING_A5.value] + counts[OperationStatus.DISPATCHED.value] + counts[OperationStatus.WORKING.value] + counts[OperationStatus.FINISHED.value]
         base = {
             "total_sheets": total,
             "status_distribution": {
                 "waiting_dispatch": counts[OperationStatus.WAITING_DISPATCH.value],
+                "pending_a5": counts[OperationStatus.PENDING_A5.value],
                 "dispatched": counts[OperationStatus.DISPATCHED.value],
                 "working": counts[OperationStatus.WORKING.value],
                 "finished": counts[OperationStatus.FINISHED.value],
@@ -301,6 +309,7 @@ def build_workover_operation_dashboard(
     a5_stmt = select(func.count()).select_from(WorkoverOperationSheet).where(
         WorkoverOperationSheet.a5_status.is_not(None),
         WorkoverOperationSheet.last_a5_sync_at.is_not(None),
+        or_(WorkoverOperationSheet.a5_sync_result == "SUCCESS", WorkoverOperationSheet.a5_sync_result.is_(None)),
         WorkoverOperationSheet.id.in_(sheet_ids),
     )
     material_stmt = material_stmt.where(MaterialRequirement.operation_sheet_id.in_(sheet_ids))
@@ -322,6 +331,7 @@ def build_workover_operation_dashboard(
     total_completions = db.scalar(completion_stmt) or 0
     a5_synced = db.scalar(a5_stmt) or 0
     waiting = base.get("status_distribution", {}).get("waiting_dispatch", 0)
+    pending_a5 = base.get("status_distribution", {}).get("pending_a5", 0)
     working = base.get("status_distribution", {}).get("working", 0)
     finished = base.get("status_distribution", {}).get("finished", 0)
     return {
@@ -329,6 +339,7 @@ def build_workover_operation_dashboard(
         "business_type": BUSINESS_TYPE_OPERATION,
         "runtime_focus": {
             "waiting": waiting,
+            "pending_a5": pending_a5,
             "working": working,
             "finished": finished,
             "material_total": total_materials,

@@ -14,13 +14,14 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, Request
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import select
 
 from app.api.deps import require_permission
 from app.core.config import settings
 from app.core.exceptions import BusinessException
 from app.core.redis import cache_client
-from app.core.status_codes import BAD_REQUEST
+from app.core.status_codes import BAD_REQUEST, CONFLICT
 from app.db.session import get_db
 from app.models.rbac import User
 from app.schemas.a5_integration import (
@@ -28,12 +29,21 @@ from app.schemas.a5_integration import (
     A5AnalyticsQuery,
     A5AnalyticsReportOut,
     A5CallbackPayload,
+    A5MockMeasureReviewOut,
+    A5MockReviewDecisionOut,
+    A5MockReviewDecisionPayload,
     A5SyncStatusOut,
+    A5SyncBatchOut,
     A5SyncTriggerOut,
     A5TokenResponse,
 )
 from app.schemas.response import ApiResponse, success
-from app.services.a5_auth_service import generate_sso_token, verify_a5_callback_signature
+from app.services.a5_auth_service import (
+    ensure_local_a5_mock_enabled,
+    generate_sso_token,
+    verify_a5_callback_signature,
+    verify_a5_sso_token,
+)
 from app.services.a5_sync_service import (
     apply_a5_update_by_operation_no,
     A5_SYNC_COUNT_PREFIX,
@@ -44,10 +54,90 @@ from app.services.a5_sync_service import (
     is_supported_a5_status,
 )
 from app.tasks.a5_tasks import sync_a5_data_task
+from app.models.workover import A5DailyReportRecord, A5SyncBatch, WorkoverOperationSheet
 
 logger = logging.getLogger(__name__)
+BUSINESS_TZ = ZoneInfo("Asia/Shanghai")
 
 router = APIRouter(prefix="/a5", tags=["A5系统集成"])
+
+
+def _get_mock_review_sheet(db: Session, *, operation_no: str, token: str) -> WorkoverOperationSheet:
+    ensure_local_a5_mock_enabled()
+    sheet = db.scalar(
+        select(WorkoverOperationSheet)
+        .options(
+            selectinload(WorkoverOperationSheet.project),
+            selectinload(WorkoverOperationSheet.contractor_capacity),
+        )
+        .where(WorkoverOperationSheet.operation_no == operation_no)
+    )
+    if sheet is None:
+        raise BusinessException(BAD_REQUEST, "A5模拟工单不存在")
+    well_no = sheet.project.well_no if sheet.project is not None else operation_no
+    verify_a5_sso_token(token, expected_well_no=well_no)
+    return sheet
+
+
+@router.get("/mock/measure-review", response_model=ApiResponse[A5MockMeasureReviewOut])
+def get_mock_measure_review(
+    token: str,
+    operation_no: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("a5:sso")),
+) -> ApiResponse[A5MockMeasureReviewOut]:
+    """Read a local-only A5 measure review screen using the issued SSO token."""
+    sheet = _get_mock_review_sheet(db, operation_no=operation_no, token=token)
+    project = sheet.project
+    contractor = sheet.contractor_capacity
+    return success(A5MockMeasureReviewOut(
+        operation_no=sheet.operation_no,
+        well_no=project.well_no if project is not None else sheet.operation_no,
+        status=sheet.status.value,
+        a5_status=sheet.a5_status,
+        a5_remark=sheet.a5_remark,
+        contractor_name=contractor.contractor_name if contractor is not None else None,
+        team_name=contractor.team_name if contractor is not None else None,
+        measures=list((project.measures_jsonb or {}).get("measures", [])) if project is not None else [],
+    ))
+
+
+@router.post("/mock/measure-review/decision", response_model=ApiResponse[A5MockReviewDecisionOut])
+def submit_mock_measure_review(
+    payload: A5MockReviewDecisionPayload,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("a5:sso")),
+) -> ApiResponse[A5MockReviewDecisionOut]:
+    """Simulate A5 approval/issue or rejection, using the normal state machine."""
+    sheet = _get_mock_review_sheet(db, operation_no=payload.operation_no, token=payload.token)
+    if sheet.status.value != "PENDING_A5":
+        raise BusinessException(BAD_REQUEST, "当前工单不处于等待A5审核状态")
+    a5_status = "已下发" if payload.decision == "DISPATCH" else "驳回"
+    default_remark = "本地A5模拟：措施审核通过并已下发" if payload.decision == "DISPATCH" else "本地A5模拟：措施审核驳回，退回待派工"
+    event_at = datetime.now(timezone.utc)
+    updated, old_status, new_status, _ = apply_a5_update_by_operation_no(
+        db,
+        payload.operation_no,
+        status=a5_status,
+        remark=payload.remark or default_remark,
+        progress=1 if payload.decision == "DISPATCH" else 0,
+        detail={
+            "event_id": f"local-a5-{uuid.uuid4().hex}",
+            "event_at": event_at.isoformat(),
+            "updated_at": event_at.isoformat(),
+            "source": "local_a5_mock",
+        },
+        source="local_a5_mock",
+    )
+    if updated is None or old_status is None or new_status is None:
+        raise BusinessException(BAD_REQUEST, "A5模拟工单状态更新失败")
+    db.commit()
+    return success(A5MockReviewDecisionOut(
+        operation_no=payload.operation_no,
+        old_status=old_status.value,
+        new_status=new_status.value,
+        message="措施审核已通过并下发" if payload.decision == "DISPATCH" else "措施审核已驳回，工单已退回待派工",
+    ))
 
 
 @router.post("/callback", response_model=ApiResponse[dict])
@@ -85,15 +175,40 @@ async def a5_callback(
         event_at = payload.event_at if payload.event_at.tzinfo else payload.event_at.replace(tzinfo=timezone.utc)
         if event_at < now.replace(microsecond=0) - timedelta(days=1) or event_at > now + timedelta(minutes=5):
             raise BusinessException(BAD_REQUEST, "A5 回调事件时间已过期或超前")
-    replay_identity = payload.event_id or hashlib.sha256(body).hexdigest()
+    if payload.event_id:
+        revision = str(payload.version) if payload.version is not None else payload.event_at.isoformat() if payload.event_at else ""
+        replay_identity = f"{payload.event_id}:{revision}"
+    else:
+        replay_identity = hashlib.sha256(body).hexdigest()
     replay_key = f"a5:callback:replay:{replay_identity}"
+    replay_fingerprint = hashlib.sha256(f"callback:{replay_identity}".encode("utf-8")).hexdigest()
     processing_key = f"{replay_key}:processing"
     processing_value = {"token": uuid.uuid4().hex, "received_at": now.isoformat()}
-    if cache_client.get_json(replay_key) is not None or not cache_client.set_lock_json(processing_key, processing_value, expire_seconds=300, nx=True):
-        raise BusinessException(BAD_REQUEST, "A5 回调重复提交")
+    cached_replay = cache_client.get_json(replay_key)
+    if cached_replay is not None:
+        matched = cached_replay.get("matched", True) if isinstance(cached_replay, dict) else True
+        return success(
+            {"matched": bool(matched), "operation_no": payload.operation_no, "duplicate": True},
+            msg="重复回调已处理",
+        )
+    if not cache_client.set_lock_json(processing_key, processing_value, expire_seconds=300, nx=True):
+        raise BusinessException(CONFLICT, "A5 回调正在处理，请稍后重试")
 
     try:
-        sheet, old_status, new_status, _ = apply_a5_update_by_operation_no(
+        existing_replay = db.scalar(
+            select(A5DailyReportRecord).where(A5DailyReportRecord.fingerprint == replay_fingerprint)
+        )
+        if existing_replay is not None:
+            return success(
+                {
+                    "matched": existing_replay.matched,
+                    "operation_no": payload.operation_no,
+                    "duplicate": True,
+                },
+                msg="重复回调已处理",
+            )
+
+        sheet, old_status, new_status, changed = apply_a5_update_by_operation_no(
             db,
             payload.operation_no,
             status=payload.status,
@@ -101,13 +216,34 @@ async def a5_callback(
             detail=payload.model_dump(mode="json"),
             source="callback",
         )
+        event_at = payload.event_at or now
+        db.add(A5DailyReportRecord(
+            operation_sheet_id=sheet.id if sheet is not None else None,
+            operation_no=payload.operation_no,
+            report_date=event_at.astimezone(BUSINESS_TZ).date() if event_at.tzinfo else event_at.date(),
+            fingerprint=replay_fingerprint,
+            external_event_id=payload.event_id,
+            external_version=payload.version,
+            a5_status=payload.status,
+            source_updated_at=event_at,
+            matched=sheet is not None,
+            applied=bool(sheet is not None and changed),
+            failure_reason=None if sheet is not None else "未匹配本地修井运行表",
+            raw_payload=payload.model_dump(mode="json"),
+        ))
         if sheet is None:
             logger.warning(f"A5 回调: 工单 {payload.operation_no} 不存在")
-            cache_client.set_json(replay_key, {"completed_at": datetime.now(timezone.utc).isoformat(), "matched": False}, expire_seconds=86400)
+            db.commit()
+            try:
+                cache_client.set_json(replay_key, {"completed_at": datetime.now(timezone.utc).isoformat(), "matched": False}, expire_seconds=86400)
+            except Exception:
+                logger.warning("A5回调持久化成功，但Redis重放标记写入失败", exc_info=True)
             return success({"matched": False, "operation_no": payload.operation_no}, msg="工单未匹配")
         db.commit()
-        db.refresh(sheet)
-        cache_client.set_json(replay_key, {"completed_at": datetime.now(timezone.utc).isoformat()}, expire_seconds=86400)
+        try:
+            cache_client.set_json(replay_key, {"completed_at": datetime.now(timezone.utc).isoformat(), "matched": True}, expire_seconds=86400)
+        except Exception:
+            logger.warning("A5回调持久化成功，但Redis重放标记写入失败", exc_info=True)
     except Exception:
         db.rollback()
         raise
@@ -137,10 +273,20 @@ def generate_token(
 
 @router.get("/sync/status", response_model=ApiResponse[A5SyncStatusOut])
 def sync_status(
+    db: Session = Depends(get_db),
     _: User = Depends(require_permission("a5:read")),
 ) -> ApiResponse[A5SyncStatusOut]:
     """查看最近一次 A5 数据同步状态。"""
     cached = cache_client.get_json(A5_SYNC_STATUS_KEY) or {}
+    if not cached:
+        latest = db.scalar(select(A5SyncBatch).order_by(A5SyncBatch.started_at.desc()).limit(1))
+        if latest is not None:
+            cached = {
+                "last_sync_time": latest.finished_at or latest.started_at,
+                "last_sync_status": latest.status.lower(),
+                "last_sync_message": latest.error_message or f"日报更新 {latest.updated_count} 条",
+                "is_running": latest.status == "RUNNING",
+            }
     today = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
     sync_count_today = cache_client.get_json(f"{A5_SYNC_COUNT_PREFIX}{today}") or cached.get("sync_count_today", 0)
     return success(A5SyncStatusOut(
@@ -150,6 +296,17 @@ def sync_status(
         sync_count_today=int(sync_count_today or 0),
         is_running=bool(cached.get("is_running", False)),
     ))
+
+
+@router.get("/sync/logs", response_model=ApiResponse[list[A5SyncBatchOut]])
+def sync_logs(
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("a5:read")),
+) -> ApiResponse[list[A5SyncBatchOut]]:
+    safe_limit = max(1, min(limit, 100))
+    rows = db.scalars(select(A5SyncBatch).order_by(A5SyncBatch.started_at.desc()).limit(safe_limit)).all()
+    return success([A5SyncBatchOut.model_validate(row) for row in rows])
 
 
 @router.get("/analytics/summary", response_model=ApiResponse[A5AnalyticsOut])
@@ -179,13 +336,13 @@ async def trigger_sync(
     """手动触发一次 A5 全量数据同步。"""
     if settings.environment == "local" and not settings.redis_url:
         task_id = f"local-{uuid.uuid4().hex[:12]}"
-        await full_sync(db)
+        await full_sync(db, sync_type="MANUAL")
         return success(A5SyncTriggerOut(
             task_id=task_id,
             message="本地同步已执行",
         ), msg="同步已执行")
 
-    task = sync_a5_data_task.delay()
+    task = sync_a5_data_task.delay("MANUAL")
     return success(A5SyncTriggerOut(
         task_id=task.id,
         message="A5 数据同步任务已提交",
