@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.workover import ProjectPoolStatus, WorkoverProjectPool
+from app.services.data_scope_service import DataScope, reporting_unit_scope_predicate
 from app.schemas.workover_project_pool import (
     AnalyticsKpiOut,
     HeatmapOut,
@@ -108,14 +109,16 @@ def _apply_analytics_dsl(projects: pd.DataFrame, query: WorkoverAnalyticsQuery) 
     return filtered
 
 
-def build_workover_analytics(db: Session, query: WorkoverAnalyticsQuery) -> WorkoverAnalyticsOut:
-    rows = list(
-        db.scalars(
-            select(WorkoverProjectPool)
-            .where(WorkoverProjectPool.is_deleted.is_(False))
-            .order_by(WorkoverProjectPool.created_at.asc())
-        ).all()
-    )
+def build_workover_analytics(
+    db: Session,
+    query: WorkoverAnalyticsQuery,
+    *,
+    scope: DataScope | None = None,
+) -> WorkoverAnalyticsOut:
+    stmt = select(WorkoverProjectPool).where(WorkoverProjectPool.is_deleted.is_(False))
+    if scope is not None and not scope.is_global:
+        stmt = stmt.where(reporting_unit_scope_predicate(scope))
+    rows = list(db.scalars(stmt.order_by(WorkoverProjectPool.created_at.asc())).all())
     projects = pd.DataFrame(_project_records(rows))
     filtered = _apply_analytics_dsl(projects, query)
     measures = pd.DataFrame(_measure_records(filtered))

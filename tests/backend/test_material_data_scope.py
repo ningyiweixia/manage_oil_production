@@ -11,6 +11,9 @@ from app.models import *  # noqa: F401,F403
 from app.models.material import MaterialRequirement, MaterialRequirementStatus, MaterialRequirementType
 from app.models.workover import OperationStatus, ProjectPoolStatus, WorkoverOperationSheet, WorkoverProjectPool
 from app.services.data_scope_service import DataScope
+from app.schemas.workover_project_pool import WorkoverAnalyticsQuery
+from app.services.workover_analytics_service import build_workover_analytics
+from app.services.workover_operation_service import OperationAnalyticsQuery, build_workover_operation_dashboard
 
 
 class MaterialDataScopeTest(unittest.TestCase):
@@ -20,9 +23,9 @@ class MaterialDataScopeTest(unittest.TestCase):
         self.Session = sessionmaker(bind=engine, expire_on_commit=False)
         with self.Session() as db:
             material_ids = []
-            for unit, suffix in (("Unit A", "A"), ("Unit B", "B")):
+            for unit, suffix, territory in (("Unit A", "A", "Territory A"), ("Unit B", "B", None)):
                 project = WorkoverProjectPool(
-                    well_no=f"WELL-{suffix}", report_unit=unit, production_priority=1,
+                    well_no=f"WELL-{suffix}", report_unit=unit, territory_unit=territory, production_priority=1,
                     status=ProjectPoolStatus.APPROVED, measures_jsonb={}, photo_urls=[], attachments=[],
                     related_project_ids=[], is_deleted=False,
                 )
@@ -51,6 +54,15 @@ class MaterialDataScopeTest(unittest.TestCase):
         with self.Session() as db:
             with self.assertRaises(BusinessException):
                 get_material_requirement(db, self.unit_b_material_id, scope=self.unit_a_scope)
+
+    def test_territory_scope_is_applied_consistently_to_project_and_operation_analytics(self):
+        territory_scope = DataScope(is_global=False, user_id=2, department="Territory A", reporting_units=("Territory A",))
+        with self.Session() as db:
+            projects = build_workover_analytics(db, WorkoverAnalyticsQuery(), scope=territory_scope)
+            operations = build_workover_operation_dashboard(db, OperationAnalyticsQuery(), scope=territory_scope)
+
+        self.assertEqual(projects.kpis.total_projects, 1)
+        self.assertEqual(operations["total_sheets"], 1)
 
 
 if __name__ == "__main__":

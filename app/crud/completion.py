@@ -10,6 +10,7 @@ from app.core.status_codes import BAD_REQUEST
 from app.models.completion import WellCompletionRecord
 from app.models.workover import WorkoverOperationSheet, WorkoverProjectPool
 from app.schemas.completion import WellCompletionCreate, WellCompletionQuery, WellCompletionUpdate
+from app.services.data_scope_service import DataScope, reporting_unit_scope_predicate
 
 
 class CompletionAnalyticsQuery(BaseModel):
@@ -126,16 +127,24 @@ def delete_completion_record(db: Session, record_id: int) -> None:
     db.commit()
 
 
-def get_completion_analytics(db: Session, query: CompletionAnalyticsQuery | None = None) -> dict[str, Any]:
+def get_completion_analytics(
+    db: Session,
+    query: CompletionAnalyticsQuery | None = None,
+    *,
+    scope: DataScope | None = None,
+) -> dict[str, Any]:
     """完井分类统计：按措施类型分组统计。"""
     query = query or CompletionAnalyticsQuery()
     stmt = select(WellCompletionRecord)
-    if query.report_unit:
+    if query.report_unit or (scope is not None and not scope.is_global):
         stmt = (
             stmt.join(WorkoverOperationSheet, WellCompletionRecord.operation_sheet_id == WorkoverOperationSheet.id)
             .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)
-            .where(WorkoverProjectPool.report_unit == query.report_unit)
         )
+        if query.report_unit:
+            stmt = stmt.where(WorkoverProjectPool.report_unit == query.report_unit)
+        if scope is not None and not scope.is_global:
+            stmt = stmt.where(reporting_unit_scope_predicate(scope))
     if query.well_no:
         stmt = stmt.where(WellCompletionRecord.well_no.ilike(f"%{query.well_no}%"))
     if query.measure_type:

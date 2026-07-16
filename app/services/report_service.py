@@ -17,14 +17,14 @@ from app.services.workover_operation_service import OperationAnalyticsQuery, bui
 
 
 def build_delivery_summary(db: Session, *, scope: DataScope | None = None) -> dict[str, Any]:
-    report_unit = scope.department if scope is not None and not scope.is_global else None
-    workover = build_workover_analytics(db, WorkoverAnalyticsQuery(report_unit=report_unit))
+    is_scoped = scope is not None and not scope.is_global
+    workover = build_workover_analytics(db, WorkoverAnalyticsQuery(), scope=scope)
     operations = (
-        build_workover_operation_dashboard(db, OperationAnalyticsQuery(report_unit=report_unit))
-        if report_unit else get_operation_analytics(db)
+        build_workover_operation_dashboard(db, OperationAnalyticsQuery(), scope=scope)
+        if is_scoped else get_operation_analytics(db)
     )
     materials = get_material_analytics(db, scope=scope)
-    completions = get_completion_analytics(db, CompletionAnalyticsQuery(report_unit=report_unit))
+    completions = get_completion_analytics(db, CompletionAnalyticsQuery(), scope=scope)
 
     return {
         "projects": {
