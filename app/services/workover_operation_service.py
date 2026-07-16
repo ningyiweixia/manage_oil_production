@@ -18,6 +18,7 @@ from app.crud.contractor import (
 from app.models.completion import WellCompletionRecord
 from app.models.material import MaterialRequirement
 from app.models.workover import ContractorCapacity, OperationStatus, ProjectPoolStatus, WorkoverOperationSheet, WorkoverProjectPool
+from app.services.data_scope_service import DataScope, reporting_unit_scope_predicate
 from app.schemas.contractor import (
     ProgressPatch,
     WorkoverOperationSheetCreate,
@@ -188,11 +189,18 @@ def update_workover_operation_progress(
     return enrich_workover_operation_sheet(db, sheet)
 
 
-def build_workover_operation_dashboard(db: Session, query: OperationAnalyticsQuery | None = None) -> dict[str, Any]:
+def build_workover_operation_dashboard(
+    db: Session,
+    query: OperationAnalyticsQuery | None = None,
+    *,
+    scope: DataScope | None = None,
+) -> dict[str, Any]:
     if query is None:
         base = get_operation_analytics(db)
     else:
         stmt = select(WorkoverOperationSheet).join(WorkoverProjectPool).outerjoin(ContractorCapacity)
+        if scope is not None and not scope.is_global:
+            stmt = stmt.where(reporting_unit_scope_predicate(scope))
         if query.well_no:
             stmt = stmt.where(WorkoverProjectPool.well_no.ilike(f"%{query.well_no}%"))
         if query.report_unit:

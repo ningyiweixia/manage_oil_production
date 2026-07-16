@@ -40,6 +40,7 @@ from app.services.a5_sync_service import (
     build_a5_analytics,
     export_a5_analytics_report,
     full_sync,
+    process_a5_callback_event,
 )
 from app.tasks.a5_tasks import sync_a5_data_task
 
@@ -71,32 +72,19 @@ async def a5_callback(
     if not verify_a5_callback_signature(headers, body_str):
         raise BusinessException(BAD_REQUEST, "A5 回调签名验证失败")
 
-    # 查找对应工单
-    sheet = db.query(WorkoverOperationSheet).filter(
-        WorkoverOperationSheet.operation_no == payload.operation_no
-    ).first()
-
-    if sheet is None:
-        logger.warning(f"A5 回调: 工单 {payload.operation_no} 不存在")
-        return success({"matched": False, "operation_no": payload.operation_no}, msg="工单未匹配")
-
-    old_status = sheet.status
-    new_status = apply_a5_update_to_operation_sheet(
-        sheet,
-        status=payload.status,
-        remark=payload.remark,
-        detail=payload.model_dump(mode="json"),
-        source="callback",
+    event_id = headers.get("x-a5-event-id")
+    result = process_a5_callback_event(
+        db,
+        payload.model_dump(mode="json"),
+        event_id=event_id,
     )
-    db.commit()
-    db.refresh(sheet)
 
-    logger.info(f"A5 回调成功: {payload.operation_no} {old_status} -> {new_status}")
+    logger.info("A5 回调事件处理完成: operation_no=%s event_id=%s", payload.operation_no, result.event.event_key)
     return success({
-        "matched": True,
+        "matched": result.matched,
+        "duplicate": result.duplicate,
         "operation_no": payload.operation_no,
-        "old_status": old_status.value if old_status else None,
-        "new_status": new_status.value if new_status else None,
+        "event_status": result.event.status.value,
     }, msg="回调处理成功")
 
 
@@ -127,6 +115,8 @@ def sync_status(
         last_sync_message=cached.get("last_sync_message", ""),
         sync_count_today=int(sync_count_today or 0),
         is_running=bool(cached.get("is_running", False)),
+        adapter_mode=settings.a5_adapter_mode,
+        mock_scenario=settings.a5_mock_scenario if settings.a5_adapter_mode == "mock" else None,
     ))
 
 

@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Mapping
 from urllib.parse import urlencode
 
 from app.core.config import settings
@@ -61,7 +62,7 @@ def generate_sso_token(
 
 
 def verify_a5_callback_signature(
-    request_headers: dict[str, str],
+    request_headers: Mapping[str, str],
     request_body: str = "",
     *,
     expected_token: str | None = None,
@@ -81,36 +82,49 @@ def verify_a5_callback_signature(
     Returns:
         True 表示签名验证通过
     """
+    headers = {str(key).lower(): value for key, value in request_headers.items()}
+
     # 1. 验证 IP 白名单（如果配置了的话）
-    client_ip = request_headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
+    client_ip = headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
     if not client_ip:
-        client_ip = request_headers.get("x-real-ip", "").strip()
+        client_ip = headers.get("x-real-ip", "").strip()
     if settings.a5_allowed_ips and client_ip not in settings.a5_allowed_ips:
         logger.warning(f"A5 回调 IP 不在白名单: {client_ip or 'unknown'}")
         return False
 
     # 2. 获取请求签名
-    signature = request_headers.get("X-A5-Signature", "")
+    signature = headers.get("x-a5-signature", "")
     if not signature:
         logger.warning("A5 回调缺少 X-A5-Signature 请求头")
         return False
 
-    # 3. HMAC-SHA256 验证请求体签名
+    timestamp = headers.get("x-a5-timestamp", "")
+    try:
+        timestamp_value = int(timestamp)
+    except (TypeError, ValueError):
+        logger.warning("A5 回调缺少或包含无效的 X-A5-Timestamp 请求头")
+        return False
+
+    now_timestamp = int(datetime.now(timezone.utc).timestamp())
+    if abs(now_timestamp - timestamp_value) > settings.a5_callback_max_skew_seconds:
+        logger.warning("A5 回调时间戳超出允许时间窗")
+        return False
+
+    # 3. HMAC-SHA256 验证时间戳和请求体签名
     secret = settings.a5_api_secret
     if not secret:
-        # 未配置 secret 时，回退为宽松模式（开发环境）
-        logger.warning("A5_API_SECRET 未配置，签名验证降级为仅检查签名头存在性")
-        return True
+        logger.error("A5_API_SECRET 未配置，拒绝处理回调")
+        return False
 
     expected = hmac.new(
         secret.encode("utf-8"),
-        request_body.encode("utf-8"),
+        f"{timestamp_value}.{request_body}".encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
 
     # 4. 常数时间比对，防止时序攻击
     if not hmac.compare_digest(expected, signature):
-        logger.warning(f"A5 回调签名不匹配: expected={expected[:8]}..., got={signature[:8]}...")
+        logger.warning("A5 回调签名不匹配")
         return False
 
     return True

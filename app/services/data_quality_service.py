@@ -11,6 +11,7 @@ from app.models.completion import WellCompletionRecord
 from app.models.material import MaterialRequirement, MaterialRequirementStatus
 from app.models.workover import ContractorCapacity, ContractorCapacitySyncStatus, OperationStatus, ProjectPoolStatus, WorkoverOperationSheet, WorkoverProjectPool
 from app.schemas.analytics import DataQualityIssueOut, DataQualitySummaryOut
+from app.services.data_scope_service import DataScope, reporting_unit_scope_predicate
 
 _SEVERITY_ORDER = {"high": 3, "medium": 2, "low": 1}
 
@@ -61,20 +62,28 @@ def _apply_sheet_filters(stmt, query):
     return stmt
 
 
-def _scoped_sheets(db: Session, query) -> list[WorkoverOperationSheet]:
+def _scoped_sheets(db: Session, query, scope: DataScope | None = None) -> list[WorkoverOperationSheet]:
     stmt = (
         select(WorkoverOperationSheet)
         .options(selectinload(WorkoverOperationSheet.project), selectinload(WorkoverOperationSheet.contractor_capacity))
     )
     stmt = _apply_sheet_filters(stmt, query)
+    if scope is not None and not scope.is_global:
+        stmt = stmt.where(reporting_unit_scope_predicate(scope))
     try:
         return list(db.scalars(stmt).all())
     except TypeError:
         return []
 
 
-def _scoped_materials(db: Session, query) -> list[MaterialRequirement]:
+def _scoped_materials(db: Session, query, scope: DataScope | None = None) -> list[MaterialRequirement]:
     stmt = select(MaterialRequirement)
+    if scope is not None and not scope.is_global:
+        stmt = (
+            stmt.join(WorkoverOperationSheet, MaterialRequirement.operation_sheet_id == WorkoverOperationSheet.id)
+            .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)
+            .where(reporting_unit_scope_predicate(scope))
+        )
     if query.well_no:
         stmt = stmt.where(MaterialRequirement.well_no.ilike(f"%{query.well_no}%"))
     if query.material_status:
@@ -89,8 +98,15 @@ def _scoped_materials(db: Session, query) -> list[MaterialRequirement]:
         return []
 
 
-def _scoped_contractors(db: Session, query) -> list[ContractorCapacity]:
+def _scoped_contractors(db: Session, query, scope: DataScope | None = None) -> list[ContractorCapacity]:
     stmt = select(ContractorCapacity)
+    if scope is not None and not scope.is_global:
+        stmt = (
+            stmt.join(WorkoverOperationSheet, ContractorCapacity.id == WorkoverOperationSheet.contractor_capacity_id)
+            .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)
+            .where(reporting_unit_scope_predicate(scope))
+            .distinct()
+        )
     if query.team_name:
         stmt = stmt.where(ContractorCapacity.team_name.ilike(f"%{query.team_name}%"))
     try:
@@ -300,14 +316,15 @@ def build_data_quality_summary(
     db: Session,
     query=None,
     *,
+    scope: DataScope | None = None,
     qualification_warning_days: int = 30,
 ) -> DataQualitySummaryOut:
     from app.services.statistics_analysis_service import StatisticsAnalysisQuery as _StatisticsAnalysisQuery
 
     query = query or _StatisticsAnalysisQuery()
-    sheets = _scoped_sheets(db, query)
-    materials = _scoped_materials(db, query)
-    contractors = _scoped_contractors(db, query)
+    sheets = _scoped_sheets(db, query, scope)
+    materials = _scoped_materials(db, query, scope)
+    contractors = _scoped_contractors(db, query, scope)
 
     issues = [
         *_missing_a5_link_issues(sheets),

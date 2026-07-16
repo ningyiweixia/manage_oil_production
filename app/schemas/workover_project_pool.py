@@ -149,6 +149,7 @@ class WorkoverAnalyticsQuery(BaseModel):
     block_name: str | None = None
     status: ProjectPoolStatus | None = None
     measure_type: str | None = None
+    report_unit: str | None = None
 
 
 class AnalyticsKpiOut(BaseModel):

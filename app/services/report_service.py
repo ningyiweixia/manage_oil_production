@@ -6,19 +6,25 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from sqlalchemy.orm import Session
 
-from app.crud.completion import get_completion_analytics
+from app.crud.completion import CompletionAnalyticsQuery, get_completion_analytics
 from app.crud.contractor import get_operation_analytics
 from app.crud.material import get_material_analytics
 from app.schemas.workover_project_pool import WorkoverAnalyticsQuery
 from app.services.statistics_analysis_service import StatisticsAnalysisQuery, build_statistics_analysis
+from app.services.data_scope_service import DataScope
 from app.services.workover_analytics_service import build_workover_analytics
+from app.services.workover_operation_service import OperationAnalyticsQuery, build_workover_operation_dashboard
 
 
-def build_delivery_summary(db: Session) -> dict[str, Any]:
-    workover = build_workover_analytics(db, WorkoverAnalyticsQuery())
-    operations = get_operation_analytics(db)
-    materials = get_material_analytics(db)
-    completions = get_completion_analytics(db)
+def build_delivery_summary(db: Session, *, scope: DataScope | None = None) -> dict[str, Any]:
+    is_scoped = scope is not None and not scope.is_global
+    workover = build_workover_analytics(db, WorkoverAnalyticsQuery(), scope=scope)
+    operations = (
+        build_workover_operation_dashboard(db, OperationAnalyticsQuery(), scope=scope)
+        if is_scoped else get_operation_analytics(db)
+    )
+    materials = get_material_analytics(db, scope=scope)
+    completions = get_completion_analytics(db, CompletionAnalyticsQuery(), scope=scope)
 
     return {
         "projects": {
@@ -47,11 +53,11 @@ def build_delivery_summary(db: Session) -> dict[str, Any]:
     }
 
 
-def _statistics_payload(db: Session) -> dict[str, Any]:
+def _statistics_payload(db: Session, *, scope: DataScope | None = None) -> dict[str, Any]:
     try:
-        return build_statistics_analysis(db, StatisticsAnalysisQuery())
+        return build_statistics_analysis(db, StatisticsAnalysisQuery(), scope=scope)
     except TypeError:
-        summary = build_delivery_summary(db)
+        summary = build_delivery_summary(db, scope=scope)
         return {
             "overview_kpis": {
                 "total_projects": summary["projects"]["total"],
@@ -72,8 +78,16 @@ def _statistics_payload(db: Session) -> dict[str, Any]:
         }
 
 
-def _query_statistics_payload(db: Session, query: StatisticsAnalysisQuery | None = None) -> dict[str, Any]:
-    return build_statistics_analysis(db, query or StatisticsAnalysisQuery())
+def _query_statistics_payload(
+    db: Session,
+    query: StatisticsAnalysisQuery | None = None,
+    *,
+    scope: DataScope | None = None,
+) -> dict[str, Any]:
+    normalized_query = query or StatisticsAnalysisQuery()
+    if scope is None:
+        return build_statistics_analysis(db, normalized_query)
+    return build_statistics_analysis(db, normalized_query, scope=scope)
 
 
 def _append_rows(ws, rows: list[tuple[Any, ...]]) -> None:
@@ -92,8 +106,8 @@ def _style_header(ws) -> None:
         ws.column_dimensions[column_cells[0].column_letter].width = min(max(max_length + 4, 14), 32)
 
 
-def export_delivery_summary_excel(db: Session) -> bytes:
-    data = _statistics_payload(db)
+def export_delivery_summary_excel(db: Session, *, scope: DataScope | None = None) -> bytes:
+    data = _statistics_payload(db, scope=scope)
     overview = data.get("overview_kpis", {})
     operation = data.get("operation_efficiency", {})
     a5 = data.get("a5_statistics", {})
@@ -142,8 +156,8 @@ def export_delivery_summary_excel(db: Session) -> bytes:
     return output.getvalue()
 
 
-def export_delivery_summary_word(db: Session) -> bytes:
-    data = _statistics_payload(db)
+def export_delivery_summary_word(db: Session, *, scope: DataScope | None = None) -> bytes:
+    data = _statistics_payload(db, scope=scope)
     overview = data.get("overview_kpis", {})
     operation = data.get("operation_efficiency", {})
     a5 = data.get("a5_statistics", {})
@@ -186,8 +200,13 @@ def export_delivery_summary_word(db: Session) -> bytes:
     return output.getvalue()
 
 
-def export_statistics_analysis_excel(db: Session, query: StatisticsAnalysisQuery | None = None) -> bytes:
-    data = _query_statistics_payload(db, query)
+def export_statistics_analysis_excel(
+    db: Session,
+    query: StatisticsAnalysisQuery | None = None,
+    *,
+    scope: DataScope | None = None,
+) -> bytes:
+    data = _query_statistics_payload(db, query, scope=scope)
     overview = data.get("overview_kpis", {})
     operation = data.get("operation_efficiency", {})
     a5 = data.get("a5_statistics", {})
@@ -243,8 +262,13 @@ def export_statistics_analysis_excel(db: Session, query: StatisticsAnalysisQuery
     return output.getvalue()
 
 
-def export_statistics_analysis_word(db: Session, query: StatisticsAnalysisQuery | None = None) -> bytes:
-    data = _query_statistics_payload(db, query)
+def export_statistics_analysis_word(
+    db: Session,
+    query: StatisticsAnalysisQuery | None = None,
+    *,
+    scope: DataScope | None = None,
+) -> bytes:
+    data = _query_statistics_payload(db, query, scope=scope)
     overview = data.get("overview_kpis", {})
     operation = data.get("operation_efficiency", {})
     a5 = data.get("a5_statistics", {})

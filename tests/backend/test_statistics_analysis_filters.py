@@ -117,7 +117,7 @@ class StatisticsAnalysisFilterTest(unittest.TestCase):
         ))
         self.assertEqual(completion_adapter.call_args.args[1], CompletionAnalyticsQuery(
             start_date=query.start_date, end_date=query.end_date, well_no="W-1",
-            measure_type="acidizing", team_name="Team A",
+            measure_type="acidizing", team_name="Team A", report_unit="Unit A",
         ))
 
     @unittest.skipUnless(ADAPTER_MODELS_EXIST, "adapter query models not implemented")

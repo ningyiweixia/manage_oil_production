@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.workover import ProjectPoolStatus, WorkoverProjectPool
+from app.services.data_scope_service import DataScope, reporting_unit_scope_predicate
 from app.schemas.workover_project_pool import (
     AnalyticsKpiOut,
     HeatmapOut,
@@ -54,6 +55,7 @@ def _project_records(projects: list[WorkoverProjectPool]) -> list[dict[str, Any]
                 "id": project.id,
                 "status": project.status.value,
                 "block_name": project.block_name or "未填区块",
+                "report_unit": project.report_unit,
                 "production_priority": project.production_priority or 0,
                 "created_at": project.created_at,
                 "created_day": project.created_at.date() if project.created_at else None,
@@ -91,6 +93,8 @@ def _apply_analytics_dsl(projects: pd.DataFrame, query: WorkoverAnalyticsQuery) 
         filtered = filtered[filtered["created_day"] <= query.end_date]
     if query.block_name:
         filtered = filtered[filtered["block_name"].str.contains(query.block_name, na=False)]
+    if query.report_unit:
+        filtered = filtered[filtered["report_unit"] == query.report_unit]
     if query.status:
         filtered = filtered[filtered["status"] == query.status.value]
     if query.measure_type:
@@ -105,14 +109,16 @@ def _apply_analytics_dsl(projects: pd.DataFrame, query: WorkoverAnalyticsQuery) 
     return filtered
 
 
-def build_workover_analytics(db: Session, query: WorkoverAnalyticsQuery) -> WorkoverAnalyticsOut:
-    rows = list(
-        db.scalars(
-            select(WorkoverProjectPool)
-            .where(WorkoverProjectPool.is_deleted.is_(False))
-            .order_by(WorkoverProjectPool.created_at.asc())
-        ).all()
-    )
+def build_workover_analytics(
+    db: Session,
+    query: WorkoverAnalyticsQuery,
+    *,
+    scope: DataScope | None = None,
+) -> WorkoverAnalyticsOut:
+    stmt = select(WorkoverProjectPool).where(WorkoverProjectPool.is_deleted.is_(False))
+    if scope is not None and not scope.is_global:
+        stmt = stmt.where(reporting_unit_scope_predicate(scope))
+    rows = list(db.scalars(stmt.order_by(WorkoverProjectPool.created_at.asc())).all())
     projects = pd.DataFrame(_project_records(rows))
     filtered = _apply_analytics_dsl(projects, query)
     measures = pd.DataFrame(_measure_records(filtered))
