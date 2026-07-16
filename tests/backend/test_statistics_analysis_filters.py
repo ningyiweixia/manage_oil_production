@@ -15,6 +15,7 @@ from app.models.completion import WellCompletionRecord
 from app.models.material import MaterialRequirement, MaterialRequirementStatus, MaterialRequirementType
 from app.models.workover import ContractorCapacity, ContractorCapacityStatus, OperationStatus, ProjectPoolStatus, WorkoverOperationSheet, WorkoverProjectPool
 from app.services.statistics_analysis_service import StatisticsAnalysisQuery, build_statistics_analysis
+from app.services.data_scope_service import DataScope
 from app.services import workover_operation_service as operation_service
 
 
@@ -78,6 +79,34 @@ class StatisticsAnalysisFilterTest(unittest.TestCase):
         operation.assert_called_once_with(unittest.mock.ANY, None)
         self.assertEqual(result["operation_efficiency"]["measure_type_distribution"], existing["measure_type_distribution"])
         self.assertEqual(result["operation_efficiency"]["anomaly_count"], 3)
+
+    def test_statistics_scoped_query_forwards_operation_scope(self):
+        query = StatisticsAnalysisQuery()
+        scope = DataScope(
+            is_global=False,
+            user_id=7,
+            department="Territory A",
+            reporting_units=("Territory A",),
+        )
+        workover = Mock()
+        workover.kpis = Mock(total_projects=0, pending_approvals=0, approval_rate=0, estimated_cost=0)
+        workover.status_counts = []
+        workover.measure_distribution = []
+        workover.heatmap = Mock(model_dump=lambda **_: {})
+        workover.trend = Mock(model_dump=lambda **_: {})
+        with (
+            patch("app.services.statistics_analysis_service.build_workover_analytics", return_value=workover),
+            patch("app.services.statistics_analysis_service.build_workover_operation_dashboard", return_value={"total_sheets": 0}) as operation,
+            patch("app.services.statistics_analysis_service.get_material_analytics", return_value={"total": 0}),
+            patch("app.services.statistics_analysis_service.get_completion_analytics", return_value={"total": 0, "by_measure_type": []}),
+        ):
+            build_statistics_analysis(Mock(), query, scope=scope)
+
+        operation.assert_called_once_with(
+            unittest.mock.ANY,
+            operation_service.OperationAnalyticsQuery(report_unit="Territory A"),
+            scope=scope,
+        )
 
     @unittest.skipUnless(ADAPTER_MODELS_EXIST, "adapter query models not implemented")
     def test_statistics_forwards_all_applicable_adapter_filters(self):
