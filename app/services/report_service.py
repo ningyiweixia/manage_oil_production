@@ -25,6 +25,7 @@ def build_delivery_summary(db: Session, *, scope: DataScope | None = None) -> di
     )
     materials = get_material_analytics(db, scope=scope)
     completions = get_completion_analytics(db, CompletionAnalyticsQuery(), scope=scope)
+    prod_gain = completions.get("production_gain", {})
 
     return {
         "projects": {
@@ -49,6 +50,14 @@ def build_delivery_summary(db: Session, *, scope: DataScope | None = None) -> di
         "completions": {
             "total": completions.get("total", 0),
             "by_measure_type": completions.get("by_measure_type", []),
+        },
+        "production_gain": {
+            "effective_rate": prod_gain.get("effective_rate", 0),
+            "total_daily_oil_gain": prod_gain.get("total_daily_oil_gain", 0),
+            "monthly_gain_tons": prod_gain.get("monthly_gain_tons", 0),
+            "avg_cost_per_ton": prod_gain.get("avg_cost_per_ton", 0),
+            "pump_improved_rate": prod_gain.get("pump_improved_rate", 0),
+            "by_measure_effect": completions.get("by_measure_effect", []),
         },
     }
 
@@ -135,6 +144,10 @@ def export_delivery_summary_excel(db: Session, *, scope: DataScope | None = None
             ("物料使用闭环", "已使用", material.get("used", 0)),
             ("物料使用闭环", "应急需求", material.get("emergency_count", 0)),
             ("完井分类台账", "完井记录", completion.get("total", 0)),
+            ("修井效果评估", "措施有效率(%)", overview.get("measure_effective_rate", 0)),
+            ("修井效果评估", "日增油(t/d)", overview.get("total_daily_oil_gain", 0)),
+            ("修井效果评估", "月增油预估(t)", overview.get("monthly_gain_tons", 0)),
+            ("修井效果评估", "吨油成本(万元/t)", overview.get("avg_cost_per_ton", 0)),
         ],
     )
     _style_header(ws)
@@ -144,6 +157,23 @@ def export_delivery_summary_excel(db: Session, *, scope: DataScope | None = None
     for item in completion.get("by_measure_type", []):
         ws_completion.append((item.get("measure_type"), item.get("count")))
     _style_header(ws_completion)
+
+    # 修井效果明细
+    prod_gain = data.get("production_gain", {})
+    by_measure = prod_gain.get("by_measure_effect", [])
+    if by_measure:
+        ws_effect = wb.create_sheet("修井效果评估")
+        ws_effect.append(("措施类型", "完井数", "见效井数", "有效率(%)", "日增油(t/d)", "吨油成本(万元/t)"))
+        for item in by_measure:
+            ws_effect.append((
+                item.get("measure_type"),
+                item.get("count"),
+                item.get("effective_count"),
+                item.get("effective_rate"),
+                item.get("avg_oil_gain"),
+                item.get("cost_per_ton"),
+            ))
+        _style_header(ws_effect)
 
     ws_trace = wb.create_sheet("数据追溯")
     ws_trace.append(("追溯来源",))
@@ -192,6 +222,13 @@ def export_delivery_summary_word(db: Session, *, scope: DataScope | None = None)
     doc.add_heading("完井分类台账", level=2)
     doc.add_paragraph(f"完井记录 {completion.get('total', 0)} 条，按措施类型沉淀分类台账。")
 
+    prod_gain = data.get("production_gain", {})
+    doc.add_heading("修井效果评估", level=2)
+    doc.add_paragraph(
+        f"措施有效率 {prod_gain.get('effective_rate', 0)}%，日增油 {prod_gain.get('total_daily_oil_gain', 0)} t/d，"
+        f"月增油预估 {prod_gain.get('monthly_gain_tons', 0)} t，吨油成本 {prod_gain.get('avg_cost_per_ton', 0)} 万元/t。"
+    )
+
     doc.add_heading("统计结果可追溯", level=2)
     doc.add_paragraph("、".join(data.get("trace_sources", [])) or "暂无追溯来源")
 
@@ -234,6 +271,10 @@ def export_statistics_analysis_excel(
             ("物料使用闭环", "已到场", material.get("arrived", 0)),
             ("物料使用闭环", "已使用", material.get("used", 0)),
             ("完井分类台账", "完井记录", completion.get("total", 0)),
+            ("修井效果评估", "措施有效率(%)", overview.get("measure_effective_rate", 0)),
+            ("修井效果评估", "日增油(t/d)", overview.get("total_daily_oil_gain", 0)),
+            ("修井效果评估", "月增油预估(t)", overview.get("monthly_gain_tons", 0)),
+            ("修井效果评估", "吨油成本(万元/t)", overview.get("avg_cost_per_ton", 0)),
             ("数据质量", "问题总数", quality.get("total_issues", 0)),
             ("数据质量", "高风险", quality.get("severity_counts", {}).get("high", 0)),
             ("数据质量", "中风险", quality.get("severity_counts", {}).get("medium", 0)),
@@ -296,6 +337,11 @@ def export_statistics_analysis_word(
     )
     doc.add_heading("完井分类台账", level=2)
     doc.add_paragraph(f"完井记录 {completion.get('total', 0)} 条。")
+    doc.add_heading("修井效果评估", level=2)
+    doc.add_paragraph(
+        f"措施有效率 {overview.get('measure_effective_rate', 0)}%，日增油 {overview.get('total_daily_oil_gain', 0)} t/d，"
+        f"月增油预估 {overview.get('monthly_gain_tons', 0)} t，吨油成本 {overview.get('avg_cost_per_ton', 0)} 万元/t。"
+    )
     doc.add_heading("数据质量", level=2)
     doc.add_paragraph(
         f"问题总数 {quality.get('total_issues', 0)}，"

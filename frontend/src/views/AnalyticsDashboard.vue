@@ -40,13 +40,27 @@
       <el-select v-model="statusFilter" clearable placeholder="审批状态" style="width: 170px">
         <el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" />
       </el-select>
+      <el-select v-model="compareType" placeholder="环比模式" style="width: 140px">
+        <el-option label="不对比" value="none" />
+        <el-option label="环比 (月)" value="mom" />
+        <el-option label="同比 (年)" value="yoy" />
+        <el-option label="周环比" value="wow" />
+      </el-select>
       <el-button type="primary" :icon="Refresh" @click="loadDashboard">刷新</el-button>
     </section>
 
     <section v-loading="loading && !stats" class="kpi-grid">
-      <div v-for="item in kpis" :key="item.label" class="kpi-card">
+      <div v-for="item in kpis" :key="item.label" class="kpi-card" :class="{ clickable: item.route }" @click="item.route && router.push(item.route)">
         <span>{{ item.label }}</span>
-        <strong>{{ item.value }}</strong>
+        <strong>
+          {{ item.value }}
+          <template v-if="item.deltaKey">
+            <span v-if="item.delta !== undefined && item.delta !== 0" class="kpi-delta" :class="item.delta > 0 ? 'up' : 'down'">
+              {{ item.delta > 0 ? '↑' : '↓' }}{{ Math.abs(item.delta).toFixed(1) }}%
+            </span>
+            <span v-else-if="item.delta === 0" class="kpi-delta flat">—</span>
+          </template>
+        </strong>
         <small>{{ item.hint }}</small>
       </div>
     </section>
@@ -185,6 +199,33 @@
       </article>
 
       <article class="analysis-panel">
+        <div class="panel-head">
+          <div>
+            <h2>物料时效</h2>
+            <span>各阶段平均流转天数与按时交付率</span>
+          </div>
+        </div>
+        <dl class="metric-list two">
+          <div>
+            <dt>下单→出库</dt>
+            <dd>{{ (stats?.material_usage?.timing?.avg_order_to_delivery_days ?? 0).toFixed(1) }} 天</dd>
+          </div>
+          <div>
+            <dt>出库→到场</dt>
+            <dd>{{ (stats?.material_usage?.timing?.avg_delivery_to_arrive_days ?? 0).toFixed(1) }} 天</dd>
+          </div>
+          <div>
+            <dt>到场→使用</dt>
+            <dd>{{ (stats?.material_usage?.timing?.avg_arrive_to_use_days ?? 0).toFixed(1) }} 天</dd>
+          </div>
+          <div>
+            <dt>按时交付率</dt>
+            <dd>{{ formatPercent(stats?.material_usage?.timing?.on_time_delivery_rate) }}</dd>
+          </div>
+        </dl>
+      </article>
+
+      <article class="analysis-panel">
         <div class="panel-head compact">
           <h2>物料状态分布</h2>
           <el-button :icon="Download" circle @click="saveChart(materialChart, '物料状态分布')" />
@@ -214,6 +255,115 @@
           <el-button :icon="Download" circle @click="saveChart(completionChart, '完井措施分类')" />
         </div>
         <div ref="completionChartRef" class="chart"></div>
+      </article>
+
+      <article class="analysis-panel">
+        <div class="panel-head">
+          <div>
+            <h2>修井效果评估</h2>
+            <span>措施有效率、增产效果与吨油成本</span>
+          </div>
+        </div>
+        <dl class="metric-list two">
+          <div>
+            <dt>措施有效率</dt>
+            <dd>{{ formatPercent(stats?.overview_kpis?.measure_effective_rate) }}</dd>
+          </div>
+          <div>
+            <dt>日增油</dt>
+            <dd>{{ (stats?.overview_kpis?.total_daily_oil_gain ?? 0).toFixed(2) }} t/d</dd>
+          </div>
+          <div>
+            <dt>月增油预估</dt>
+            <dd>{{ (stats?.overview_kpis?.monthly_gain_tons ?? 0).toFixed(1) }} t</dd>
+          </div>
+          <div>
+            <dt>吨油成本</dt>
+            <dd>{{ (stats?.overview_kpis?.avg_cost_per_ton ?? 0).toFixed(2) }} 万元/t</dd>
+          </div>
+        </dl>
+      </article>
+
+      <article class="analysis-panel">
+        <div class="panel-head compact">
+          <h2>措施有效率对比</h2>
+          <el-button :icon="Download" circle @click="saveChart(gainChart, '措施有效率对比')" />
+        </div>
+        <div ref="gainChartRef" class="chart"></div>
+      </article>
+
+      <article class="analysis-panel wide">
+        <div class="panel-head">
+          <div>
+            <h2>审批效率分析</h2>
+            <span>阶段耗时、瓶颈节点、驳回原因与审批人工作量</span>
+          </div>
+        </div>
+        <dl class="metric-list three">
+          <div @click="router.push('/approval-workbench')" style="cursor:pointer">
+            <dt>审批操作</dt>
+            <dd>{{ stats?.approval_efficiency?.total_actions ?? 0 }}</dd>
+          </div>
+          <div>
+            <dt>驳回率</dt>
+            <dd>{{ formatPercent(stats?.approval_efficiency?.rejection_rate) }}</dd>
+          </div>
+          <div>
+            <dt>瓶颈节点</dt>
+            <dd>{{ stats?.approval_efficiency?.bottleneck?.node || '—' }}</dd>
+          </div>
+        </dl>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-top:10px">
+          <div>
+            <h4 style="margin:0 0 8px;font-size:14px;color:#65758c">各阶段耗时</h4>
+            <div class="row-list">
+              <div v-for="stage in stats?.approval_efficiency?.stage_summary || []" :key="stage.node" class="row-item">
+                <span>{{ stage.node }} <small>({{ stage.sample_count }}样本)</small></span>
+                <strong :style="{color: stage.node === stats?.approval_efficiency?.bottleneck?.node ? '#d94a4a' : ''}">{{ stage.avg_hours }}h</strong>
+              </div>
+            </div>
+          </div>
+          <div>
+            <h4 style="margin:0 0 8px;font-size:14px;color:#65758c">审批人工作量 TOP5</h4>
+            <div class="row-list">
+              <div v-for="u in (stats?.approval_efficiency?.top_approvers || []).slice(0, 5)" :key="u.operator_id" class="row-item">
+                <span>{{ u.operator_name }}</span>
+                <span>
+                  <el-tag size="small" type="success">{{ u.approve_count }}通过</el-tag>
+                  <el-tag v-if="u.reject_count" size="small" type="danger" style="margin-left:4px">{{ u.reject_count }}驳回</el-tag>
+                </span>
+              </div>
+              <el-empty v-if="!(stats?.approval_efficiency?.top_approvers || []).length" description="暂无数据" :image-size="48" />
+            </div>
+          </div>
+        </div>
+        <div v-if="(stats?.approval_efficiency?.top_reject_reasons || []).length" style="margin-top:12px">
+          <h4 style="margin:0 0 8px;font-size:14px;color:#65758c">驳回原因分布</h4>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            <el-tag v-for="r in stats?.approval_efficiency?.top_reject_reasons || []" :key="r.reason" size="small" type="warning" effect="plain">
+              {{ r.reason }} ({{ r.count }})
+            </el-tag>
+          </div>
+        </div>
+      </article>
+
+      <article class="analysis-panel">
+        <div class="panel-head">
+          <div>
+            <h2>承包商绩效</h2>
+            <span>综合评分：增产效果 + 异常控制</span>
+          </div>
+        </div>
+        <div class="row-list">
+          <div v-for="team in (stats?.contractor_performance || []).slice(0, 5)" :key="team.team_name" class="row-item">
+            <span>
+              <strong>{{ team.team_name }}</strong>
+              <small>完井{{ team.completed_count }}口 · 有效率{{ formatPercent(team.effective_rate) }}</small>
+            </span>
+            <el-tag :type="team.score >= 80 ? 'success' : team.score >= 60 ? 'warning' : 'danger'" size="small">{{ team.score }}分</el-tag>
+          </div>
+          <el-empty v-if="!(stats?.contractor_performance || []).length" description="暂无承包商绩效数据" :image-size="68" />
+        </div>
       </article>
 
       <article class="analysis-panel wide">
@@ -333,6 +483,7 @@ const reportUnitFilter = ref('')
 const teamNameFilter = ref('')
 const processTypeFilter = ref('')
 const materialStatusFilter = ref('')
+const compareType = ref<'mom' | 'yoy' | 'wow' | 'none'>('none')
 const isRestoringQuery = ref(true)
 let latestLoadId = 0
 
@@ -342,6 +493,7 @@ const teamChartRef = ref<HTMLDivElement>()
 const a5TrendChartRef = ref<HTMLDivElement>()
 const materialChartRef = ref<HTMLDivElement>()
 const completionChartRef = ref<HTMLDivElement>()
+const gainChartRef = ref<HTMLDivElement>()
 const heatmapChartRef = ref<HTMLDivElement>()
 const trendChartRef = ref<HTMLDivElement>()
 
@@ -351,6 +503,7 @@ let teamChart: ECharts | null = null
 let a5TrendChart: ECharts | null = null
 let materialChart: ECharts | null = null
 let completionChart: ECharts | null = null
+let gainChart: ECharts | null = null
 let heatmapChart: ECharts | null = null
 let trendChart: ECharts | null = null
 
@@ -370,15 +523,30 @@ const measureOptions = computed(() => {
   return Array.from(new Set([...fromDictionary, ...fromStats])).map((value) => ({ value, label: measureLabel(value) }))
 })
 
+const deltaMap: Record<string, string> = {
+  '项目池总量': 'total_projects',
+  '待办审批': 'pending_approvals',
+  '运行表工单': 'operation_sheets',
+  'A5异常': 'a5_anomalies',
+  '物料需求': 'material_requirements',
+  '完井记录': 'completion_records',
+}
+
 const kpis = computed(() => {
   const overview = stats.value?.overview_kpis
+  const deltas = stats.value?.comparison?.deltas || {}
+  function deltaVal(key: string): number | undefined {
+    const dk = deltaMap[key]
+    if (!dk || !deltas[dk]) return undefined
+    return deltas[dk].change_pct
+  }
   return [
-    { label: '项目池总量', value: overview?.total_projects ?? 0, hint: '当前筛选范围' },
-    { label: '待办审批', value: overview?.pending_approvals ?? 0, hint: '地质/工艺核实' },
-    { label: '运行表工单', value: overview?.operation_sheets ?? 0, hint: '派工与施工跟踪' },
-    { label: 'A5异常', value: overview?.a5_anomalies ?? 0, hint: '异常情况统计' },
-    { label: '物料需求', value: overview?.material_requirements ?? 0, hint: '物料闭环台账' },
-    { label: '完井记录', value: overview?.completion_records ?? 0, hint: '分类台账沉淀' },
+    { label: '项目池总量', value: overview?.total_projects ?? 0, hint: '当前筛选范围', route: '/project-pool-ledger', deltaKey: 'total_projects', delta: deltaVal('项目池总量') },
+    { label: '待办审批', value: overview?.pending_approvals ?? 0, hint: '地质/工艺核实', route: '/approval-workbench', deltaKey: 'pending_approvals', delta: deltaVal('待办审批') },
+    { label: '运行表工单', value: overview?.operation_sheets ?? 0, hint: '派工与施工跟踪', route: '/workover-operations', deltaKey: 'operation_sheets', delta: deltaVal('运行表工单') },
+    { label: 'A5异常', value: overview?.a5_anomalies ?? 0, hint: '异常情况统计', route: '/a5-integration', deltaKey: 'a5_anomalies', delta: deltaVal('A5异常') },
+    { label: '物料需求', value: overview?.material_requirements ?? 0, hint: '物料闭环台账', route: '/material-manage', deltaKey: 'material_requirements', delta: deltaVal('物料需求') },
+    { label: '完井记录', value: overview?.completion_records ?? 0, hint: '分类台账沉淀', route: '/completion-ledger', deltaKey: 'completion_records', delta: deltaVal('完井记录') },
     { label: '预计费用', value: formatMoney(overview?.estimated_cost), hint: '阶段性汇报口径' }
   ]
 })
@@ -401,7 +569,8 @@ function statisticsQuery() {
     process_type: processTypeFilter.value || undefined,
     material_status: materialStatusFilter.value || undefined,
     block_name: blockFilter.value || undefined,
-    status: statusFilter.value || undefined
+    status: statusFilter.value || undefined,
+    compare_type: compareType.value !== 'none' ? compareType.value : undefined
   }
 }
 
@@ -484,6 +653,18 @@ function renderCharts() {
     series: [{ type: 'pie', radius: ['38%', '64%'], center: ['50%', '43%'], data: named(series.completion_measure_distribution).map((item) => ({ ...item, name: measureLabel(item.name) })) }]
   } satisfies EChartsOption)
 
+  gainChart?.setOption({
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    legend: { top: 0, textStyle: commonText },
+    grid: { left: 100, right: 88, top: 48, bottom: 24 },
+    xAxis: { type: 'value', axisLabel: commonText },
+    yAxis: { type: 'category', data: (series.production_gain_by_measure || []).map((item) => measureLabel(item.measure_type)), axisLabel: commonText },
+    series: [
+      { name: '有效率(%)', type: 'bar', data: (series.production_gain_by_measure || []).map((item) => item.effective_rate), itemStyle: { color: '#12a182' } },
+      { name: '见效井数', type: 'bar', data: (series.production_gain_by_measure || []).map((item) => item.effective_count), itemStyle: { color: '#2f7de1' } },
+    ]
+  } satisfies EChartsOption)
+
   const heatmap = series.block_status_heatmap || { blocks: [], statuses: [], data: [] }
   heatmapChart?.setOption({
     tooltip: { position: 'top' },
@@ -519,6 +700,7 @@ function initCharts() {
   if (a5TrendChartRef.value) a5TrendChart = echarts.init(a5TrendChartRef.value, undefined, options)
   if (materialChartRef.value) materialChart = echarts.init(materialChartRef.value, undefined, options)
   if (completionChartRef.value) completionChart = echarts.init(completionChartRef.value, undefined, options)
+  if (gainChartRef.value) gainChart = echarts.init(gainChartRef.value, undefined, options)
   if (heatmapChartRef.value) heatmapChart = echarts.init(heatmapChartRef.value, undefined, options)
   if (trendChartRef.value) trendChart = echarts.init(trendChartRef.value, undefined, options)
 }
@@ -637,12 +819,13 @@ function resizeCharts() {
   a5TrendChart?.resize()
   materialChart?.resize()
   completionChart?.resize()
+  gainChart?.resize()
   heatmapChart?.resize()
   trendChart?.resize()
 }
 
 watch(
-  [measureFilter, statusFilter, blockFilter, wellNoFilter, reportUnitFilter, teamNameFilter, processTypeFilter, materialStatusFilter, dateRange],
+  [measureFilter, statusFilter, blockFilter, wellNoFilter, reportUnitFilter, teamNameFilter, processTypeFilter, materialStatusFilter, dateRange, compareType],
   () => {
     if (isRestoringQuery.value) return
     void syncQuery()
@@ -660,6 +843,8 @@ onMounted(async () => {
   teamNameFilter.value = typeof route.query.team_name === 'string' ? route.query.team_name : ''
   processTypeFilter.value = typeof route.query.process_type === 'string' ? route.query.process_type : ''
   materialStatusFilter.value = typeof route.query.material_status === 'string' ? route.query.material_status : ''
+  compareType.value = (typeof route.query.compare_type === 'string' && ['mom','yoy','wow'].includes(route.query.compare_type))
+    ? (route.query.compare_type as 'mom' | 'yoy' | 'wow') : 'none'
   if (typeof route.query.start_date === 'string' && typeof route.query.end_date === 'string') {
     dateRange.value = [new Date(route.query.start_date), new Date(route.query.end_date)]
   }
@@ -678,6 +863,7 @@ onBeforeUnmount(() => {
   a5TrendChart?.dispose()
   materialChart?.dispose()
   completionChart?.dispose()
+  gainChart?.dispose()
   heatmapChart?.dispose()
   trendChart?.dispose()
 })
@@ -754,6 +940,16 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
+.kpi-card.clickable {
+  cursor: pointer;
+  transition: box-shadow 0.2s, transform 0.15s;
+}
+
+.kpi-card.clickable:hover {
+  box-shadow: 0 4px 16px rgba(47, 125, 225, 0.18);
+  transform: translateY(-2px);
+}
+
 .kpi-card span,
 .kpi-card small,
 .panel-head span,
@@ -764,7 +960,19 @@ onBeforeUnmount(() => {
 .kpi-card strong {
   font-size: 24px;
   color: #17233d;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
 }
+
+.kpi-delta {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.kpi-delta.up { color: #12a182; }
+.kpi-delta.down { color: #d94a4a; }
+.kpi-delta.flat { color: #909399; }
 
 .section-grid {
   display: grid;
@@ -808,6 +1016,10 @@ onBeforeUnmount(() => {
 
 .metric-list.two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.metric-list.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .metric-list div {

@@ -182,6 +182,36 @@ def build_material_analytics(items: list[MaterialRequirement]) -> dict[str, Any]
     exception_count = sum(1 for i in items if bool((i.exception_reason or "").strip()))
     usage_rate = round((used / total) * 100, 2) if total else 0.0
 
+    # Timing analytics: compute average days between status transitions
+    order_to_delivery_days: list[float] = []
+    delivery_to_arrive_days: list[float] = []
+    arrive_to_use_days: list[float] = []
+    on_time_count = 0
+    on_time_total = 0
+
+    for item in items:
+        created = item.created_at
+        if item.delivered_at and created:
+            days = (item.delivered_at - created).total_seconds() / 86400
+            if 0 <= days <= 365:
+                order_to_delivery_days.append(days)
+        if item.arrived_at and item.delivered_at:
+            days = (item.arrived_at - item.delivered_at).total_seconds() / 86400
+            if 0 <= days <= 365:
+                delivery_to_arrive_days.append(days)
+        if item.used_at and item.arrived_at:
+            days = (item.used_at - item.arrived_at).total_seconds() / 86400
+            if 0 <= days <= 365:
+                arrive_to_use_days.append(days)
+        # On-time delivery: delivered before or on expected_arrival_at
+        if item.delivered_at and item.expected_arrival_at:
+            on_time_total += 1
+            if item.delivered_at <= item.expected_arrival_at:
+                on_time_count += 1
+
+    def _avg(days_list: list[float]) -> float:
+        return round(sum(days_list) / len(days_list), 1) if days_list else 0.0
+
     return {
         "total": total,
         "pending": pending,
@@ -194,6 +224,14 @@ def build_material_analytics(items: list[MaterialRequirement]) -> dict[str, Any]
         "emergency_count": emergency,
         "exception_count": exception_count,
         "usage_rate": usage_rate,
+        "timing": {
+            "avg_order_to_delivery_days": _avg(order_to_delivery_days),
+            "avg_delivery_to_arrive_days": _avg(delivery_to_arrive_days),
+            "avg_arrive_to_use_days": _avg(arrive_to_use_days),
+            "on_time_delivery_rate": round(on_time_count / on_time_total * 100, 2) if on_time_total else 0,
+            "on_time_count": on_time_count,
+            "on_time_total": on_time_total,
+        },
     }
 
 

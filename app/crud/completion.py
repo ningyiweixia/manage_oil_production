@@ -166,7 +166,7 @@ def get_completion_analytics(
     current_user: User | None = None,
     scope: DataScope | None = None,
 ) -> dict[str, Any]:
-    """完井分类统计：按措施类型分组统计。"""
+    """完井分类统计：按措施类型分组统计，含修井效果评估（增产、泵效、吨油成本）。"""
     query = query or CompletionAnalyticsQuery()
     stmt = select(WellCompletionRecord).join(WorkoverOperationSheet).join(WorkoverProjectPool)
     if current_user is not None:
@@ -188,10 +188,85 @@ def get_completion_analytics(
     if query.end_date:
         stmt = stmt.where(WellCompletionRecord.completion_date <= query.end_date)
     rows = db.scalars(stmt).all()
+
     by_type: dict[str, int] = {}
+    total_oil_gain = 0.0
+    effective_count = 0
+    pump_improved_count = 0
+    total_pump_improvement = 0.0
+    total_estimated_cost = 0.0
+    by_measure_effect: dict[str, dict[str, Any]] = {}
+
     for row in rows:
         by_type[row.measure_type] = by_type.get(row.measure_type, 0) + 1
+
+        pre = row.pre_repair_data or {}
+        post = row.post_repair_data or {}
+        pre_oil = float(pre.get("daily_oil", 0) or 0)
+        post_oil = float(post.get("daily_oil", 0) or 0)
+        oil_gain = post_oil - pre_oil
+        if oil_gain > 0:
+            total_oil_gain += oil_gain
+            effective_count += 1
+
+        pre_eff = float(pre.get("pump_efficiency", 0) or 0)
+        post_eff = float(post.get("pump_efficiency", 0) or 0)
+        eff_gain = post_eff - pre_eff
+        if eff_gain > 0:
+            pump_improved_count += 1
+            total_pump_improvement += eff_gain
+
+        # Accumulate per-measure-type effect stats
+        if row.measure_type not in by_measure_effect:
+            by_measure_effect[row.measure_type] = {
+                "measure_type": row.measure_type,
+                "count": 0,
+                "effective_count": 0,
+                "total_oil_gain": 0.0,
+                "total_cost": 0.0,
+            }
+        bme = by_measure_effect[row.measure_type]
+        bme["count"] += 1
+        if oil_gain > 0:
+            bme["effective_count"] += 1
+            bme["total_oil_gain"] += oil_gain
+
+        # Extract estimated cost from linked project pool measures
+        try:
+            sheet = row.operation_sheet
+            if sheet and sheet.project and sheet.project.measures_jsonb:
+                measures = sheet.project.measures_jsonb.get("measures", []) if isinstance(sheet.project.measures_jsonb, dict) else []
+                cost = sum(float(m.get("estimated_cost") or 0) for m in measures if isinstance(m, dict))
+                total_estimated_cost += cost
+                bme["total_cost"] += cost
+        except Exception:
+            pass
+
+    total = len(rows)
+
+    # Compute per-measure effectiveness rates and cost-per-ton
+    for entry in by_measure_effect.values():
+        cnt = entry["count"]
+        entry["effective_rate"] = round(entry["effective_count"] / cnt * 100, 2) if cnt else 0
+        entry["avg_oil_gain"] = round(entry["total_oil_gain"] / entry["effective_count"], 2) if entry["effective_count"] else 0
+        entry["cost_per_ton"] = round(entry["total_cost"] / (entry["total_oil_gain"] * 30), 2) if entry["total_oil_gain"] > 0 else 0
+
+    monthly_gain_tons = round(total_oil_gain * 30, 2)  # daily → monthly projection
+
     return {
-        "total": len(rows),
+        "total": total,
         "by_measure_type": [{"measure_type": k, "count": v} for k, v in sorted(by_type.items(), key=lambda x: -x[1])],
+        "production_gain": {
+            "total_daily_oil_gain": round(total_oil_gain, 2),       # t/d 日增油
+            "avg_daily_oil_gain": round(total_oil_gain / total, 2) if total else 0,
+            "monthly_gain_tons": monthly_gain_tons,                  # t/月 月增油预估
+            "effective_count": effective_count,                      # 见效井数
+            "effective_rate": round(effective_count / total * 100, 2) if total else 0,  # 措施有效率 %
+            "pump_efficiency_avg_improvement": round(total_pump_improvement / pump_improved_count, 2) if pump_improved_count else 0,
+            "pump_improved_count": pump_improved_count,
+            "pump_improved_rate": round(pump_improved_count / total * 100, 2) if total else 0,
+            "total_estimated_cost": round(total_estimated_cost, 2),   # 万元
+            "avg_cost_per_ton": round(total_estimated_cost / monthly_gain_tons, 2) if monthly_gain_tons > 0 else 0,  # 万元/吨
+        },
+        "by_measure_effect": sorted(by_measure_effect.values(), key=lambda x: -x["count"]),
     }

@@ -24,6 +24,14 @@ export interface DeliverySummary {
     total: number
     by_measure_type: { measure_type: string; count: number }[]
   }
+  production_gain?: {
+    effective_rate: number
+    total_daily_oil_gain: number
+    monthly_gain_tons: number
+    avg_cost_per_ton: number
+    pump_improved_rate: number
+    by_measure_effect: { measure_type: string; count: number; effective_count: number; effective_rate: number; avg_oil_gain: number; cost_per_ton: number }[]
+  }
 }
 
 export interface StatisticsAnalysisQuery {
@@ -37,6 +45,58 @@ export interface StatisticsAnalysisQuery {
   material_status?: string
   block_name?: string
   status?: string
+  compare_type?: 'mom' | 'yoy' | 'wow' | 'none'
+}
+
+export interface KpiDelta {
+  current: number
+  previous: number
+  change: number
+  change_pct: number
+}
+
+export interface ComparisonResult {
+  mode: string
+  prev_period?: { start_date: string; end_date: string }
+  deltas: Record<string, KpiDelta>
+}
+
+export interface ApprovalStageSummary {
+  node: string
+  avg_hours: number
+  sample_count: number
+  max_hours: number
+}
+
+export interface ApprovalEfficiency {
+  total_actions: number
+  total_approvals: number
+  total_rejections: number
+  rejection_rate: number
+  stage_summary: ApprovalStageSummary[]
+  bottleneck: { node: string | null; avg_hours: number }
+  top_reject_reasons: { reason: string; count: number }[]
+  top_approvers: { operator_id: number; operator_name: string; approve_count: number; reject_count: number; total_actions: number }[]
+}
+
+export interface ContractorTeamScore {
+  team_name: string
+  completed_count: number
+  effective_count: number
+  total_oil_gain: number
+  a5_anomaly_count: number
+  effective_rate: number
+  avg_oil_gain: number
+  score: number
+}
+
+export interface MaterialTiming {
+  avg_order_to_delivery_days: number
+  avg_delivery_to_arrive_days: number
+  avg_arrive_to_use_days: number
+  on_time_delivery_rate: number
+  on_time_count: number
+  on_time_total: number
 }
 
 export interface StatisticsAnalysis {
@@ -50,10 +110,28 @@ export interface StatisticsAnalysis {
     a5_anomalies: number
     material_requirements: number
     completion_records: number
+    data_quality_issues?: number
+    measure_effective_rate?: number
+    total_daily_oil_gain?: number
+    monthly_gain_tons?: number
+    avg_cost_per_ton?: number
   }
   completion_classification: {
     total: number
     by_measure_type: { measure_type: string; count: number }[]
+    production_gain?: {
+      total_daily_oil_gain: number
+      avg_daily_oil_gain: number
+      monthly_gain_tons: number
+      effective_count: number
+      effective_rate: number
+      pump_efficiency_avg_improvement: number
+      pump_improved_count: number
+      pump_improved_rate: number
+      total_estimated_cost: number
+      avg_cost_per_ton: number
+    }
+    by_measure_effect?: { measure_type: string; count: number; effective_count: number; effective_rate: number; avg_oil_gain: number; cost_per_ton: number }[]
   }
   data_quality_summary: {
     checked_at: string
@@ -91,6 +169,7 @@ export interface StatisticsAnalysis {
     emergency_count?: number
     exception_count?: number
     usage_rate?: number
+    timing?: MaterialTiming
   }
   operation_efficiency: {
     total_sheets?: number
@@ -100,6 +179,10 @@ export interface StatisticsAnalysis {
     runtime_focus?: Record<string, number>
   }
   trace_sources: string[]
+  comparison: ComparisonResult
+  approval_efficiency: ApprovalEfficiency
+  contractor_performance: ContractorTeamScore[]
+  integration_status?: Record<string, unknown>
   chart_series: {
     approval_status: { name: string; value: number; status?: string }[]
     measure_distribution: { name: string; value: number }[]
@@ -109,6 +192,11 @@ export interface StatisticsAnalysis {
     material_status_distribution: { name: string; value: number }[]
     team_workload_rank: { team_name: string; sheet_count: number }[]
     completion_measure_distribution: { name: string; value: number }[]
+    production_gain_by_measure?: { measure_type: string; count: number; effective_count: number; effective_rate: number; avg_oil_gain: number; cost_per_ton: number }[]
+    production_gain_summary?: { total_daily_oil_gain: number; effective_rate: number; monthly_gain_tons: number; avg_cost_per_ton: number; pump_improved_rate: number }
+    approval_stage_summary?: ApprovalStageSummary[]
+    approval_bottleneck?: { node: string | null; avg_hours: number }
+    contractor_performance_scores?: ContractorTeamScore[]
   }
   report_outputs: string[]
 }
@@ -155,7 +243,12 @@ export function normalizeStatisticsAnalysis(payload: any): StatisticsAnalysis {
       operation_sheets: Number(operation.total_sheets || 0),
       a5_anomalies: Number(a5.anomaly_total || 0),
       material_requirements: Number(material.total || 0),
-      completion_records: Number(completion.total || 0)
+      completion_records: Number(completion.total || 0),
+      data_quality_issues: payload?.data_quality_summary?.total_issues ?? 0,
+      measure_effective_rate: payload?.overview_kpis?.measure_effective_rate ?? payload?.production_gain?.effective_rate ?? 0,
+      total_daily_oil_gain: payload?.overview_kpis?.total_daily_oil_gain ?? payload?.production_gain?.total_daily_oil_gain ?? 0,
+      monthly_gain_tons: payload?.overview_kpis?.monthly_gain_tons ?? payload?.production_gain?.monthly_gain_tons ?? 0,
+      avg_cost_per_ton: payload?.overview_kpis?.avg_cost_per_ton ?? payload?.production_gain?.avg_cost_per_ton ?? 0,
     },
     completion_classification: completion,
     data_quality_summary: payload?.data_quality_summary || {
@@ -169,6 +262,14 @@ export function normalizeStatisticsAnalysis(payload: any): StatisticsAnalysis {
     material_usage: material,
     operation_efficiency: operation,
     trace_sources: payload?.trace_sources || [],
+    comparison: payload?.comparison || { mode: 'none', deltas: {} },
+    approval_efficiency: payload?.approval_efficiency || {
+      total_actions: 0, total_approvals: 0, total_rejections: 0,
+      rejection_rate: 0, stage_summary: [],
+      bottleneck: { node: null, avg_hours: 0 },
+      top_reject_reasons: [], top_approvers: []
+    },
+    contractor_performance: payload?.contractor_performance || [],
     chart_series: {
       approval_status: statusNameValue(report_key_data.status_counts),
       measure_distribution: nameValue(report_key_data.measure_distribution),
