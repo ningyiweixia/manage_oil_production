@@ -6,18 +6,23 @@
 
 import logging
 import base64
+import hashlib
+import json
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from io import BytesIO
 from typing import Any
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.exceptions import BusinessException
 from app.core.redis import cache_client
-from app.core.status_codes import A5_LINK_FAILED
+from app.core.status_codes import A5_LINK_FAILED, CONFLICT
+from app.models.integration import IntegrationEvent, IntegrationEventStatus
 from app.models.workover import ContractorCapacityStatus, OperationStatus, ProjectPoolStatus, WorkoverOperationSheet
 from app.schemas.a5_integration import A5AnalyticsOut, A5AnalyticsQuery, A5NameValueOut, A5TrendOut, A5AnalyticsReportOut
 from app.services.a5_client import A5Client
@@ -34,6 +39,74 @@ A5_PROCESS_RECORDS_PREFIX = f"{A5_PROCESS_RECORDS_KEY}:"
 A5_ANOMALY_DATES_KEY = "a5:sync:anomaly_dates"
 A5_PROCESS_DATES_KEY = "a5:sync:process_dates"
 A5_ANALYTICS_CACHE_TTL = 604800
+
+
+@dataclass(frozen=True)
+class A5EventProcessResult:
+    event: IntegrationEvent
+    duplicate: bool
+    matched: bool
+
+
+def process_a5_callback_event(
+    db: Session,
+    payload: dict[str, Any],
+    *,
+    event_id: str | None = None,
+) -> A5EventProcessResult:
+    canonical_payload = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    payload_hash = hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+    event_key = event_id.strip() if event_id and event_id.strip() else payload_hash
+
+    existing = db.scalar(
+        select(IntegrationEvent).where(
+            IntegrationEvent.source == "a5",
+            IntegrationEvent.event_key == event_key,
+        )
+    )
+    if existing is not None:
+        if existing.payload_hash != payload_hash:
+            raise BusinessException(CONFLICT, "A5 事件键与既有载荷冲突")
+        return A5EventProcessResult(
+            event=existing,
+            duplicate=True,
+            matched=existing.status == IntegrationEventStatus.PROCESSED,
+        )
+
+    operation_no = str(payload.get("operation_no") or "")
+    event = IntegrationEvent(
+        source="a5",
+        event_key=event_key,
+        payload_hash=payload_hash,
+        operation_no=operation_no or None,
+        raw_payload=payload,
+        attempt_count=1,
+    )
+    db.add(event)
+    db.flush()
+
+    sheet = db.scalar(
+        select(WorkoverOperationSheet).where(WorkoverOperationSheet.operation_no == operation_no)
+    )
+    if sheet is None:
+        event.status = IntegrationEventStatus.PENDING_REVIEW
+        event.error_message = "未找到对应作业工单"
+        db.commit()
+        db.refresh(event)
+        return A5EventProcessResult(event=event, duplicate=False, matched=False)
+
+    apply_a5_update_to_operation_sheet(
+        sheet,
+        status=str(payload.get("status") or ""),
+        remark=payload.get("remark"),
+        detail=payload,
+        source="callback",
+    )
+    event.status = IntegrationEventStatus.PROCESSED
+    event.processed_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(event)
+    return A5EventProcessResult(event=event, duplicate=False, matched=True)
 
 
 def _normalize_a5_status(raw_status: str | None) -> OperationStatus | None:
