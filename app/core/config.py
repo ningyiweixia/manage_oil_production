@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     a5_api_key: str = ""
     a5_api_secret: str = ""
     a5_ip_whitelist: str = ""
+    a5_callback_max_skew_seconds: int = Field(default=300, ge=1)
     alert_webhook_url: str = ""
     contractor_system_base_url: str = ""
     contractor_system_token: str = ""
