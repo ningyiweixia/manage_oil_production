@@ -173,7 +173,9 @@ def get_completion_analytics(
         stmt = apply_workover_operation_scope(stmt, current_user)
     if scope is not None and not scope.is_global:
         stmt = stmt.where(reporting_unit_scope_predicate(scope))
-    if query.report_unit:
+    if query.report_unit and not (
+        scope is not None and not scope.is_global and query.report_unit == scope.department
+    ):
         stmt = stmt.where(WorkoverProjectPool.report_unit == query.report_unit)
     if query.well_no:
         stmt = stmt.where(WellCompletionRecord.well_no.ilike(f"%{query.well_no}%"))

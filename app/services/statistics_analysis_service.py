@@ -16,7 +16,7 @@ from app.services.workover_analytics_service import build_workover_analytics
 from app.services.workover_operation_service import OperationAnalyticsQuery, build_workover_operation_dashboard
 from app.models.integration import IntegrationEvent, IntegrationEventStatus
 from app.models.workover import WorkoverOperationSheet, WorkoverProjectPool
-from app.services.data_scope_service import DataScope
+from app.services.data_scope_service import DataScope, reporting_unit_scope_predicate
 
 
 class StatisticsAnalysisQuery(BaseModel):
@@ -144,7 +144,7 @@ def build_integration_status(db: Session, *, scope: DataScope | None = None) -> 
             statement = (
                 statement.join(WorkoverOperationSheet, IntegrationEvent.operation_no == WorkoverOperationSheet.operation_no)
                 .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)
-                .where(WorkoverProjectPool.report_unit.in_(scope.reporting_units))
+                .where(reporting_unit_scope_predicate(scope))
             )
         value = db.scalar(statement)
         return int(value) if isinstance(value, (int, float)) else 0
@@ -170,14 +170,19 @@ def build_statistics_analysis(
     if scope is not None and not scope.is_global:
         query = query.model_copy(update={"report_unit": scope.department or "__no_scope__"})
 
-    workover = build_workover_analytics(db, _build_workover_query(query))
+    workover = build_workover_analytics(db, _build_workover_query(query), scope=scope)
     operation_query = OperationAnalyticsQuery(
         start_date=query.start_date, end_date=query.end_date, well_no=query.well_no,
         report_unit=query.report_unit, team_name=query.team_name, block_name=query.block_name,
         status=query.status, measure_type=query.measure_type, material_status=query.material_status,
     )
+    operation_args = (
+        {"scope": scope}
+        if scope is not None
+        else {}
+    )
     operation_efficiency = _dump(build_workover_operation_dashboard(
-        db, operation_query if any(operation_query.model_dump().values()) else None
+        db, operation_query if any(operation_query.model_dump().values()) else None, **operation_args
     ))
     material_usage = _dump(get_material_analytics(db, MaterialAnalyticsQuery(
         start_date=query.start_date, end_date=query.end_date, well_no=query.well_no,
@@ -186,7 +191,7 @@ def build_statistics_analysis(
     completion_classification = _dump(get_completion_analytics(db, CompletionAnalyticsQuery(
         start_date=query.start_date, end_date=query.end_date, well_no=query.well_no,
         measure_type=query.measure_type, team_name=query.team_name, report_unit=query.report_unit,
-    )))
+    ), scope=scope))
     # Cached A5 analytics records do not yet carry report-unit ownership.  Do
     # not expose that shared cache to scoped users until the upstream contract
     # provides a reliable ownership field.
