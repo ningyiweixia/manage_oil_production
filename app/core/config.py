@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     a5_callback_max_skew_seconds: int = Field(default=300, ge=1)
     a5_adapter_mode: Literal["mock", "http"] = "mock"
     a5_mock_scenario: Literal["normal", "empty", "timeout", "error", "duplicate"] = "normal"
+    material_adapter_mode: Literal["mock", "http"] = "mock"
+    material_mock_scenario: Literal["normal", "empty", "timeout", "error", "duplicate"] = "normal"
     alert_webhook_url: str = ""
     contractor_system_base_url: str = ""
     contractor_system_token: str = ""
