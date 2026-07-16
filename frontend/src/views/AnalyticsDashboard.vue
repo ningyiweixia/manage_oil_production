@@ -693,16 +693,17 @@ function renderCharts() {
 }
 
 function initCharts() {
-  const options = { renderer: 'svg' as const }
-  if (approvalChartRef.value) approvalChart = echarts.init(approvalChartRef.value, undefined, options)
-  if (measureChartRef.value) measureChart = echarts.init(measureChartRef.value, undefined, options)
-  if (teamChartRef.value) teamChart = echarts.init(teamChartRef.value, undefined, options)
-  if (a5TrendChartRef.value) a5TrendChart = echarts.init(a5TrendChartRef.value, undefined, options)
-  if (materialChartRef.value) materialChart = echarts.init(materialChartRef.value, undefined, options)
-  if (completionChartRef.value) completionChart = echarts.init(completionChartRef.value, undefined, options)
-  if (gainChartRef.value) gainChart = echarts.init(gainChartRef.value, undefined, options)
-  if (heatmapChartRef.value) heatmapChart = echarts.init(heatmapChartRef.value, undefined, options)
-  if (trendChartRef.value) trendChart = echarts.init(trendChartRef.value, undefined, options)
+  // Use canvas renderer (default) — SVG renderer breaks getDataURL PNG export
+  // because foreignObject content is blocked by canvas security when converting SVG→PNG
+  if (approvalChartRef.value) approvalChart = echarts.init(approvalChartRef.value)
+  if (measureChartRef.value) measureChart = echarts.init(measureChartRef.value)
+  if (teamChartRef.value) teamChart = echarts.init(teamChartRef.value)
+  if (a5TrendChartRef.value) a5TrendChart = echarts.init(a5TrendChartRef.value)
+  if (materialChartRef.value) materialChart = echarts.init(materialChartRef.value)
+  if (completionChartRef.value) completionChart = echarts.init(completionChartRef.value)
+  if (gainChartRef.value) gainChart = echarts.init(gainChartRef.value)
+  if (heatmapChartRef.value) heatmapChart = echarts.init(heatmapChartRef.value)
+  if (trendChartRef.value) trendChart = echarts.init(trendChartRef.value)
 }
 
 async function loadMeasureDictionary() {
@@ -735,10 +736,19 @@ async function syncQuery() {
 
 function saveChart(chart: ECharts | null, name: string) {
   if (!chart) return
-  const link = document.createElement('a')
-  link.href = chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#ffffff' })
-  link.download = `${name}.png`
-  link.click()
+  try {
+    const dataUrl = chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#ffffff' })
+    const link = document.createElement('a')
+    link.href = dataUrl
+    link.download = `${name}.png`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    ElMessage.success(`${name} 已下载`)
+  } catch (err) {
+    console.error('Chart export failed:', err)
+    ElMessage.error(`${name} 导出失败，请重试`)
+  }
 }
 
 function exportSummary() {
