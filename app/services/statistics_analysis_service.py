@@ -15,6 +15,8 @@ from app.services.a5_sync_service import build_a5_analytics
 from app.services.workover_analytics_service import build_workover_analytics
 from app.services.workover_operation_service import OperationAnalyticsQuery, build_workover_operation_dashboard
 from app.models.integration import IntegrationEvent, IntegrationEventStatus
+from app.models.workover import WorkoverOperationSheet, WorkoverProjectPool
+from app.services.data_scope_service import DataScope
 
 
 class StatisticsAnalysisQuery(BaseModel):
@@ -117,6 +119,7 @@ def _build_workover_query(query: StatisticsAnalysisQuery) -> WorkoverAnalyticsQu
         status=query.status,
         measure_type=query.measure_type,
         block_name=query.block_name,
+        report_unit=query.report_unit,
     )
 
 
@@ -128,13 +131,22 @@ def _build_a5_query(query: StatisticsAnalysisQuery) -> A5AnalyticsQuery:
     )
 
 
-def build_integration_status(db: Session) -> dict[str, Any]:
+def build_integration_status(db: Session, *, scope: DataScope | None = None) -> dict[str, Any]:
     def count(source: str, status: IntegrationEventStatus) -> int:
-        value = db.scalar(
+        statement = (
             select(func.count())
             .select_from(IntegrationEvent)
             .where(IntegrationEvent.source == source, IntegrationEvent.status == status)
         )
+        if scope is not None and not scope.is_global:
+            if source != "a5" or not scope.reporting_units:
+                return 0
+            statement = (
+                statement.join(WorkoverOperationSheet, IntegrationEvent.operation_no == WorkoverOperationSheet.operation_no)
+                .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)
+                .where(WorkoverProjectPool.report_unit.in_(scope.reporting_units))
+            )
+        value = db.scalar(statement)
         return int(value) if isinstance(value, (int, float)) else 0
 
     return {
@@ -147,8 +159,16 @@ def build_integration_status(db: Session) -> dict[str, Any]:
     }
 
 
-def build_statistics_analysis(db: Session, query: StatisticsAnalysisQuery) -> dict[str, Any]:
+def build_statistics_analysis(
+    db: Session,
+    query: StatisticsAnalysisQuery,
+    *,
+    scope: DataScope | None = None,
+) -> dict[str, Any]:
     """Aggregate production analysis, review, and report data into one payload."""
+
+    if scope is not None and not scope.is_global:
+        query = query.model_copy(update={"report_unit": scope.department or "__no_scope__"})
 
     workover = build_workover_analytics(db, _build_workover_query(query))
     operation_query = OperationAnalyticsQuery(
@@ -162,14 +182,14 @@ def build_statistics_analysis(db: Session, query: StatisticsAnalysisQuery) -> di
     material_usage = _dump(get_material_analytics(db, MaterialAnalyticsQuery(
         start_date=query.start_date, end_date=query.end_date, well_no=query.well_no,
         status=query.material_status,
-    )))
+    ), scope=scope))
     completion_classification = _dump(get_completion_analytics(db, CompletionAnalyticsQuery(
         start_date=query.start_date, end_date=query.end_date, well_no=query.well_no,
-        measure_type=query.measure_type, team_name=query.team_name,
+        measure_type=query.measure_type, team_name=query.team_name, report_unit=query.report_unit,
     )))
     a5 = build_a5_analytics(_build_a5_query(query))
     data_quality = _dump(build_data_quality_summary(db, query))
-    integration_status = build_integration_status(db)
+    integration_status = build_integration_status(db, scope=scope)
 
     overview_kpis = {
         "total_projects": workover.kpis.total_projects,

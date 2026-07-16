@@ -11,6 +11,7 @@ from app.crud.contractor import get_operation_analytics
 from app.crud.material import get_material_analytics
 from app.schemas.workover_project_pool import WorkoverAnalyticsQuery
 from app.services.statistics_analysis_service import StatisticsAnalysisQuery, build_statistics_analysis
+from app.services.data_scope_service import DataScope
 from app.services.workover_analytics_service import build_workover_analytics
 
 
@@ -72,8 +73,16 @@ def _statistics_payload(db: Session) -> dict[str, Any]:
         }
 
 
-def _query_statistics_payload(db: Session, query: StatisticsAnalysisQuery | None = None) -> dict[str, Any]:
-    return build_statistics_analysis(db, query or StatisticsAnalysisQuery())
+def _query_statistics_payload(
+    db: Session,
+    query: StatisticsAnalysisQuery | None = None,
+    *,
+    scope: DataScope | None = None,
+) -> dict[str, Any]:
+    normalized_query = query or StatisticsAnalysisQuery()
+    if scope is None:
+        return build_statistics_analysis(db, normalized_query)
+    return build_statistics_analysis(db, normalized_query, scope=scope)
 
 
 def _append_rows(ws, rows: list[tuple[Any, ...]]) -> None:
@@ -186,8 +195,13 @@ def export_delivery_summary_word(db: Session) -> bytes:
     return output.getvalue()
 
 
-def export_statistics_analysis_excel(db: Session, query: StatisticsAnalysisQuery | None = None) -> bytes:
-    data = _query_statistics_payload(db, query)
+def export_statistics_analysis_excel(
+    db: Session,
+    query: StatisticsAnalysisQuery | None = None,
+    *,
+    scope: DataScope | None = None,
+) -> bytes:
+    data = _query_statistics_payload(db, query, scope=scope)
     overview = data.get("overview_kpis", {})
     operation = data.get("operation_efficiency", {})
     a5 = data.get("a5_statistics", {})
@@ -243,8 +257,13 @@ def export_statistics_analysis_excel(db: Session, query: StatisticsAnalysisQuery
     return output.getvalue()
 
 
-def export_statistics_analysis_word(db: Session, query: StatisticsAnalysisQuery | None = None) -> bytes:
-    data = _query_statistics_payload(db, query)
+def export_statistics_analysis_word(
+    db: Session,
+    query: StatisticsAnalysisQuery | None = None,
+    *,
+    scope: DataScope | None = None,
+) -> bytes:
+    data = _query_statistics_payload(db, query, scope=scope)
     overview = data.get("overview_kpis", {})
     operation = data.get("operation_efficiency", {})
     a5 = data.get("a5_statistics", {})

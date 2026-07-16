@@ -10,6 +10,7 @@ from app.db.base import Base
 from app.models import *  # noqa: F401,F403
 from app.models.integration import IntegrationEvent, IntegrationEventStatus
 from app.services.statistics_analysis_service import build_integration_status
+from app.services.data_scope_service import DataScope
 
 
 class StatisticsIntegrationStatusTest(unittest.TestCase):
@@ -31,6 +32,21 @@ class StatisticsIntegrationStatusTest(unittest.TestCase):
         self.assertEqual(result["material_adapter_mode"], "mock")
         self.assertEqual(result["a5_processed"], 1)
         self.assertEqual(result["a5_pending_review"], 1)
+
+    def test_non_global_scope_does_not_receive_unmatched_integration_counts(self):
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool, future=True)
+        Session = sessionmaker(bind=engine)
+        Base.metadata.create_all(engine)
+        with Session() as db:
+            db.add(IntegrationEvent(source="a5", event_key="foreign", payload_hash="d" * 64, status=IntegrationEventStatus.PROCESSED, raw_payload={}))
+            db.commit()
+            result = build_integration_status(
+                db,
+                scope=DataScope(is_global=False, user_id=9, department="Unit A", reporting_units=("Unit A",)),
+            )
+
+        self.assertEqual(result["a5_processed"], 0)
+        self.assertEqual(result["material_processed"], 0)
 
 
 if __name__ == "__main__":

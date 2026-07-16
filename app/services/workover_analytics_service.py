@@ -54,6 +54,7 @@ def _project_records(projects: list[WorkoverProjectPool]) -> list[dict[str, Any]
                 "id": project.id,
                 "status": project.status.value,
                 "block_name": project.block_name or "未填区块",
+                "report_unit": project.report_unit,
                 "production_priority": project.production_priority or 0,
                 "created_at": project.created_at,
                 "created_day": project.created_at.date() if project.created_at else None,
@@ -91,6 +92,8 @@ def _apply_analytics_dsl(projects: pd.DataFrame, query: WorkoverAnalyticsQuery) 
         filtered = filtered[filtered["created_day"] <= query.end_date]
     if query.block_name:
         filtered = filtered[filtered["block_name"].str.contains(query.block_name, na=False)]
+    if query.report_unit:
+        filtered = filtered[filtered["report_unit"] == query.report_unit]
     if query.status:
         filtered = filtered[filtered["status"] == query.status.value]
     if query.measure_type:

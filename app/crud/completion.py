@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from app.core.exceptions import BusinessException
 from app.core.status_codes import BAD_REQUEST
 from app.models.completion import WellCompletionRecord
-from app.models.workover import WorkoverOperationSheet
+from app.models.workover import WorkoverOperationSheet, WorkoverProjectPool
 from app.schemas.completion import WellCompletionCreate, WellCompletionQuery, WellCompletionUpdate
 
 
@@ -18,6 +18,7 @@ class CompletionAnalyticsQuery(BaseModel):
     well_no: str | None = None
     measure_type: str | None = None
     team_name: str | None = None
+    report_unit: str | None = None
 
 
 def _apply_filters(stmt: Select[tuple[WellCompletionRecord]], query: WellCompletionQuery) -> Select[tuple[WellCompletionRecord]]:
@@ -129,6 +130,12 @@ def get_completion_analytics(db: Session, query: CompletionAnalyticsQuery | None
     """完井分类统计：按措施类型分组统计。"""
     query = query or CompletionAnalyticsQuery()
     stmt = select(WellCompletionRecord)
+    if query.report_unit:
+        stmt = (
+            stmt.join(WorkoverOperationSheet, WellCompletionRecord.operation_sheet_id == WorkoverOperationSheet.id)
+            .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)
+            .where(WorkoverProjectPool.report_unit == query.report_unit)
+        )
     if query.well_no:
         stmt = stmt.where(WellCompletionRecord.well_no.ilike(f"%{query.well_no}%"))
     if query.measure_type:
