@@ -280,6 +280,21 @@ ALERT_WEBHOOK_URL=     # 企业微信告警 Webhook
 
 > 生产/联调环境接入真实系统时再填入 `A5_BASE_URL`。A5 系统的回调路径 `/api/v1/a5/callback` 已在 `AUTH_WHITELIST` 中免鉴权，由 HMAC 签名验证保障安全。
 
+### 模拟接口与生产切换
+
+```env
+A5_ADAPTER_MODE=mock                 # mock | http
+A5_MOCK_SCENARIO=normal              # normal | empty | timeout | error | duplicate
+A5_CALLBACK_MAX_SKEW_SECONDS=300     # 回调时间戳允许偏差（秒）
+MATERIAL_ADAPTER_MODE=mock           # mock | http
+MATERIAL_MOCK_SCENARIO=normal        # normal | empty | timeout | error | duplicate
+```
+
+- `mock` 模式不访问外部网络：A5 提供固定日报、异常和工序数据；物料提供固定计划事件，适用于本地联调。
+- `http` 模式用于真实 A5 接入。生产环境必须配置 `A5_BASE_URL`、`A5_API_KEY` 和非空 `A5_API_SECRET`；缺失密钥时回调验证拒绝请求。
+- A5 回调使用 `X-A5-Timestamp` 与 `X-A5-Signature`。签名内容为 `timestamp + "." + 原始请求体` 的 HMAC-SHA256，时间偏差超过配置窗口会被拒绝。
+- 轮换密钥时，先在 A5 与本系统同时配置新密钥，重启后验证模拟回调，再撤销旧密钥。回滚时恢复上一版本密钥和适配器模式；重复事件会按事件键幂等处理。
+
 ### 本地降级模式
 
 | 依赖 | 不可用时的行为 |
