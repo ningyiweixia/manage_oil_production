@@ -9,12 +9,15 @@ from app.models.approval import ApprovalLog
 from app.models.rbac import Menu, OperationLog, Permission, Role, User
 from app.models.workover import WorkoverProjectPool
 from app.schemas.rbac import (
+    IsActivePayload,
     MenuCreate,
     MenuOut,
     MenuUpdate,
+    PasswordResetPayload,
     PermissionCreate,
     PermissionOut,
     PermissionUpdate,
+    RoleBrief,
     RoleCreate,
     RoleOut,
     RoleUpdate,
@@ -38,6 +41,7 @@ def _user_out(user: User) -> UserOut:
         is_active=user.is_active,
         is_superuser=user.is_superuser,
         role_ids=[role.id for role in user.roles],
+        roles=[RoleBrief(id=role.id, name=role.name, code=role.code) for role in user.roles],
         created_at=user.created_at,
     )
 
@@ -99,6 +103,17 @@ def set_user_active(db: Session, user_id: int, is_active: bool) -> UserOut:
     if user is None:
         raise BusinessException(BAD_REQUEST, "用户不存在")
     user.is_active = is_active
+    db.commit()
+    db.refresh(user)
+    invalidate_user_permission_cache([user.id])
+    return _user_out(user)
+
+
+def reset_user_password(db: Session, user_id: int, payload: PasswordResetPayload) -> UserOut:
+    user = crud.get_user(db, user_id)
+    if user is None:
+        raise BusinessException(BAD_REQUEST, "用户不存在")
+    user.hashed_password = get_password_hash(payload.password)
     db.commit()
     db.refresh(user)
     invalidate_user_permission_cache([user.id])

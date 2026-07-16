@@ -12,6 +12,9 @@
           <el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
       </el-form-item>
+      <el-form-item label="提报单位">
+        <el-input v-model="query.report_unit" clearable placeholder="采油一厂" />
+      </el-form-item>
       <el-form-item>
         <el-button type="primary" :icon="Search" @click="loadProjects">查询</el-button>
         <el-button :icon="Refresh" @click="resetQuery">重置</el-button>
@@ -264,20 +267,9 @@ function attachmentCount(row: WorkoverProject) {
 async function loadProjects() {
   loading.value = true
   try {
-    // Direct fetch to bypass any Axios/compactQuery issues
-    const token = localStorage.getItem('access_token')
-    const resp = await fetch('/api/v1/workover-project-pools/?page=1&page_size=20', {
-      headers: { 'Authorization': 'Bearer ' + (token || '') }
-    })
-    const json = await resp.json()
-    if (json.code === 20000 && json.data) {
-      projects.value = json.data.items || []
-      total.value = json.data.total || 0
-    } else {
-      ElMessage.error(json.msg || '接口返回异常')
-      projects.value = []
-      total.value = 0
-    }
+    const page = await listProjects(query)
+    projects.value = page.items
+    total.value = page.total
     selectedIds.value = []
   } catch (error: any) {
     ElMessage.error(error?.message || '加载项目列表失败')
@@ -294,7 +286,7 @@ async function loadWorkflowCounts() {
   workflowCounts.value = nextCounts
 }
 function resetQuery() {
-  Object.assign(query, { page: 1, page_size: query.page_size, status: '', well_no: '', block_name: '', measure_type: '' })
+  Object.assign(query, { page: 1, page_size: query.page_size, status: '', well_no: '', block_name: '', measure_type: '', report_unit: '' })
   loadProjects()
 }
 function resetForm() {

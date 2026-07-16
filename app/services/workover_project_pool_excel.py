@@ -215,9 +215,29 @@ def parse_project_pool_excel(content: bytes) -> list[WorkoverProjectPoolCreate]:
     return parsed
 
 
+EXPORT_COLUMN_MAP: dict[str, str] = {
+    "well_no": "井号",
+    "well_type": "井别",
+    "block_name": "区块",
+    "report_unit": "提报单位",
+    "reason_category": "原因分类",
+    "report_batch": "提报批次",
+    "completeness_status": "资料完整性",
+    "is_duplicate_well": "重复井",
+    "status": "状态",
+    "initiator_name": "提报人",
+    "created_at": "创建时间",
+}
+
+
 def export_project_pool_excel(rows: list[dict]) -> dict[str, str]:
     output = BytesIO()
-    frame = pd.DataFrame(rows).map(_sanitize_cell)
+    if not rows:
+        frame = pd.DataFrame(columns=list(EXPORT_COLUMN_MAP.values()))
+    else:
+        frame = pd.DataFrame(rows).map(_sanitize_cell)
+        frame = frame[[col for col in EXPORT_COLUMN_MAP if col in frame.columns]]
+        frame.columns = [EXPORT_COLUMN_MAP[col] for col in frame.columns]
     frame.to_excel(output, index=False, engine="openpyxl")
     output.seek(0)
     return {

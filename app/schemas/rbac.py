@@ -8,6 +8,35 @@ class IdsPayload(BaseModel):
     ids: list[int] = Field(default_factory=list)
 
 
+class RoleBrief(BaseModel):
+    id: int
+    name: str
+    code: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class IsActivePayload(BaseModel):
+    is_active: bool
+
+
+class PasswordResetPayload(BaseModel):
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_complexity(cls, value: str) -> str:
+        checks = (
+            any(char.islower() for char in value),
+            any(char.isupper() for char in value),
+            any(char.isdigit() for char in value),
+            any(not char.isalnum() for char in value),
+        )
+        if not all(checks):
+            raise ValueError("Password must include uppercase, lowercase, number, and special character")
+        return value
+
+
 class UserCreate(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=8, max_length=128)
@@ -52,6 +81,7 @@ class UserOut(BaseModel):
     is_active: bool
     is_superuser: bool
     role_ids: list[int] = []
+    roles: list[RoleBrief] = []
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

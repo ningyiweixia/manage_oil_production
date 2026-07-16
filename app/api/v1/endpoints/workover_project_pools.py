@@ -129,13 +129,12 @@ def import_template(
 
 @router.get("/export/all", response_model=ApiResponse[dict[str, str]])
 def export_all(
+    query: WorkoverProjectPoolQuery = Depends(),
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("workover_project_pool:export")),
+    current_user: User = Depends(require_permission("workover_project_pool:export")),
 ) -> ApiResponse[dict[str, str]]:
-    payload = [
-        WorkoverProjectPoolOut.model_validate(row).model_dump(mode="json")
-        for row in list_all_project_pools(db)
-    ]
+    rows, _ = list_project_pools(db, query, current_user=current_user)
+    payload = [WorkoverProjectPoolOut.model_validate(row).model_dump(mode="json") for row in rows]
     return success(export_project_pool_excel(payload), msg="导出成功")
 
 

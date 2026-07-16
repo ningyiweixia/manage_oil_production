@@ -15,10 +15,12 @@ from app.schemas.pagination import PageResult
 from app.schemas.rbac import (
     ApprovalLogOut,
     IdsPayload,
+    IsActivePayload,
     MenuCreate,
     MenuOut,
     MenuUpdate,
     OperationLogOut,
+    PasswordResetPayload,
     PermissionCreate,
     PermissionOut,
     PermissionUpdate,
@@ -66,11 +68,21 @@ def update_user(
 @router.patch("/users/{user_id}/active", response_model=ApiResponse[UserOut])
 def set_user_active(
     user_id: int,
-    is_active: bool,
+    payload: IsActivePayload,
     db: Session = Depends(get_db),
     _: User = Depends(require_permission("system:user:update")),
 ) -> ApiResponse[UserOut]:
-    return success(rbac_service.set_user_active(db, user_id, is_active), msg="状态已更新")
+    return success(rbac_service.set_user_active(db, user_id, payload.is_active), msg="状态已更新")
+
+
+@router.patch("/users/{user_id}/password", response_model=ApiResponse[UserOut])
+def reset_user_password(
+    user_id: int,
+    payload: PasswordResetPayload,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_permission("system:user:update")),
+) -> ApiResponse[UserOut]:
+    return success(rbac_service.reset_user_password(db, user_id, payload), msg="密码已重置")
 
 
 @router.patch("/users/{user_id}/roles", response_model=ApiResponse[UserOut])

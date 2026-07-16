@@ -11,6 +11,7 @@ export interface UserItem {
   is_active: boolean
   is_superuser: boolean
   role_ids: number[]
+  roles?: Array<{ id: number; name: string; code: string }>
   created_at: string
 }
 
@@ -97,7 +98,11 @@ export function createUser(payload: {
 }
 
 export function setUserActive(id: number, isActive: boolean) {
-  return unwrap<UserItem>(http.patch(`/users/${id}/active`, null, { params: { is_active: isActive } }))
+  return unwrap<UserItem>(http.patch(`/users/${id}/active`, { is_active: isActive }))
+}
+
+export function resetUserPassword(id: number, password: string) {
+  return unwrap<UserItem>(http.patch(`/users/${id}/password`, { password }))
 }
 
 export function deleteUser(id: number) {

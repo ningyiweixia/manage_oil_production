@@ -112,6 +112,8 @@ def _apply_filters(stmt: Select[tuple[WorkoverProjectPool]], query: WorkoverProj
         stmt = stmt.where(WorkoverProjectPool.status == query.status)
     if query.measure_type:
         stmt = stmt.where(measure_type_filter(WorkoverProjectPool.measures_jsonb, query.measure_type))
+    if query.report_unit:
+        stmt = stmt.where(WorkoverProjectPool.report_unit.ilike(f"%{query.report_unit}%"))
     return stmt
 
 

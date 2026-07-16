@@ -105,10 +105,11 @@
                   <el-switch :model-value="row.is_active" @change="(value: string | number | boolean) => changeUserActive(row.id, Boolean(value))" />
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="170">
+              <el-table-column label="操作" width="270">
                 <template #default="{ row }">
                   <div class="table-actions">
                     <el-button text type="primary" @click="openRoleAssign(row)">分配角色</el-button>
+                    <el-button text type="primary" @click="openResetPassword(row)">重置密码</el-button>
                     <el-button text type="danger" :disabled="isDeleteDisabled(row)" @click="deleteUserRow(row)">删除</el-button>
                   </div>
                 </template>
@@ -376,6 +377,23 @@
       <el-button type="danger" :loading="saving" @click="confirmCancelAccount">确认注销</el-button>
     </template>
   </el-dialog>
+
+  <!-- 管理员重置用户密码 -->
+  <el-dialog v-model="resetPasswordDialogVisible" title="重置用户密码" width="520px" @closed="resetAdminPasswordForm">
+    <el-form ref="adminResetPasswordFormRef" :model="adminResetPasswordForm" :rules="resetPasswordRules" label-width="104px" class="dialog-form">
+      <el-form-item label="新密码" prop="new_password">
+        <el-input v-model="adminResetPasswordForm.new_password" type="password" show-password />
+        <p class="form-tip">密码需 8-128 位，且包含大写字母、小写字母、数字和特殊字符。</p>
+      </el-form-item>
+      <el-form-item label="确认新密码" prop="confirm_password">
+        <el-input v-model="adminResetPasswordForm.confirm_password" type="password" show-password />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="resetPasswordDialogVisible = false">取消</el-button>
+      <el-button type="primary" :loading="saving" @click="confirmResetPassword">确认重置</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
@@ -399,6 +417,7 @@ import {
   listRoles,
   listUsers,
   type MenuItem,
+  resetUserPassword,
   setUserActive,
   type OperationLogItem,
   type PermissionItem,
@@ -453,6 +472,13 @@ const passwordForm = reactive({
 })
 const cancelForm = reactive({
   password: ''
+})
+const resetPasswordDialogVisible = ref(false)
+const resetPasswordUser = ref<UserItem | null>(null)
+const adminResetPasswordFormRef = ref<FormInstance>()
+const adminResetPasswordForm = reactive({
+  new_password: '',
+  confirm_password: ''
 })
 const userForm = reactive({
   username: '',
@@ -594,6 +620,34 @@ const userRules: FormRules<typeof userForm> = {
   ],
   full_name: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
   role_id: [{ required: true, message: '请选择一个角色', trigger: 'change' }]
+}
+const resetPasswordRules: FormRules<typeof adminResetPasswordForm> = {
+  new_password: [
+    { required: true, message: '请输入新密码', trigger: 'blur' },
+    {
+      validator: (_rule, value: string, callback) => {
+        if (!passwordPattern.test(value || '')) {
+          callback(new Error(passwordMessage))
+          return
+        }
+        callback()
+      },
+      trigger: 'blur'
+    }
+  ],
+  confirm_password: [
+    { required: true, message: '请再次输入新密码', trigger: 'blur' },
+    {
+      validator: (_rule, value: string, callback) => {
+        if (value !== adminResetPasswordForm.new_password) {
+          callback(new Error('两次输入的新密码不一致'))
+          return
+        }
+        callback()
+      },
+      trigger: 'blur'
+    }
+  ]
 }
 
 function clearAuthState() {
@@ -855,6 +909,33 @@ async function saveRoleAssign() {
   } finally {
     saving.value = false
   }
+}
+
+function openResetPassword(row: UserItem) {
+  resetPasswordUser.value = row
+  resetPasswordDialogVisible.value = true
+}
+
+async function confirmResetPassword() {
+  const valid = await adminResetPasswordFormRef.value?.validate().catch(() => false)
+  if (!valid || !resetPasswordUser.value) return
+  saving.value = true
+  try {
+    await resetUserPassword(resetPasswordUser.value.id, adminResetPasswordForm.new_password)
+    ElMessage.success('密码已重置')
+    resetPasswordDialogVisible.value = false
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, '密码重置失败'))
+  } finally {
+    saving.value = false
+  }
+}
+
+function resetAdminPasswordForm() {
+  adminResetPasswordForm.new_password = ''
+  adminResetPasswordForm.confirm_password = ''
+  adminResetPasswordFormRef.value?.clearValidate()
+  resetPasswordUser.value = null
 }
 
 function openPermissionAssign(row: RoleItem) {

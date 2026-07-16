@@ -83,6 +83,7 @@ export interface ProjectQuery {
   well_no?: string
   status?: ProjectPoolStatus | ''
   measure_type?: string
+  report_unit?: string
 }
 
 export interface AnalyticsQuery {
