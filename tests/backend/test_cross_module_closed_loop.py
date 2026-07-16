@@ -302,6 +302,11 @@ class CrossModuleClosedLoopTest(unittest.TestCase):
                 {"operation_no": visible_sheet.operation_no, "status": "FINISHED"},
                 event_id="a5-territory-visible-001",
             )
+            process_a5_callback_event(
+                db,
+                {"operation_no": hidden_sheet.operation_no, "status": "FINISHED"},
+                event_id="a5-territory-hidden-001",
+            )
             result = build_statistics_analysis(db, StatisticsAnalysisQuery(), scope=scope)
 
         self.assertEqual(result["overview_kpis"]["total_projects"], 1)
