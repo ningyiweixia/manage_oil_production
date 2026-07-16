@@ -10,7 +10,7 @@ class ReportsDataScopeContractTest(unittest.TestCase):
         source = (REPO_ROOT / "app/api/v1/endpoints/reports.py").read_text(encoding="utf-8")
 
         self.assertIn("build_data_scope", source)
-        self.assertGreaterEqual(source.count("scope=build_data_scope(current_user)"), 3)
+        self.assertGreaterEqual(source.count("scope=build_data_scope(current_user)"), 6)
 
 
 if __name__ == "__main__":

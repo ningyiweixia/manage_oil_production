@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.exceptions import BusinessException
-from app.core.status_codes import CONFLICT
+from app.core.status_codes import BAD_REQUEST, CONFLICT
 from app.crud.material import get_material_requirement, update_material_requirement
 from app.models.integration import IntegrationEvent, IntegrationEventStatus
 from app.models.material import MaterialRequirement, MaterialRequirementStatus
@@ -69,7 +69,7 @@ def get_material_external_adapter(
     selected_mode = mode or settings.material_adapter_mode
     if selected_mode == "mock":
         return MockMaterialExternalAdapter(scenario or settings.material_mock_scenario)
-    raise RuntimeError("material HTTP adapter is not configured")
+    raise BusinessException(BAD_REQUEST, "material HTTP adapter is not configured")
 
 
 def _event_payload(event: MaterialExternalEvent) -> dict[str, object]:
@@ -134,6 +134,7 @@ def apply_external_material_event(
         requirement.id,
         MaterialRequirementUpdate(status=event.status, source_platform=event.source_platform, **quantities),
         scope=scope,
+        commit=False,
     )
     event_log.status = IntegrationEventStatus.PROCESSED
     event_log.processed_at = datetime.now(timezone.utc)

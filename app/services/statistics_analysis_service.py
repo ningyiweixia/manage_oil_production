@@ -191,7 +191,7 @@ def build_statistics_analysis(
     # not expose that shared cache to scoped users until the upstream contract
     # provides a reliable ownership field.
     a5 = A5AnalyticsOut() if scope is not None and not scope.is_global else build_a5_analytics(_build_a5_query(query))
-    data_quality = _dump(build_data_quality_summary(db, query))
+    data_quality = _dump(build_data_quality_summary(db, query, scope=scope))
     integration_status = build_integration_status(db, scope=scope)
 
     overview_kpis = {

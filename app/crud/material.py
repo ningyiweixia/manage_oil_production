@@ -283,6 +283,7 @@ def update_material_requirement(
     payload: MaterialRequirementUpdate,
     *,
     scope: DataScope | None = None,
+    commit: bool = True,
 ) -> MaterialRequirement:
     obj = get_material_requirement(db, req_id, scope=scope)
     old_operation_sheet_id = obj.operation_sheet_id
@@ -307,8 +308,9 @@ def update_material_requirement(
     if old_operation_sheet_id != obj.operation_sheet_id:
         sync_operation_sheet_material_rollup(db, old_operation_sheet_id)
     sync_operation_sheet_material_rollup(db, obj.operation_sheet_id)
-    db.commit()
-    db.refresh(obj)
+    if commit:
+        db.commit()
+        db.refresh(obj)
     return obj
 
 

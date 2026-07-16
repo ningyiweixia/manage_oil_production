@@ -11,6 +11,7 @@ from app.models.completion import WellCompletionRecord
 from app.models.material import MaterialRequirement, MaterialRequirementStatus, MaterialRequirementType
 from app.models.workover import ContractorCapacity, ContractorCapacityStatus, ContractorCapacitySyncStatus, OperationStatus, ProjectPoolStatus, WorkoverOperationSheet, WorkoverProjectPool
 from app.services.data_quality_service import build_data_quality_summary
+from app.services.data_scope_service import DataScope
 from app.services.statistics_analysis_service import StatisticsAnalysisQuery
 
 
@@ -172,6 +173,15 @@ class DataQualityServiceTest(unittest.TestCase):
 
         self.assertTrue(summary.issues)
         self.assertTrue(all(issue.well_no == "W-2" or issue.entity_type == "contractor_capacity" for issue in summary.issues))
+
+    def test_build_data_quality_summary_limits_material_and_contractor_issues_to_scope(self):
+        scope = DataScope(is_global=False, user_id=1, department="Unit A", reporting_units=("Unit A",))
+        with self.Session() as db:
+            summary = build_data_quality_summary(db, StatisticsAnalysisQuery(), scope=scope)
+
+        self.assertTrue(summary.issues)
+        self.assertTrue(all(issue.well_no in {"W-1", None} for issue in summary.issues))
+        self.assertNotIn("Team B", {issue.team_name for issue in summary.issues})
 
 
 if __name__ == "__main__":

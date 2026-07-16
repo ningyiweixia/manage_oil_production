@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.crud.material import get_material_requirement
+from app.core.exceptions import BusinessException
 from app.db.base import Base
 from app.models import *  # noqa: F401,F403
 from app.models.material import MaterialRequirement, MaterialRequirementStatus, MaterialRequirementType
@@ -55,6 +56,10 @@ class MaterialExternalAdapterTest(unittest.TestCase):
         adapter = get_material_external_adapter("mock", "empty")
 
         self.assertEqual(asyncio.run(adapter.fetch_events()), [])
+
+    def test_http_mode_returns_a_typed_configuration_error(self):
+        with self.assertRaises(BusinessException):
+            get_material_external_adapter("http")
 
 
 if __name__ == "__main__":

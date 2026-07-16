@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -82,8 +83,29 @@ def process_a5_callback_event(
         raw_payload=payload,
         attempt_count=1,
     )
-    db.add(event)
-    db.flush()
+    try:
+        # The unique key is the concurrency control.  A savepoint keeps the
+        # surrounding session usable when two callbacks arrive at once.
+        with db.begin_nested():
+            db.add(event)
+            db.flush()
+    except IntegrityError:
+        db.expire_all()
+        existing = db.scalar(
+            select(IntegrationEvent).where(
+                IntegrationEvent.source == "a5",
+                IntegrationEvent.event_key == event_key,
+            )
+        )
+        if existing is None:
+            raise
+        if existing.payload_hash != payload_hash:
+            raise BusinessException(CONFLICT, "A5 事件键与既有载荷冲突")
+        return A5EventProcessResult(
+            event=existing,
+            duplicate=True,
+            matched=existing.status == IntegrationEventStatus.PROCESSED,
+        )
 
     sheet = db.scalar(
         select(WorkoverOperationSheet).where(WorkoverOperationSheet.operation_no == operation_no)
