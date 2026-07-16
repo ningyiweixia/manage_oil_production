@@ -16,7 +16,7 @@ from app.services.workover_analytics_service import build_workover_analytics
 from app.services.workover_operation_service import OperationAnalyticsQuery, build_workover_operation_dashboard
 from app.models.integration import IntegrationEvent, IntegrationEventStatus
 from app.models.workover import WorkoverOperationSheet, WorkoverProjectPool
-from app.services.data_scope_service import DataScope
+from app.services.data_scope_service import DataScope, reporting_unit_scope_predicate
 
 
 class StatisticsAnalysisQuery(BaseModel):
@@ -144,7 +144,7 @@ def build_integration_status(db: Session, *, scope: DataScope | None = None) -> 
             statement = (
                 statement.join(WorkoverOperationSheet, IntegrationEvent.operation_no == WorkoverOperationSheet.operation_no)
                 .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)
-                .where(WorkoverProjectPool.report_unit.in_(scope.reporting_units))
+                .where(reporting_unit_scope_predicate(scope))
             )
         value = db.scalar(statement)
         return int(value) if isinstance(value, (int, float)) else 0

@@ -297,12 +297,18 @@ class CrossModuleClosedLoopTest(unittest.TestCase):
                 department="Territory Closed Loop",
                 reporting_units=("Territory Closed Loop",),
             )
+            process_a5_callback_event(
+                db,
+                {"operation_no": visible_sheet.operation_no, "status": "FINISHED"},
+                event_id="a5-territory-visible-001",
+            )
             result = build_statistics_analysis(db, StatisticsAnalysisQuery(), scope=scope)
 
         self.assertEqual(result["overview_kpis"]["total_projects"], 1)
         self.assertEqual(result["overview_kpis"]["material_requirements"], 1)
         self.assertEqual(result["overview_kpis"]["completion_records"], 1)
         self.assertEqual(result["completion_classification"]["by_measure_type"], [{"measure_type": "acidizing", "count": 1}])
+        self.assertEqual(result["integration_status"]["a5_processed"], 1)
 
 
 if __name__ == "__main__":
