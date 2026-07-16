@@ -12,6 +12,8 @@
 
 ### Task 1: 准备可重复的浏览器验收运行环境
 
+以下所有命令均在隔离工作树根目录 `D:\workspace\githubprojects\oil_production\manage_oil_production\.worktrees\cross-module-integration-test` 的同一个 PowerShell 会话中运行。步骤 2 至任务 3 完成前不得关闭该会话，以保留本次启动的受管进程对象。
+
 **Files:**
 - Verify: `AGENTS.md`
 - Verify: `main.py`
@@ -36,6 +38,8 @@ Expected: 安装命令在联网可用的环境完成，并输出 Playwright 版�
 ```powershell
 $repoRoot = (Resolve-Path .).Path
 $python = (Resolve-Path (Join-Path $repoRoot '..\..\.venv\Scripts\python.exe')).Path
+$localRoot = Join-Path $repoRoot '.local'
+New-Item -ItemType Directory -Force $localRoot | Out-Null
 $ports = 8001, 5174
 $inUse = Get-NetTCPConnection -State Listen -LocalPort $ports -ErrorAction SilentlyContinue
 if ($inUse) { throw "Refusing to reuse occupied acceptance ports: $($inUse.LocalPort -join ', ')" }
@@ -67,8 +71,9 @@ Expected: 端口 8001 与 5174 在启动前未被其他服务占用；数据库�
 ```powershell
 $repoRoot = (Resolve-Path .).Path
 $python = (Resolve-Path (Join-Path $repoRoot '..\..\.venv\Scripts\python.exe')).Path
-$backendScript = @'
-Set-Location '__REPO_ROOT__'
+$node = (Get-Command node.exe -ErrorAction Stop).Source
+$vite = (Resolve-Path (Join-Path $repoRoot 'frontend\node_modules\vite\bin\vite.js')).Path
+
 $env:DATABASE_URL = 'sqlite:///./.local/cross_module_browser.db'
 $env:POSTGRES_PASSWORD = 'test'
 $env:JWT_SECRET_KEY = 'test-jwt-secret'
@@ -77,22 +82,22 @@ $env:A5_ADAPTER_MODE = 'mock'
 $env:MATERIAL_ADAPTER_MODE = 'mock'
 $env:CORS_ALLOW_ORIGINS = 'http://127.0.0.1:5174'
 $env:REDIS_URL = ''
-& '__PYTHON__' -m uvicorn main:app --host 127.0.0.1 --port 8001
-'@.Replace('__REPO_ROOT__', $repoRoot).Replace('__PYTHON__', $python)
-$frontendScript = @'
-Set-Location '__FRONTEND_ROOT__'
+$backend = Start-Process -FilePath $python -WorkingDirectory $repoRoot `
+  -ArgumentList @('-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8001') `
+  -WindowStyle Hidden -PassThru
+
 $env:VITE_API_BASE_URL = 'http://127.0.0.1:8001/api/v1'
 $env:VITE_WS_BASE_URL = 'ws://127.0.0.1:8001/ws/approval'
-& npm.cmd run dev -- --host 127.0.0.1 --port 5174
-'@.Replace('__FRONTEND_ROOT__', (Join-Path $repoRoot 'frontend'))
-
-$backendEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($backendScript))
-$frontendEncoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($frontendScript))
-cmd.exe /c ('start "cross-module-backend" /min powershell.exe -NoProfile -EncodedCommand {0}' -f $backendEncoded)
-cmd.exe /c ('start "cross-module-frontend" /min powershell.exe -NoProfile -EncodedCommand {0}' -f $frontendEncoded)
+$frontend = Start-Process -FilePath $node -WorkingDirectory (Join-Path $repoRoot 'frontend') `
+  -ArgumentList @($vite, '--host', '127.0.0.1', '--port', '5174', '--strictPort') `
+  -WindowStyle Hidden -PassThru
+$ownedProcesses = @(
+  [pscustomobject]@{ Name = 'backend'; Id = $backend.Id; StartTime = $backend.StartTime; Executable = $python },
+  [pscustomobject]@{ Name = 'frontend'; Id = $frontend.Id; StartTime = $frontend.StartTime; Executable = $node }
+)
 ```
 
-Expected: 后端在 `http://127.0.0.1:8001/docs` 提供服务；前端在 `http://127.0.0.1:5174` 提供服务，并通过 `VITE_API_BASE_URL` 与 `VITE_WS_BASE_URL` 指向同一套后端。命令不依赖任何未跟踪的 `.local/*.ps1` 文件。
+Expected: 后端在 `http://127.0.0.1:8001/docs` 提供服务；前端在 `http://127.0.0.1:5174` 提供服务，并通过 `VITE_API_BASE_URL` 与 `VITE_WS_BASE_URL` 指向同一套后端。`--strictPort` 禁止 Vite 静默换用其他端口；命令不依赖任何未跟踪的 `.local/*.ps1` 文件。
 
 - [ ] **Step 4: 记录可用性证据**
 
@@ -105,9 +110,15 @@ do {
   Start-Sleep -Seconds 1
 } while ((Get-Date) -lt $deadline)
 if (-not $backend -or -not $frontend) { throw 'Acceptance services did not become ready within 30 seconds' }
+foreach ($owned in $ownedProcesses) {
+  $process = Get-Process -Id $owned.Id -ErrorAction Stop
+  if ($process.StartTime -ne $owned.StartTime -or $process.Path -ne $owned.Executable) {
+    throw "The recorded $($owned.Name) process identity changed; stop the acceptance run"
+  }
+}
 ```
 
-Expected: 两个 HTTP 请求均成功后，记录执行时间、端口与状态到验收记录；继续保持进程运行以完成任务 2 和任务 3。
+Expected: 两个 HTTP 请求均成功，且 `backend`、`frontend` 的 PID、启动时间和可执行文件与步骤 3 记录一致；记录执行时间、端口与状态到验收记录，继续保持受管进程运行以完成任务 2 和任务 3。
 
 - [ ] **Step 5: 提交验收环境证据（仅当记录有变化）**
 
@@ -189,12 +200,26 @@ Expected: 两个文件可打开，字段完整，且四类汇总数据与同条�
 - [ ] **Step 3: 停止本次验收启动的后台进程**
 
 ```powershell
-Get-NetTCPConnection -State Listen -LocalPort 8001,5174 -ErrorAction SilentlyContinue |
-  Select-Object -ExpandProperty OwningProcess -Unique |
-  ForEach-Object { Stop-Process -Id $_ -Force }
+try {
+  if (-not $ownedProcesses -or $ownedProcesses.Count -ne 2) {
+    throw 'Missing recorded acceptance process identities; do not perform a port-wide cleanup'
+  }
+} finally {
+  foreach ($owned in $ownedProcesses) {
+    $process = Get-Process -Id $owned.Id -ErrorAction SilentlyContinue
+    if (-not $process -or $process.StartTime -ne $owned.StartTime -or $process.Path -ne $owned.Executable) {
+      Write-Warning "Skip $($owned.Name): PID is absent or is no longer the recorded process"
+      continue
+    }
+    Stop-Process -Id $owned.Id -ErrorAction Stop
+    if (-not $process.WaitForExit(5000)) {
+      Stop-Process -Id $owned.Id -Force -ErrorAction Stop
+    }
+  }
+}
 ```
 
-Expected: 仅停止任务 2 已验证为空闲、任务 3 在 8001/5174 上创建的本次验收进程；若浏览器或导出验证提前失败，也必须先执行此命令再记录失败证据。
+Expected: 仅停止步骤 3 记录且经 PID、启动时间、可执行文件三项校验仍属于本次运行的进程；常规停止等待 5 秒后才使用强制停止。若浏览器或导出验证提前失败，也必须先执行此清理步骤再记录失败证据。
 
 - [ ] **Step 4: 更新结论并关闭 P1（仅在全部证据成立时）**
 
