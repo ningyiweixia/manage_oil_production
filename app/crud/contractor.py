@@ -68,6 +68,10 @@ CONTRACTOR_CREATE_UPSERT_FIELDS = {
     "contact_phone",
     "qualification_expire_at",
     "equipment_summary",
+    # A re-submitted local supplement is a new operator declaration.  Keep its
+    # explanation in sync with the latest declaration instead of displaying a
+    # stale exception reason from a previous submission.
+    "sync_error_message",
 }
 
 

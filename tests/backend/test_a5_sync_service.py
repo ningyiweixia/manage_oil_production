@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.exceptions import BusinessException
 from app.core.status_codes import A5_LINK_FAILED, CONFLICT
-from app.models.workover import ContractorCapacity, ContractorCapacityStatus, OperationStatus, WorkoverOperationSheet
+from app.models.workover import ContractorCapacity, ContractorCapacityStatus, OperationStatus, WorkoverOperationSheet, WorkoverProjectPool
 from app.models.workover import A5DailyReportRecord, A5SyncBatch
 from app.db.base import Base
 from app.schemas.a5_integration import A5AnalyticsQuery, A5CallbackPayload
@@ -170,6 +170,35 @@ class A5SyncServiceTest(unittest.TestCase):
         reports = service.build_local_daily_reports([sheet], "2026-07-06")
 
         self.assertEqual(reports, [])
+
+    def test_mock_review_requires_access_to_the_operation_sheet_scope(self):
+        owner = SimpleNamespace(id=1, is_superuser=False, department=None, roles=[])
+        outsider = SimpleNamespace(id=2, is_superuser=False, department=None, roles=[])
+        with self.SessionLocal() as db:
+            project = WorkoverProjectPool(
+                well_no="WELL-SCOPE-001",
+                report_unit="第一作业区",
+                status="APPROVED",
+                measures_jsonb={"measures": []},
+                photo_urls=[],
+                is_deleted=False,
+                created_by_id=owner.id,
+            )
+            sheet = WorkoverOperationSheet(project=project, operation_no="OP-SCOPE-001", status=OperationStatus.PENDING_A5, progress=0, progress_detail={})
+            db.add_all([project, sheet])
+            db.commit()
+            with (
+                patch.object(a5_endpoint, "ensure_local_a5_mock_enabled"),
+                patch.object(a5_endpoint, "verify_a5_sso_token"),
+            ):
+                accessible = a5_endpoint._get_mock_review_sheet(
+                    db, operation_no=sheet.operation_no, token="valid-token", current_user=owner
+                )
+                self.assertEqual(accessible.id, sheet.id)
+                with self.assertRaises(BusinessException):
+                    a5_endpoint._get_mock_review_sheet(
+                        db, operation_no=sheet.operation_no, token="valid-token", current_user=outsider
+                    )
 
     def test_analytics_uses_date_bucket_cache_and_excludes_undated_records(self):
         cache = MemoryCache()

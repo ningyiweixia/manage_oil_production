@@ -24,6 +24,7 @@ from app.core.redis import cache_client
 from app.core.status_codes import BAD_REQUEST, CONFLICT
 from app.db.session import get_db
 from app.models.rbac import User
+from app.services.data_scope_service import apply_workover_operation_scope
 from app.schemas.a5_integration import (
     A5AnalyticsOut,
     A5AnalyticsQuery,
@@ -62,18 +63,26 @@ BUSINESS_TZ = ZoneInfo("Asia/Shanghai")
 router = APIRouter(prefix="/a5", tags=["A5系统集成"])
 
 
-def _get_mock_review_sheet(db: Session, *, operation_no: str, token: str) -> WorkoverOperationSheet:
+def _get_mock_review_sheet(
+    db: Session,
+    *,
+    operation_no: str,
+    token: str,
+    current_user: User,
+) -> WorkoverOperationSheet:
     ensure_local_a5_mock_enabled()
-    sheet = db.scalar(
+    sheet_stmt = (
         select(WorkoverOperationSheet)
+        .join(WorkoverOperationSheet.project)
         .options(
             selectinload(WorkoverOperationSheet.project),
             selectinload(WorkoverOperationSheet.contractor_capacity),
         )
         .where(WorkoverOperationSheet.operation_no == operation_no)
     )
+    sheet = db.scalar(apply_workover_operation_scope(sheet_stmt, current_user))
     if sheet is None:
-        raise BusinessException(BAD_REQUEST, "A5模拟工单不存在")
+        raise BusinessException(BAD_REQUEST, "A5模拟工单不存在或无权访问")
     well_no = sheet.project.well_no if sheet.project is not None else operation_no
     verify_a5_sso_token(token, expected_well_no=well_no)
     return sheet
@@ -84,10 +93,10 @@ def get_mock_measure_review(
     token: str,
     operation_no: str,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("a5:sso")),
+    current_user: User = Depends(require_permission("a5:sso")),
 ) -> ApiResponse[A5MockMeasureReviewOut]:
     """Read a local-only A5 measure review screen using the issued SSO token."""
-    sheet = _get_mock_review_sheet(db, operation_no=operation_no, token=token)
+    sheet = _get_mock_review_sheet(db, operation_no=operation_no, token=token, current_user=current_user)
     project = sheet.project
     contractor = sheet.contractor_capacity
     return success(A5MockMeasureReviewOut(
@@ -106,10 +115,10 @@ def get_mock_measure_review(
 def submit_mock_measure_review(
     payload: A5MockReviewDecisionPayload,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("a5:sso")),
+    current_user: User = Depends(require_permission("a5:sso")),
 ) -> ApiResponse[A5MockReviewDecisionOut]:
     """Simulate A5 approval/issue or rejection, using the normal state machine."""
-    sheet = _get_mock_review_sheet(db, operation_no=payload.operation_no, token=payload.token)
+    sheet = _get_mock_review_sheet(db, operation_no=payload.operation_no, token=payload.token, current_user=current_user)
     if sheet.status.value != "PENDING_A5":
         raise BusinessException(BAD_REQUEST, "当前工单不处于等待A5审核状态")
     a5_status = "已下发" if payload.decision == "DISPATCH" else "驳回"

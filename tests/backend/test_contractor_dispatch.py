@@ -206,6 +206,7 @@ class ContractorDispatchTest(unittest.TestCase):
                     status=ContractorCapacityStatus.AVAILABLE,
                     capability_tags={"fracturing": True},
                     contact_name="李四",
+                    sync_error_message="外部接口仍在维护，已重新核验",
                 ),
                 operator_id=1,
                 operator_ip="127.0.0.1",
@@ -216,7 +217,8 @@ class ContractorDispatchTest(unittest.TestCase):
             self.assertEqual(second.available_count, 3)
             self.assertEqual(second.capability_tags["fracturing"], True)
             self.assertEqual(second.contact_name, "李四")
-            self.assertEqual(first.sync_error_message, "外部接口超时，人工补录")
+            self.assertEqual(first.sync_error_message, "外部接口仍在维护，已重新核验")
+            self.assertEqual(second.sync_error_message, "外部接口仍在维护，已重新核验")
             self.assertEqual(second.sync_status, ContractorCapacitySyncStatus.PENDING_CONFIRM)
             self.assertEqual(second.created_by_id, 1)
 
