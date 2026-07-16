@@ -25,7 +25,7 @@ from app.core.status_codes import A5_LINK_FAILED, CONFLICT
 from app.models.integration import IntegrationEvent, IntegrationEventStatus
 from app.models.workover import ContractorCapacityStatus, OperationStatus, ProjectPoolStatus, WorkoverOperationSheet
 from app.schemas.a5_integration import A5AnalyticsOut, A5AnalyticsQuery, A5NameValueOut, A5TrendOut, A5AnalyticsReportOut
-from app.services.a5_client import A5Client
+from app.services.a5_adapter import get_a5_adapter
 from app.services.a5_data_cleaner import clean_daily_report, validate_operation_data
 
 logger = logging.getLogger(__name__)
@@ -311,7 +311,7 @@ async def sync_daily_operations(db: Session, sync_date: str | None = None) -> di
     if sync_date is None:
         sync_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    if not settings.a5_base_url:
+    if settings.a5_adapter_mode == "mock":
         raw_data = build_local_daily_reports(
             list(
                 db.query(WorkoverOperationSheet)
@@ -321,9 +321,8 @@ async def sync_daily_operations(db: Session, sync_date: str | None = None) -> di
             sync_date,
         )
     else:
-        client = A5Client()
         try:
-            raw_data = await client.fetch_daily_reports(sync_date)
+            raw_data = await get_a5_adapter().fetch_daily_reports(date.fromisoformat(sync_date))
         except BusinessException as exc:
             logger.error(f"A5 日报拉取失败: {exc.msg}")
             return {"total": 0, "updated": 0, "failed": 0, "error": exc.msg}
@@ -367,9 +366,8 @@ async def sync_anomalies(db: Session, sync_date: str | None = None) -> dict[str,
     if sync_date is None:
         sync_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    client = A5Client()
     try:
-        raw_data = await client.fetch_construction_anomalies(sync_date)
+        raw_data = await get_a5_adapter().fetch_anomalies(date.fromisoformat(sync_date))
     except BusinessException as exc:
         logger.error(f"A5 异常数据拉取失败: {exc.msg}")
         return {"total": 0, "synced": 0, "error": exc.msg}
@@ -391,9 +389,8 @@ async def sync_process_progress(db: Session, sync_date: str | None = None) -> di
     if sync_date is None:
         sync_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    client = A5Client()
     try:
-        raw_data = await client.fetch_process_progress(sync_date)
+        raw_data = await get_a5_adapter().fetch_process_progress(date.fromisoformat(sync_date))
     except BusinessException as exc:
         logger.error(f"A5 工序数据拉取失败: {exc.msg}")
         return {"total": 0, "synced": 0, "error": exc.msg}
