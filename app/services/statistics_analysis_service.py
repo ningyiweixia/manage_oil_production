@@ -2,8 +2,10 @@ from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.crud.completion import CompletionAnalyticsQuery, get_completion_analytics
 from app.crud.material import MaterialAnalyticsQuery, get_material_analytics
 from app.schemas.a5_integration import A5AnalyticsQuery
@@ -12,6 +14,7 @@ from app.schemas.workover_project_pool import WorkoverAnalyticsQuery
 from app.services.a5_sync_service import build_a5_analytics
 from app.services.workover_analytics_service import build_workover_analytics
 from app.services.workover_operation_service import OperationAnalyticsQuery, build_workover_operation_dashboard
+from app.models.integration import IntegrationEvent, IntegrationEventStatus
 
 
 class StatisticsAnalysisQuery(BaseModel):
@@ -125,6 +128,25 @@ def _build_a5_query(query: StatisticsAnalysisQuery) -> A5AnalyticsQuery:
     )
 
 
+def build_integration_status(db: Session) -> dict[str, Any]:
+    def count(source: str, status: IntegrationEventStatus) -> int:
+        value = db.scalar(
+            select(func.count())
+            .select_from(IntegrationEvent)
+            .where(IntegrationEvent.source == source, IntegrationEvent.status == status)
+        )
+        return int(value) if isinstance(value, (int, float)) else 0
+
+    return {
+        "a5_adapter_mode": settings.a5_adapter_mode,
+        "material_adapter_mode": settings.material_adapter_mode,
+        "a5_processed": count("a5", IntegrationEventStatus.PROCESSED),
+        "a5_pending_review": count("a5", IntegrationEventStatus.PENDING_REVIEW),
+        "a5_failed": count("a5", IntegrationEventStatus.FAILED),
+        "material_processed": count("material", IntegrationEventStatus.PROCESSED),
+    }
+
+
 def build_statistics_analysis(db: Session, query: StatisticsAnalysisQuery) -> dict[str, Any]:
     """Aggregate production analysis, review, and report data into one payload."""
 
@@ -147,6 +169,7 @@ def build_statistics_analysis(db: Session, query: StatisticsAnalysisQuery) -> di
     )))
     a5 = build_a5_analytics(_build_a5_query(query))
     data_quality = _dump(build_data_quality_summary(db, query))
+    integration_status = build_integration_status(db)
 
     overview_kpis = {
         "total_projects": workover.kpis.total_projects,
@@ -187,6 +210,7 @@ def build_statistics_analysis(db: Session, query: StatisticsAnalysisQuery) -> di
         "material_usage": material_usage,
         "completion_classification": completion_classification,
         "data_quality_summary": data_quality,
+        "integration_status": integration_status,
         "trace_sources": TRACE_SOURCES,
         "chart_series": chart_series,
         "report_outputs": ["statistics_dashboard", "excel_report", "word_report", "analysis_summary", "data_quality_summary"],

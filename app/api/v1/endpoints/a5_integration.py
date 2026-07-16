@@ -115,6 +115,8 @@ def sync_status(
         last_sync_message=cached.get("last_sync_message", ""),
         sync_count_today=int(sync_count_today or 0),
         is_running=bool(cached.get("is_running", False)),
+        adapter_mode=settings.a5_adapter_mode,
+        mock_scenario=settings.a5_mock_scenario if settings.a5_adapter_mode == "mock" else None,
     ))
 
 

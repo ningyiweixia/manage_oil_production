@@ -34,6 +34,8 @@ class A5SyncStatusOut(BaseModel):
     last_sync_message: str = ""
     sync_count_today: int = 0
     is_running: bool = False
+    adapter_mode: str = "mock"
+    mock_scenario: str | None = None
 
 
 class A5SyncTriggerOut(BaseModel):

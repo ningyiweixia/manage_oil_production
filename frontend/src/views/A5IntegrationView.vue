@@ -65,6 +65,10 @@
       <el-descriptions-item label="最近时间">{{ status.last_sync_time || '-' }}</el-descriptions-item>
       <el-descriptions-item label="同步信息">{{ status.last_sync_message || '-' }}</el-descriptions-item>
       <el-descriptions-item label="今日次数">{{ status.sync_count_today }}</el-descriptions-item>
+      <el-descriptions-item label="接口模式">
+        {{ status.adapter_mode === 'mock' ? '模拟接口' : '正式接口' }}
+        <span v-if="status.adapter_mode === 'mock' && status.mock_scenario">（{{ status.mock_scenario }}）</span>
+      </el-descriptions-item>
     </el-descriptions>
   </section>
 
@@ -133,7 +137,9 @@ const status = reactive<A5SyncStatus>({
   last_sync_status: 'unknown',
   last_sync_message: '',
   sync_count_today: 0,
-  is_running: false
+  is_running: false,
+  adapter_mode: 'mock',
+  mock_scenario: null
 })
 const analytics = reactive<A5Analytics>({
   anomaly_total: 0,

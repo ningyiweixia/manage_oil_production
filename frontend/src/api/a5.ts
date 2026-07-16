@@ -6,6 +6,8 @@ export interface A5SyncStatus {
   last_sync_message: string
   sync_count_today: number
   is_running: boolean
+  adapter_mode: 'mock' | 'http'
+  mock_scenario?: string | null
 }
 
 export interface A5Token {
