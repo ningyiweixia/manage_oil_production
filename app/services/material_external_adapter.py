@@ -7,6 +7,7 @@ from typing import Protocol
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.exceptions import BusinessException
 from app.core.status_codes import CONFLICT
 from app.crud.material import get_material_requirement, update_material_requirement
@@ -53,6 +54,22 @@ class MockMaterialExternalAdapter:
             quantity=5,
         )
         return [event, event] if self.scenario == "duplicate" else [event]
+
+
+def get_material_external_adapter(
+    mode: str | None = None,
+    scenario: str | None = None,
+) -> MaterialExternalAdapter:
+    """Return the configured material integration adapter.
+
+    The HTTP implementation is deliberately unavailable until a supplier
+    contract is configured; this avoids silently treating a production setup
+    as a successful sync.
+    """
+    selected_mode = mode or settings.material_adapter_mode
+    if selected_mode == "mock":
+        return MockMaterialExternalAdapter(scenario or settings.material_mock_scenario)
+    raise RuntimeError("material HTTP adapter is not configured")
 
 
 def _event_payload(event: MaterialExternalEvent) -> dict[str, object]:

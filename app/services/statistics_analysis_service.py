@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.crud.completion import CompletionAnalyticsQuery, get_completion_analytics
 from app.crud.material import MaterialAnalyticsQuery, get_material_analytics
-from app.schemas.a5_integration import A5AnalyticsQuery
+from app.schemas.a5_integration import A5AnalyticsOut, A5AnalyticsQuery
 from app.services.data_quality_service import build_data_quality_summary
 from app.schemas.workover_project_pool import WorkoverAnalyticsQuery
 from app.services.a5_sync_service import build_a5_analytics
@@ -187,7 +187,10 @@ def build_statistics_analysis(
         start_date=query.start_date, end_date=query.end_date, well_no=query.well_no,
         measure_type=query.measure_type, team_name=query.team_name, report_unit=query.report_unit,
     )))
-    a5 = build_a5_analytics(_build_a5_query(query))
+    # Cached A5 analytics records do not yet carry report-unit ownership.  Do
+    # not expose that shared cache to scoped users until the upstream contract
+    # provides a reliable ownership field.
+    a5 = A5AnalyticsOut() if scope is not None and not scope.is_global else build_a5_analytics(_build_a5_query(query))
     data_quality = _dump(build_data_quality_summary(db, query))
     integration_status = build_integration_status(db, scope=scope)
 

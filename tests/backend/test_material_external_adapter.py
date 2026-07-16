@@ -9,7 +9,11 @@ from app.crud.material import get_material_requirement
 from app.db.base import Base
 from app.models import *  # noqa: F401,F403
 from app.models.material import MaterialRequirement, MaterialRequirementStatus, MaterialRequirementType
-from app.services.material_external_adapter import MockMaterialExternalAdapter, apply_external_material_event
+from app.services.material_external_adapter import (
+    MockMaterialExternalAdapter,
+    apply_external_material_event,
+    get_material_external_adapter,
+)
 
 
 class MaterialExternalAdapterTest(unittest.TestCase):
@@ -46,6 +50,11 @@ class MaterialExternalAdapterTest(unittest.TestCase):
 
         self.assertTrue(replay.duplicate)
         self.assertEqual(requirement.planned_quantity, 5)
+
+    def test_mock_mode_exposes_a_fetchable_adapter(self):
+        adapter = get_material_external_adapter("mock", "empty")
+
+        self.assertEqual(asyncio.run(adapter.fetch_events()), [])
 
 
 if __name__ == "__main__":
