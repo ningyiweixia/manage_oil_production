@@ -170,14 +170,14 @@ def build_statistics_analysis(
     if scope is not None and not scope.is_global:
         query = query.model_copy(update={"report_unit": scope.department or "__no_scope__"})
 
-    workover = build_workover_analytics(db, _build_workover_query(query))
+    workover = build_workover_analytics(db, _build_workover_query(query), scope=scope)
     operation_query = OperationAnalyticsQuery(
         start_date=query.start_date, end_date=query.end_date, well_no=query.well_no,
         report_unit=query.report_unit, team_name=query.team_name, block_name=query.block_name,
         status=query.status, measure_type=query.measure_type, material_status=query.material_status,
     )
     operation_efficiency = _dump(build_workover_operation_dashboard(
-        db, operation_query if any(operation_query.model_dump().values()) else None
+        db, operation_query if any(operation_query.model_dump().values()) else None, scope=scope
     ))
     material_usage = _dump(get_material_analytics(db, MaterialAnalyticsQuery(
         start_date=query.start_date, end_date=query.end_date, well_no=query.well_no,
@@ -186,7 +186,7 @@ def build_statistics_analysis(
     completion_classification = _dump(get_completion_analytics(db, CompletionAnalyticsQuery(
         start_date=query.start_date, end_date=query.end_date, well_no=query.well_no,
         measure_type=query.measure_type, team_name=query.team_name, report_unit=query.report_unit,
-    )))
+    ), scope=scope))
     # Cached A5 analytics records do not yet carry report-unit ownership.  Do
     # not expose that shared cache to scoped users until the upstream contract
     # provides a reliable ownership field.

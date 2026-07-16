@@ -2,7 +2,7 @@ import asyncio
 import unittest
 from datetime import date, datetime, timedelta
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -11,7 +11,7 @@ from app.crud.contractor import BUSINESS_TZ, dispatch_operation
 from app.db.base import Base
 from app.models import *  # noqa: F401,F403
 from app.models.completion import WellCompletionRecord
-from app.models.integration import IntegrationEvent
+from app.models.integration import IntegrationEvent, IntegrationEventStatus
 from app.models.material import MaterialRequirement, MaterialRequirementStatus, MaterialRequirementType
 from app.models.workover import (
     ContractorCapacity,
@@ -24,6 +24,7 @@ from app.models.workover import (
 )
 from app.schemas.completion import WellCompletionCreate
 from app.services.a5_sync_service import process_a5_callback_event
+from app.services.data_scope_service import DataScope
 from app.services.material_external_adapter import (
     MaterialExternalEvent,
     MockMaterialExternalAdapter,
@@ -188,6 +189,120 @@ class CrossModuleClosedLoopTest(unittest.TestCase):
         # well filter must keep it out of every closed-loop aggregate below.
         self.assertEqual(result["material_usage"]["used"], 1)
         self.assertEqual(result["completion_classification"]["total"], 1)
+
+    def test_a5_replay_is_duplicate_and_unknown_operation_stays_pending_with_two_source_events(self):
+        payload = {"operation_no": "OP-CLOSED-001", "status": "WORKING", "remark": "started"}
+        with self.Session() as db:
+            first = process_a5_callback_event(db, payload, event_id="a5-replay-boundary-001")
+            duplicate = process_a5_callback_event(db, payload, event_id="a5-replay-boundary-001")
+            unmatched = process_a5_callback_event(
+                db,
+                {"operation_no": "OP-NOT-FOUND", "status": "WORKING"},
+                event_id="a5-unmatched-boundary-001",
+            )
+            source_count = db.scalar(
+                select(func.count()).select_from(IntegrationEvent).where(IntegrationEvent.source == "a5")
+            )
+
+        self.assertFalse(first.duplicate)
+        self.assertTrue(first.matched)
+        self.assertTrue(duplicate.duplicate)
+        self.assertTrue(duplicate.matched)
+        self.assertFalse(unmatched.matched)
+        self.assertEqual(unmatched.event.status, IntegrationEventStatus.PENDING_REVIEW)
+        self.assertEqual(source_count, 2)
+
+    def test_territory_scope_includes_only_territory_project_material_and_completion_facts(self):
+        with self.Session() as db:
+            visible_project = WorkoverProjectPool(
+                well_no="WELL-TERRITORY-VISIBLE",
+                report_unit="Field Unit A",
+                territory_unit="Territory Closed Loop",
+                production_priority=1,
+                status=ProjectPoolStatus.DISPATCHED,
+                measures_jsonb={"measures": [{"measure_type": "acidizing"}]},
+                photo_urls=[],
+                attachments=[],
+                related_project_ids=[],
+                is_deleted=False,
+            )
+            hidden_project = WorkoverProjectPool(
+                well_no="WELL-TERRITORY-HIDDEN",
+                report_unit="Field Unit B",
+                territory_unit="Territory Other",
+                production_priority=1,
+                status=ProjectPoolStatus.DISPATCHED,
+                measures_jsonb={"measures": [{"measure_type": "pump"}]},
+                photo_urls=[],
+                attachments=[],
+                related_project_ids=[],
+                is_deleted=False,
+            )
+            visible_sheet = WorkoverOperationSheet(
+                project=visible_project,
+                operation_no="OP-TERRITORY-VISIBLE",
+                status=OperationStatus.FINISHED,
+                progress=100,
+                progress_detail={},
+            )
+            hidden_sheet = WorkoverOperationSheet(
+                project=hidden_project,
+                operation_no="OP-TERRITORY-HIDDEN",
+                status=OperationStatus.FINISHED,
+                progress=100,
+                progress_detail={},
+            )
+            db.add_all([visible_sheet, hidden_sheet])
+            db.flush()
+            db.add_all([
+                MaterialRequirement(
+                    well_no=visible_project.well_no,
+                    operation_sheet_id=visible_sheet.id,
+                    material_name="Visible Pipe",
+                    quantity=1,
+                    unit="item",
+                    status=MaterialRequirementStatus.USED,
+                    requirement_type=MaterialRequirementType.NORMAL,
+                ),
+                MaterialRequirement(
+                    well_no=hidden_project.well_no,
+                    operation_sheet_id=hidden_sheet.id,
+                    material_name="Hidden Pipe",
+                    quantity=1,
+                    unit="item",
+                    status=MaterialRequirementStatus.USED,
+                    requirement_type=MaterialRequirementType.NORMAL,
+                ),
+                WellCompletionRecord(
+                    well_no=visible_project.well_no,
+                    operation_sheet_id=visible_sheet.id,
+                    measure_type="acidizing",
+                    completion_date=date(2026, 7, 2),
+                    pre_repair_data={},
+                    post_repair_data={},
+                ),
+                WellCompletionRecord(
+                    well_no=hidden_project.well_no,
+                    operation_sheet_id=hidden_sheet.id,
+                    measure_type="pump",
+                    completion_date=date(2026, 7, 2),
+                    pre_repair_data={},
+                    post_repair_data={},
+                ),
+            ])
+            db.commit()
+            scope = DataScope(
+                is_global=False,
+                user_id=1,
+                department="Territory Closed Loop",
+                reporting_units=("Territory Closed Loop",),
+            )
+            result = build_statistics_analysis(db, StatisticsAnalysisQuery(), scope=scope)
+
+        self.assertEqual(result["overview_kpis"]["total_projects"], 1)
+        self.assertEqual(result["overview_kpis"]["material_requirements"], 1)
+        self.assertEqual(result["overview_kpis"]["completion_records"], 1)
+        self.assertEqual(result["completion_classification"]["by_measure_type"], [{"measure_type": "acidizing", "count": 1}])
 
 
 if __name__ == "__main__":

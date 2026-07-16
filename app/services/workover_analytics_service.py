@@ -120,7 +120,13 @@ def build_workover_analytics(
         stmt = stmt.where(reporting_unit_scope_predicate(scope))
     rows = list(db.scalars(stmt.order_by(WorkoverProjectPool.created_at.asc())).all())
     projects = pd.DataFrame(_project_records(rows))
-    filtered = _apply_analytics_dsl(projects, query)
+    # Statistics supplies the scoped user's department as ``report_unit`` by
+    # default.  That must not narrow a territory scope to reporting-unit rows:
+    # the SQL scope above already admits either owned unit column.
+    effective_query = query
+    if scope is not None and not scope.is_global and query.report_unit == scope.department:
+        effective_query = query.model_copy(update={"report_unit": None})
+    filtered = _apply_analytics_dsl(projects, effective_query)
     measures = pd.DataFrame(_measure_records(filtered))
 
     total = int(len(filtered))

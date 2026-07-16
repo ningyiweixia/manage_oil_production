@@ -254,7 +254,9 @@ def build_workover_operation_dashboard(
             stmt = stmt.where(reporting_unit_scope_predicate(scope))
         if query.well_no:
             stmt = stmt.where(WorkoverProjectPool.well_no.ilike(f"%{query.well_no}%"))
-        if query.report_unit:
+        if query.report_unit and not (
+            scope is not None and not scope.is_global and query.report_unit == scope.department
+        ):
             stmt = stmt.where(WorkoverProjectPool.report_unit.ilike(f"%{query.report_unit}%"))
         if query.team_name:
             stmt = stmt.where(ContractorCapacity.team_name.ilike(f"%{query.team_name}%"))
