@@ -191,7 +191,8 @@ class SeededStatisticsAnalysisFilterTest(unittest.TestCase):
             team_b = ContractorCapacity(contractor_name="C-B", team_name="Team B", report_date=date(2026, 7, 3), available_count=1, status=ContractorCapacityStatus.AVAILABLE, capability_tags={})
             match_sheet = WorkoverOperationSheet(
                 project=match_project, contractor_capacity=team_a, operation_no="OP-1", status=OperationStatus.FINISHED,
-                progress=100, progress_detail={}, a5_status="ERROR", created_at=datetime(2026, 7, 1, 9), updated_at=datetime(2026, 7, 1, 9),
+                progress=100, progress_detail={}, a5_status="ERROR", last_a5_sync_at=datetime(2026, 7, 1, 9),
+                created_at=datetime(2026, 7, 1, 9), updated_at=datetime(2026, 7, 1, 9),
             )
             other_sheet = WorkoverOperationSheet(
                 project=other_project, contractor_capacity=team_b, operation_no="OP-2", status=OperationStatus.WORKING,

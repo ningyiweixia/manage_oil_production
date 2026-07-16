@@ -21,6 +21,7 @@ COPY alembic.ini ./alembic.ini
 COPY alembic ./alembic
 COPY app ./app
 COPY main.py ./main.py
+COPY celery_app.py ./celery_app.py
 
 RUN mkdir -p /var/log/manage_factory \
     && chown -R app:app ${APP_HOME} /var/log/manage_factory
@@ -32,4 +33,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8000/health || exit 1
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+CMD ["sh", "-c", "alembic upgrade head && python -m app.db.seed && exec uvicorn main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '*' "]

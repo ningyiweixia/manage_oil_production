@@ -24,6 +24,11 @@ export JWT_SECRET_KEY="${JWT_SECRET_KEY:-local-dev-jwt-secret-change-me}"
 export ADMIN_INITIAL_PASSWORD="${ADMIN_INITIAL_PASSWORD:-ChangeMe_123!}"
 export CORS_ALLOW_ORIGINS="${CORS_ALLOW_ORIGINS:-http://127.0.0.1:5173,http://localhost:5173}"
 export REDIS_URL="${REDIS_URL:-}"
+# Local startup is intentionally self-contained: use the deterministic
+# contractor snapshot and the local A5 review/issue loop unless overridden.
+export CONTRACTOR_SYSTEM_MOCK_ENABLED="${CONTRACTOR_SYSTEM_MOCK_ENABLED:-true}"
+export A5_MOCK_ENABLED="${A5_MOCK_ENABLED:-true}"
+export A5_MOCK_FRONTEND_BASE_URL="${A5_MOCK_FRONTEND_BASE_URL:-http://127.0.0.1:5173}"
 
 backend_port="${BACKEND_PORT:-8000}"
 frontend_port="${FRONTEND_PORT:-5173}"

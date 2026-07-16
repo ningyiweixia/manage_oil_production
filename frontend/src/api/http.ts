@@ -27,6 +27,8 @@ http.interceptors.response.use(
       clearSessionMenus()
       window.dispatchEvent(new CustomEvent('auth-expired'))
       ElMessage.error('登录已失效，请重新登录')
+    } else if (error.response?.data?.msg) {
+      error.message = error.response.data.msg
     }
     return Promise.reject(error)
   }

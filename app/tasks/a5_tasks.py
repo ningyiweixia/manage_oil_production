@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60, name="app.tasks.a5_tasks.sync_a5_data_task")
-def sync_a5_data_task(self) -> dict:
+def sync_a5_data_task(self, sync_type: str = "SCHEDULED") -> dict:
     """Celery 定时任务：每 30 分钟同步 A5 日报/异常/工序数据。
 
     失败重试机制：
@@ -41,7 +41,7 @@ def sync_a5_data_task(self) -> dict:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            result = loop.run_until_complete(full_sync(db))
+            result = loop.run_until_complete(full_sync(db, sync_type=sync_type))
         finally:
             loop.close()
 

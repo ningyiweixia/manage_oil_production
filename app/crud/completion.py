@@ -8,9 +8,34 @@ from pydantic import BaseModel
 from app.core.exceptions import BusinessException
 from app.core.status_codes import BAD_REQUEST
 from app.models.completion import WellCompletionRecord
-from app.models.workover import WorkoverOperationSheet, WorkoverProjectPool
+from app.models.rbac import User
+from app.models.material import MaterialRequirement, MaterialRequirementStatus
+from app.models.workover import OperationStatus, ProjectPoolStatus, WorkoverOperationSheet, WorkoverProjectPool
 from app.schemas.completion import WellCompletionCreate, WellCompletionQuery, WellCompletionUpdate
-from app.services.data_scope_service import DataScope, reporting_unit_scope_predicate
+from app.services.data_scope_service import DataScope, apply_workover_operation_scope, reporting_unit_scope_predicate
+
+
+def _validate_sheet_link(db: Session, sheet_id: int | None, well_no: str, current_user: User | None = None) -> None:
+    if sheet_id is None:
+        raise BusinessException(BAD_REQUEST, "完井记录必须关联修井运行表")
+    stmt = select(WorkoverOperationSheet).join(WorkoverProjectPool).where(WorkoverOperationSheet.id == sheet_id)
+    if current_user is not None:
+        stmt = apply_workover_operation_scope(stmt, current_user)
+    sheet = db.scalar(stmt)
+    if sheet is None or sheet.project.well_no != well_no:
+        raise BusinessException(BAD_REQUEST, "关联运行表不存在、无权限或井号不一致")
+    if sheet.status != OperationStatus.FINISHED:
+        raise BusinessException(BAD_REQUEST, "运行表完工后才能登记完井记录")
+    if sheet.project.is_deleted or sheet.project.status != ProjectPoolStatus.DISPATCHED:
+        raise BusinessException(BAD_REQUEST, "关联项目池未进入已派工生命周期，不能登记完井")
+    unfinished_materials = db.scalar(
+        select(func.count()).select_from(MaterialRequirement).where(
+            MaterialRequirement.operation_sheet_id == sheet.id,
+            MaterialRequirement.status.notin_([MaterialRequirementStatus.USED, MaterialRequirementStatus.CANCELED]),
+        )
+    ) or 0
+    if unfinished_materials:
+        raise BusinessException(BAD_REQUEST, "仍有未闭环物料需求，不能登记完井")
 
 
 class CompletionAnalyticsQuery(BaseModel):
@@ -34,8 +59,10 @@ def _apply_filters(stmt: Select[tuple[WellCompletionRecord]], query: WellComplet
     return stmt
 
 
-def list_completion_records(db: Session, query: WellCompletionQuery) -> tuple[list[WellCompletionRecord], int]:
-    base_stmt = _apply_filters(select(WellCompletionRecord), query)
+def list_completion_records(db: Session, query: WellCompletionQuery, *, current_user: User | None = None) -> tuple[list[WellCompletionRecord], int]:
+    base_stmt = _apply_filters(select(WellCompletionRecord).join(WorkoverOperationSheet).join(WorkoverProjectPool), query)
+    if current_user is not None:
+        base_stmt = apply_workover_operation_scope(base_stmt, current_user)
     total = db.scalar(select(func.count()).select_from(base_stmt.subquery())) or 0
     rows = db.scalars(
         base_stmt.order_by(WellCompletionRecord.completion_date.desc().nullslast(), WellCompletionRecord.created_at.desc())
@@ -45,8 +72,11 @@ def list_completion_records(db: Session, query: WellCompletionQuery) -> tuple[li
     return list(rows), total
 
 
-def get_completion_record(db: Session, record_id: int) -> WellCompletionRecord:
-    obj = db.get(WellCompletionRecord, record_id)
+def get_completion_record(db: Session, record_id: int, *, current_user: User | None = None) -> WellCompletionRecord:
+    stmt = select(WellCompletionRecord).join(WorkoverOperationSheet).join(WorkoverProjectPool).where(WellCompletionRecord.id == record_id)
+    if current_user is not None:
+        stmt = apply_workover_operation_scope(stmt, current_user)
+    obj = db.scalar(stmt)
     if obj is None:
         raise BusinessException(BAD_REQUEST, "完井记录不存在")
     return obj
@@ -94,9 +124,10 @@ def sync_operation_sheet_completion_rollup(db: Session, operation_sheet_id: int 
     apply_completion_rollup_to_operation_sheet(sheet, records)
 
 
-def create_completion_record(db: Session, payload: WellCompletionCreate) -> WellCompletionRecord:
+def create_completion_record(db: Session, payload: WellCompletionCreate, *, current_user: User | None = None) -> WellCompletionRecord:
     data = payload.model_dump(mode="python")
     obj = WellCompletionRecord(**data)
+    _validate_sheet_link(db, obj.operation_sheet_id, obj.well_no, current_user)
     db.add(obj)
     db.flush()
     sync_operation_sheet_completion_rollup(db, obj.operation_sheet_id)
@@ -105,12 +136,13 @@ def create_completion_record(db: Session, payload: WellCompletionCreate) -> Well
     return obj
 
 
-def update_completion_record(db: Session, record_id: int, payload: WellCompletionUpdate) -> WellCompletionRecord:
-    obj = get_completion_record(db, record_id)
+def update_completion_record(db: Session, record_id: int, payload: WellCompletionUpdate, *, current_user: User | None = None) -> WellCompletionRecord:
+    obj = get_completion_record(db, record_id, current_user=current_user)
     operation_sheet_id = obj.operation_sheet_id
     data = payload.model_dump(mode="python", exclude_unset=True)
     for key, value in data.items():
         setattr(obj, key, value)
+    _validate_sheet_link(db, obj.operation_sheet_id, obj.well_no, current_user)
     db.flush()
     sync_operation_sheet_completion_rollup(db, operation_sheet_id)
     db.commit()
@@ -118,8 +150,8 @@ def update_completion_record(db: Session, record_id: int, payload: WellCompletio
     return obj
 
 
-def delete_completion_record(db: Session, record_id: int) -> None:
-    obj = get_completion_record(db, record_id)
+def delete_completion_record(db: Session, record_id: int, *, current_user: User | None = None) -> None:
+    obj = get_completion_record(db, record_id, current_user=current_user)
     operation_sheet_id = obj.operation_sheet_id
     db.delete(obj)
     db.flush()
@@ -131,20 +163,18 @@ def get_completion_analytics(
     db: Session,
     query: CompletionAnalyticsQuery | None = None,
     *,
+    current_user: User | None = None,
     scope: DataScope | None = None,
 ) -> dict[str, Any]:
     """完井分类统计：按措施类型分组统计。"""
     query = query or CompletionAnalyticsQuery()
-    stmt = select(WellCompletionRecord)
-    if query.report_unit or (scope is not None and not scope.is_global):
-        stmt = (
-            stmt.join(WorkoverOperationSheet, WellCompletionRecord.operation_sheet_id == WorkoverOperationSheet.id)
-            .join(WorkoverProjectPool, WorkoverOperationSheet.project_id == WorkoverProjectPool.id)
-        )
-        if query.report_unit:
-            stmt = stmt.where(WorkoverProjectPool.report_unit == query.report_unit)
-        if scope is not None and not scope.is_global:
-            stmt = stmt.where(reporting_unit_scope_predicate(scope))
+    stmt = select(WellCompletionRecord).join(WorkoverOperationSheet).join(WorkoverProjectPool)
+    if current_user is not None:
+        stmt = apply_workover_operation_scope(stmt, current_user)
+    if scope is not None and not scope.is_global:
+        stmt = stmt.where(reporting_unit_scope_predicate(scope))
+    if query.report_unit:
+        stmt = stmt.where(WorkoverProjectPool.report_unit == query.report_unit)
     if query.well_no:
         stmt = stmt.where(WellCompletionRecord.well_no.ilike(f"%{query.well_no}%"))
     if query.measure_type:

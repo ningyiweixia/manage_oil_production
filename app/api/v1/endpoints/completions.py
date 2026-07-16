@@ -33,9 +33,9 @@ router = APIRouter(prefix="/well-completions", tags=["完井分类台账"])
 def list_items(
     query: WellCompletionQuery = Depends(),
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("completion:read")),
+    current_user: User = Depends(require_permission("completion:read")),
 ) -> ApiResponse[PageResult[WellCompletionOut]]:
-    rows, total = list_completion_records(db, query)
+    rows, total = list_completion_records(db, query, current_user=current_user)
     items = [WellCompletionOut.model_validate(row) for row in rows]
     return success(
         PageResult(items=items, total=total, page=query.page, page_size=query.page_size)
@@ -46,27 +46,27 @@ def list_items(
 def create_item(
     payload: WellCompletionCreate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("completion:create")),
+    current_user: User = Depends(require_permission("completion:create")),
 ) -> ApiResponse[WellCompletionOut]:
-    obj = create_completion_record(db, payload)
+    obj = create_completion_record(db, payload, current_user=current_user)
     return success(WellCompletionOut.model_validate(obj), msg="完井记录创建成功")
 
 
 @router.get("/analytics/summary", response_model=ApiResponse[dict])
 def analytics(
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("completion:read")),
+    current_user: User = Depends(require_permission("completion:read")),
 ) -> ApiResponse[dict]:
-    return success(get_completion_analytics(db))
+    return success(get_completion_analytics(db, current_user=current_user))
 
 
 @router.get("/{record_id}", response_model=ApiResponse[WellCompletionOut])
 def detail(
     record_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("completion:read")),
+    current_user: User = Depends(require_permission("completion:read")),
 ) -> ApiResponse[WellCompletionOut]:
-    return success(WellCompletionOut.model_validate(get_completion_record(db, record_id)))
+    return success(WellCompletionOut.model_validate(get_completion_record(db, record_id, current_user=current_user)))
 
 
 @router.put("/{record_id}", response_model=ApiResponse[WellCompletionOut])
@@ -74,9 +74,9 @@ def update_item(
     record_id: int,
     payload: WellCompletionUpdate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("completion:update")),
+    current_user: User = Depends(require_permission("completion:update")),
 ) -> ApiResponse[WellCompletionOut]:
-    obj = update_completion_record(db, record_id, payload)
+    obj = update_completion_record(db, record_id, payload, current_user=current_user)
     return success(WellCompletionOut.model_validate(obj), msg="完井记录已更新")
 
 
@@ -84,9 +84,7 @@ def update_item(
 def delete_item(
     record_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_permission("completion:delete")),
+    current_user: User = Depends(require_permission("completion:delete")),
 ) -> ApiResponse[None]:
-    delete_completion_record(db, record_id)
+    delete_completion_record(db, record_id, current_user=current_user)
     return success(msg="完井记录已删除")
-
-

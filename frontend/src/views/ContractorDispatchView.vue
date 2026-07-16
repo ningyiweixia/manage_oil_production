@@ -1,5 +1,5 @@
 <template>
-  <section class="sync-strip">
+  <section v-if="canViewGlobalSync" class="sync-strip">
     <div class="sync-main">
       <div class="sync-state">
         <span class="state-dot" :class="connectionClass" />
@@ -19,7 +19,7 @@
       <el-tag :type="syncResultTag(syncSummary.last_sync_status)" effect="plain">
         {{ syncResultLabel(syncSummary.last_sync_status) }}
       </el-tag>
-      <el-button type="primary" :icon="Refresh" :loading="syncing" :disabled="syncDisabled" @click="runSync">立即同步</el-button>
+      <el-button v-if="canSyncContractors" type="primary" :icon="Refresh" :loading="syncing" :disabled="syncDisabled" @click="runSync">立即同步</el-button>
       <el-button :icon="Document" @click="openLogs">查看同步日志</el-button>
       <el-button :icon="Setting" @click="ElMessage.info('接口配置由环境变量统一管理')">接口配置</el-button>
     </div>
@@ -66,7 +66,7 @@
       </el-form-item>
       <el-form-item>
         <el-button type="primary" :icon="Search" @click="searchContractors">查询</el-button>
-        <el-button :icon="EditPen" @click="openSupplement">异常补录</el-button>
+        <el-button v-if="canCreateContractor" :icon="EditPen" @click="openSupplement">异常补录</el-button>
       </el-form-item>
     </el-form>
   </section>
@@ -83,8 +83,15 @@
       <h2>运力快照</h2>
       <span>外部承包商系统为权威来源，本系统保留同步确认、异常处理和派工引用。</span>
     </div>
-    <el-table v-loading="loading" :data="contractors" row-key="id" empty-text="暂无运力快照">
-      <el-table-column label="承包商 / 队伍" min-width="210">
+    <el-table
+      v-loading="loading"
+      class="capacity-snapshot-table"
+      :data="contractors"
+      row-key="id"
+      table-layout="auto"
+      empty-text="暂无运力快照"
+    >
+      <el-table-column label="承包商 / 队伍" min-width="220">
         <template #default="{ row }">
           <div class="team-cell">
             <strong>{{ row.contractor_name }}</strong>
@@ -92,41 +99,43 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column prop="report_date" label="报备日期" width="112" />
-      <el-table-column prop="available_count" label="可用数" width="78" />
-      <el-table-column label="队伍状态" width="92">
+      <el-table-column prop="report_date" label="报备日期" min-width="112" />
+      <el-table-column prop="available_count" label="可用数" min-width="78" />
+      <el-table-column label="队伍状态" min-width="96">
         <template #default="{ row }">
           <el-tag :type="contractorTag(row.status)">{{ contractorStatusLabel(row.status) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="施工能力" min-width="150">
+      <el-table-column label="施工能力" min-width="180">
         <template #default="{ row }">
-          <el-tag v-for="tag in readableCapabilities(row.capability_tags)" :key="tag" class="tag-gap" effect="plain">
-            {{ tag }}
-          </el-tag>
-          <span v-if="readableCapabilities(row.capability_tags).length === 0" class="muted">未标注</span>
+          <div class="capability-tags">
+            <el-tag v-for="tag in readableCapabilities(row.capability_tags)" :key="tag" class="tag-gap" effect="plain">
+              {{ tag }}
+            </el-tag>
+            <span v-if="readableCapabilities(row.capability_tags).length === 0" class="muted">未标注</span>
+          </div>
         </template>
       </el-table-column>
-      <el-table-column label="来源" width="104">
+      <el-table-column label="来源" min-width="108">
         <template #default="{ row }">
           <el-tag effect="plain">{{ sourceLabel(row.source_type) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="同步状态" width="104">
+      <el-table-column label="同步状态" min-width="116">
         <template #default="{ row }">
           <el-tag :type="syncStatusTag(normalizeSyncStatus(row.sync_status))">
             {{ syncStatusLabel(normalizeSyncStatus(row.sync_status)) }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="占用" width="72" align="center">
+      <el-table-column label="占用" min-width="72" align="center">
         <template #default="{ row }">{{ row.occupied_count ?? 0 }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="204">
+      <el-table-column label="操作" min-width="204">
         <template #default="{ row }">
           <div class="row-actions">
             <el-button link type="primary" :icon="View" @click="openDetail(row)">详情</el-button>
-            <el-button link type="success" :icon="Check" :disabled="normalizeSyncStatus(row.sync_status) === 'SYNCED'" @click="confirmRow(row)">确认</el-button>
+            <el-button v-if="canUpdateContractor" link type="success" :icon="Check" :loading="actingContractorId === row.id" :disabled="normalizeSyncStatus(row.sync_status) !== 'PENDING_CONFIRM' || ['OFFLINE', 'EXCEPTION'].includes(row.status)" @click="confirmRow(row)">确认</el-button>
             <el-button link :icon="Link" @click="openDetail(row, 'occupy')">工单</el-button>
           </div>
         </template>
@@ -184,7 +193,7 @@
             </el-table-column>
           </el-table>
         </el-tab-pane>
-        <el-tab-pane label="同步日志" name="logs">
+          <el-tab-pane v-if="canViewGlobalSync" label="同步日志" name="logs">
           <el-table :data="currentLogs" empty-text="暂无当前队伍同步日志">
             <el-table-column label="同步时间" min-width="170">
               <template #default="{ row }">{{ formatTime(row.started_at) }}</template>
@@ -200,14 +209,14 @@
             <el-table-column prop="error_message" label="失败原因" min-width="160" />
           </el-table>
         </el-tab-pane>
-        <el-tab-pane label="异常处理" name="exception">
+        <el-tab-pane v-if="canUpdateContractor" label="异常处理" name="exception">
           <el-alert v-if="current.sync_error_message" type="warning" :closable="false" :title="current.sync_error_message" />
           <div class="exception-actions">
             <el-input v-model="exceptionReason" type="textarea" :rows="4" placeholder="填写异常原因" />
             <div class="exception-buttons">
               <el-button type="warning" :loading="savingException" @click="submitException">标记异常</el-button>
               <el-button :loading="savingException" @click="resolveException">解除异常</el-button>
-              <el-button type="success" :loading="savingException" @click="confirmRow(current)">人工确认</el-button>
+              <el-button type="success" :loading="savingException || actingContractorId === current.id" @click="confirmRow(current)">人工确认</el-button>
             </div>
           </div>
         </el-tab-pane>
@@ -235,7 +244,7 @@
     </el-table>
   </el-dialog>
 
-  <el-dialog v-model="supplementVisible" title="异常补录" width="620px">
+  <el-dialog v-model="supplementVisible" title="异常补录" width="620px" @closed="resetSupplementForm">
     <el-form :model="contractorForm" label-width="108px">
       <el-form-item label="承包商"><el-input v-model="contractorForm.contractor_name" /></el-form-item>
       <el-form-item label="队伍名称"><el-input v-model="contractorForm.team_name" /></el-form-item>
@@ -313,6 +322,7 @@ const loading = ref(false)
 const syncing = ref(false)
 const saving = ref(false)
 const savingException = ref(false)
+const actingContractorId = ref<number>()
 const logLoading = ref(false)
 const contractors = ref<ContractorCapacity[]>([])
 const logs = ref<ContractorSyncLog[]>([])
@@ -323,6 +333,7 @@ const logVisible = ref(false)
 const supplementVisible = ref(false)
 const activeTab = ref('base')
 const current = ref<ContractorCapacity | null>(null)
+let contractorRequestId = 0
 const exceptionReason = ref('')
 const capabilityOptions = [
   { key: 'demo', label: '通用作业' },
@@ -343,6 +354,11 @@ const overview = reactive<ContractorOverview>({
   major_repair_team_count: 0
 })
 const contractorQuery = reactive<ContractorQuery>({ page: 1, page_size: 20, report_date: today, status: '', source_type: '', sync_status: '' })
+const permissions = (() => {
+  try { return new Set<string>(JSON.parse(localStorage.getItem('permissions') || '[]')) } catch { return new Set<string>() }
+})()
+const canCreateContractor = computed(() => permissions.has('contractor:create'))
+const canUpdateContractor = computed(() => permissions.has('contractor:update'))
 const contractorForm = reactive({
   contractor_name: '',
   team_name: '',
@@ -350,8 +366,6 @@ const contractorForm = reactive({
   available_count: 1,
   status: 'AVAILABLE' as ContractorStatus,
   capability_tags: {},
-  source_type: 'LOCAL_SUPPLEMENT' as const,
-  sync_status: 'PENDING_CONFIRM' as const,
   sync_error_message: ''
 })
 
@@ -360,9 +374,9 @@ const displayedOverview = computed(() => {
   if (apiHasData || contractors.value.length === 0) {
     return overview
   }
-  return {
-    reported_team_count: total.value || contractors.value.length,
-    available_team_count: contractors.value.reduce((totalCount, item) => totalCount + Math.max(item.available_count || 0, 0), 0),
+    return {
+      reported_team_count: total.value || contractors.value.length,
+    available_team_count: contractors.value.filter((item) => item.status === 'AVAILABLE').length,
     busy_team_count: contractors.value.filter((item) => item.status === 'BUSY').length,
     offline_team_count: contractors.value.filter((item) => item.status === 'OFFLINE').length,
     sync_exception_count: contractors.value.filter((item) => item.sync_status === 'CONFLICT' || item.sync_status === 'INVALID').length,
@@ -380,11 +394,32 @@ const metrics = computed(() => [
 ])
 const connectionClass = computed(() => syncSummary.connection_status === '正常' ? 'ok' : syncSummary.connection_status === '演示模式' || syncSummary.connection_status === '未配置' ? 'unset' : 'bad')
 const syncDisabled = computed(() => syncSummary.connection_status === '异常')
+const canViewGlobalSync = computed(() => {
+  try {
+    const user = JSON.parse(localStorage.getItem('current_user') || '{}')
+    const roles = (user.roles || []).map((role: { code?: string }) => role.code)
+    return Boolean(user.is_superuser || roles.some((code: string) => ['super_admin', 'ops_admin', 'business_reviewer', 'process_reviewer', 'project_pool_admin'].includes(code)))
+  } catch {
+    return false
+  }
+})
+const canSyncContractors = computed(() => canViewGlobalSync.value && canUpdateContractor.value)
+
+function showRequestError(error: unknown, fallback: string) {
+  if ((error as { response?: { status?: number } })?.response?.status === 401) return
+  ElMessage.error(error instanceof Error && error.message ? error.message : fallback)
+}
 const currentLogs = computed(() => {
-  if (!current.value?.external_system_id) {
+  if (!current.value) {
     return []
   }
-  return logs.value.filter((row) => row.raw_summary?.external_system_id === current.value?.external_system_id)
+  return logs.value.filter((row) => {
+    const summary = row.raw_summary || {}
+    if (current.value?.external_system_id && summary.external_system_id === current.value.external_system_id) {
+      return true
+    }
+    return !summary.external_system_id && summary.report_date === current.value?.report_date
+  })
 })
 
 function formatTime(value?: string | null) {
@@ -435,7 +470,7 @@ function externalStatusLabel(value?: string | null, sourceType?: string) {
 }
 
 function operationStatusLabel(value: string) {
-  const map: Record<string, string> = { WAITING_DISPATCH: '待派工', DISPATCHED: '已下发', WORKING: '施工中', FINISHED: '已完工', CANCELED: '已取消' }
+  const map: Record<string, string> = { WAITING_DISPATCH: '待派工', PENDING_A5: '待A5审核', DISPATCHED: '已下发', WORKING: '施工中', FINISHED: '已完工', CANCELED: '已取消' }
   return map[value] || value
 }
 
@@ -446,22 +481,43 @@ function readableCapabilities(tags: Record<string, unknown>) {
 }
 
 async function loadSummary() {
-  Object.assign(syncSummary, await getContractorSyncSummary())
+  try {
+    Object.assign(syncSummary, await getContractorSyncSummary())
+  } catch (error) {
+    showRequestError(error, '同步摘要加载失败')
+  }
 }
 
-async function loadOverview() {
-  Object.assign(overview, await getContractorOverview(contractorQuery.report_date))
+async function loadOverview(reportDate?: string) {
+  return getContractorOverview(reportDate)
 }
 
 async function loadContractors() {
+  const requestId = ++contractorRequestId
+  const requestQuery = { ...contractorQuery }
   loading.value = true
   try {
-    const result = await listContractors(contractorQuery)
+    const [result, overviewResult] = await Promise.all([
+      listContractors(requestQuery),
+      loadOverview(requestQuery.report_date)
+    ])
+    if (requestId !== contractorRequestId) return
     contractors.value = result.items
     total.value = result.total
-    await loadOverview()
+    Object.assign(overview, overviewResult)
+    if (current.value) {
+      const refreshed = result.items.find((item) => item.id === current.value?.id)
+      if (refreshed) current.value = refreshed
+      else {
+        current.value = null
+        detailVisible.value = false
+      }
+    }
+  } catch (error) {
+    if (requestId !== contractorRequestId) return
+    showRequestError(error, '运力快照加载失败')
   } finally {
-    loading.value = false
+    if (requestId === contractorRequestId) loading.value = false
   }
 }
 
@@ -470,6 +526,8 @@ async function loadLogs() {
   try {
     const result = await listContractorSyncLogs({ page: 1, page_size: 20 })
     logs.value = result.items
+  } catch (error) {
+    showRequestError(error, '同步日志加载失败')
   } finally {
     logLoading.value = false
   }
@@ -490,10 +548,14 @@ async function runSync() {
     const result = await syncContractors({ report_date: contractorQuery.report_date || today })
     if (result.status === 'FAILED') {
       ElMessage.error(result.error_message || '同步失败')
+    } else if (result.status === 'PARTIAL') {
+      ElMessage.warning(`同步部分完成：成功 ${result.success_count}，失败 ${result.failed_count}`)
     } else {
       ElMessage.success('承包商运力同步完成')
     }
     await Promise.all([loadSummary(), loadContractors(), loadLogs()])
+  } catch (error) {
+    showRequestError(error, '承包商运力同步失败')
   } finally {
     syncing.value = false
   }
@@ -510,14 +572,22 @@ async function openDetail(row: ContractorCapacity, tab = 'base') {
   detailVisible.value = true
   exceptionReason.value = row.sync_error_message || ''
   if (tab === 'occupy') {
-    operationLinks.value = await listContractorOperationSheets(row.id)
+    try {
+      operationLinks.value = await listContractorOperationSheets(row.id)
+    } catch (error) {
+      showRequestError(error, '关联工单加载失败')
+    }
   }
 }
 
 async function handleTabChange(name: string | number) {
   if (!current.value) return
   if (name === 'occupy') {
-    operationLinks.value = await listContractorOperationSheets(current.value.id)
+    try {
+      operationLinks.value = await listContractorOperationSheets(current.value.id)
+    } catch (error) {
+      showRequestError(error, '关联工单加载失败')
+    }
   }
   if (name === 'logs') {
     await loadLogs()
@@ -525,9 +595,18 @@ async function handleTabChange(name: string | number) {
 }
 
 async function confirmRow(row: ContractorCapacity) {
-  await confirmContractor(row.id)
-  ElMessage.success('已确认同步')
-  await Promise.all([loadSummary(), loadContractors()])
+  if (actingContractorId.value === row.id) return
+  actingContractorId.value = row.id
+  try {
+    const updated = await confirmContractor(row.id)
+    if (current.value?.id === row.id) current.value = updated
+    ElMessage.success('已确认同步')
+    await Promise.all(canViewGlobalSync.value ? [loadSummary(), loadContractors()] : [loadContractors()])
+  } catch (error) {
+    showRequestError(error, '运力确认失败')
+  } finally {
+    actingContractorId.value = undefined
+  }
 }
 
 async function submitException() {
@@ -538,9 +617,12 @@ async function submitException() {
   }
   savingException.value = true
   try {
-    await markContractorException(current.value.id, exceptionReason.value.trim())
+    const updated = await markContractorException(current.value.id, exceptionReason.value.trim())
+    current.value = updated
     ElMessage.success('已标记异常')
-    await Promise.all([loadSummary(), loadContractors()])
+    await Promise.all(canViewGlobalSync.value ? [loadSummary(), loadContractors()] : [loadContractors()])
+  } catch (error) {
+    showRequestError(error, '异常标记失败')
   } finally {
     savingException.value = false
   }
@@ -550,9 +632,12 @@ async function resolveException() {
   if (!current.value) return
   savingException.value = true
   try {
-    await resolveContractorException(current.value.id)
+    const updated = await resolveContractorException(current.value.id)
+    current.value = updated
     ElMessage.success('异常已解除')
-    await Promise.all([loadSummary(), loadContractors()])
+    await Promise.all(canViewGlobalSync.value ? [loadSummary(), loadContractors()] : [loadContractors()])
+  } catch (error) {
+    showRequestError(error, '异常解除失败')
   } finally {
     savingException.value = false
   }
@@ -561,31 +646,52 @@ async function resolveException() {
 function openSupplement() {
   ElMessageBox.confirm('本地补录仅用于外部接口异常时的应急处理。', '异常补录', { type: 'warning' })
     .then(() => {
+      resetSupplementForm()
       supplementVisible.value = true
     })
     .catch(() => undefined)
 }
 
+function resetSupplementForm() {
+  Object.assign(contractorForm, {
+    contractor_name: '',
+    team_name: '',
+    report_date: contractorQuery.report_date || today,
+    available_count: 1,
+    status: 'AVAILABLE',
+    capability_tags: {},
+    sync_error_message: ''
+  })
+  Object.assign(capabilityForm, Object.fromEntries(capabilityOptions.map((item) => [item.key, false])))
+}
+
 async function saveSupplement() {
+  if (!contractorForm.contractor_name.trim() || !contractorForm.team_name.trim() || !contractorForm.report_date) {
+    ElMessage.warning('请填写承包商、队伍名称和报备日期')
+    return
+  }
+  if (!Object.values(capabilityForm).some(Boolean)) {
+    ElMessage.warning('请至少选择一项施工能力')
+    return
+  }
   saving.value = true
   try {
     await createContractor({
       ...contractorForm,
-      capability_tags: Object.fromEntries(capabilityOptions.map((item) => [item.key, capabilityForm[item.key]])),
-      source_type: 'LOCAL_SUPPLEMENT',
-      sync_status: 'PENDING_CONFIRM'
+      capability_tags: Object.fromEntries(capabilityOptions.map((item) => [item.key, capabilityForm[item.key]]))
     })
     ElMessage.success('异常补录已保存')
     supplementVisible.value = false
-    Object.assign(capabilityForm, Object.fromEntries(capabilityOptions.map((item) => [item.key, false])))
     await loadContractors()
+  } catch (error) {
+    showRequestError(error, '异常补录保存失败')
   } finally {
     saving.value = false
   }
 }
 
 onMounted(async () => {
-  await Promise.all([loadSummary(), loadContractors(), loadLogs()])
+  await Promise.all(canViewGlobalSync.value ? [loadSummary(), loadContractors(), loadLogs()] : [loadContractors()])
 })
 </script>
 
@@ -691,16 +797,36 @@ onMounted(async () => {
   margin: 2px 4px 2px 0;
 }
 
+.capacity-snapshot-table {
+  width: 100%;
+}
+
+.capacity-snapshot-table :deep(.el-table__cell .cell) {
+  width: max-content;
+  min-width: 100%;
+  white-space: nowrap;
+}
+
+.capability-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.capability-tags .tag-gap {
+  margin: 0;
+}
+
 .team-cell {
   display: grid;
   gap: 4px;
-  min-width: 0;
+  width: max-content;
+  white-space: nowrap;
 }
 
 .team-cell strong,
 .team-cell span {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

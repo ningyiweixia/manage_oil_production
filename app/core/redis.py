@@ -37,6 +37,11 @@ class CacheClient:
             return None
         return self._memory.get(key)
 
+    @property
+    def distributed_lock_available(self) -> bool:
+        """Memory cache is acceptable only when Redis was not configured (local dev)."""
+        return not settings.redis_url or self._redis is not None
+
     def _memory_set_nx(self, key: str, raw: str, expire_seconds: int) -> bool:
         if self._memory_get(key) is not None:
             return False
@@ -69,6 +74,19 @@ class CacheClient:
         self._memory_expire_at[key] = time.monotonic() + expire_seconds
         return True
 
+    def set_lock_json(self, key: str, value: Any, expire_seconds: int, *, nx: bool = True) -> bool:
+        """Set a critical lock without falling back to per-process memory after Redis failure."""
+        raw = json.dumps(value, ensure_ascii=False)
+        if settings.redis_url:
+            if self._redis is None:
+                return False
+            try:
+                return bool(self._redis.set(key, raw, ex=expire_seconds, nx=nx))
+            except RedisError:
+                self._redis = None
+                return False
+        return self._memory_set_nx(key, raw, expire_seconds) if nx else self.set_json(key, value, expire_seconds)
+
     def delete(self, key: str) -> None:
         self._memory.pop(key, None)
         self._memory_expire_at.pop(key, None)
@@ -77,6 +95,23 @@ class CacheClient:
                 self._redis.delete(key)
             except RedisError:
                 return
+
+    def delete_json_if_matches(self, key: str, value: Any) -> bool:
+        """Delete a JSON key only when it still belongs to this caller."""
+        raw = json.dumps(value, ensure_ascii=False)
+        if self._redis:
+            try:
+                return bool(self._redis.eval(
+                    "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+                    1, key, raw,
+                ))
+            except RedisError:
+                pass
+        if self._memory_get(key) != raw:
+            return False
+        self._memory.pop(key, None)
+        self._memory_expire_at.pop(key, None)
+        return True
 
 
 cache_client = CacheClient()

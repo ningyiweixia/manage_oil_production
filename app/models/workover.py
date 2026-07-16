@@ -20,6 +20,7 @@ class ProjectPoolStatus(str, enum.Enum):
 
 class OperationStatus(str, enum.Enum):
     WAITING_DISPATCH = "WAITING_DISPATCH"
+    PENDING_A5 = "PENDING_A5"
     DISPATCHED = "DISPATCHED"
     WORKING = "WORKING"
     FINISHED = "FINISHED"
@@ -66,6 +67,8 @@ class WorkoverProjectPool(TimestampMixin, Base):
         Index("ix_workover_project_pool_block_name", "block_name"),
         Index("ix_workover_project_pool_measures_gin", "measures_jsonb", postgresql_using="gin"),
         Index("ix_workover_project_pool_report_unit", "report_unit"),
+        Index("ix_workover_project_pool_created_by_id", "created_by_id"),
+        Index("ix_workover_project_pool_report_batch", "report_batch"),
         {"comment": "上修项目池表"},
     )
 
@@ -143,6 +146,8 @@ class ContractorCapacity(TimestampMixin, Base):
         Index("ix_contractor_capacity_external_system_id", "external_system_id"),
         Index("ix_contractor_capacity_source_type", "source_type"),
         Index("ix_contractor_capacity_sync_status", "sync_status"),
+        Index("ix_contractor_capacity_created_by_id", "created_by_id"),
+        CheckConstraint("available_count >= 0", name="ck_contractor_capacity_available_count_nonnegative"),
         UniqueConstraint("contractor_name", "team_name", "report_date", name="uq_contractor_capacity_team_daily"),
         UniqueConstraint("external_system_id", "report_date", name="uq_contractor_capacity_external_daily"),
         {"comment": "承包商运力表"},
@@ -183,6 +188,7 @@ class ContractorCapacity(TimestampMixin, Base):
     sync_error_message: Mapped[str | None] = mapped_column(Text, comment="同步异常信息")
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="人工确认时间")
     confirmed_by_id: Mapped[int | None] = mapped_column(ForeignKey("sys_user.id", ondelete="SET NULL"), comment="确认人ID")
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("sys_user.id", ondelete="SET NULL"), comment="创建人ID")
     contact_name: Mapped[str | None] = mapped_column(String(64), comment="联系人")
     contact_phone: Mapped[str | None] = mapped_column(String(32), comment="联系电话")
     qualification_expire_at: Mapped[date | None] = mapped_column(Date, comment="资质有效期")
@@ -192,7 +198,10 @@ class ContractorCapacity(TimestampMixin, Base):
 
     @property
     def occupied_count(self) -> int:
-        active_statuses = {OperationStatus.WAITING_DISPATCH, OperationStatus.DISPATCHED, OperationStatus.WORKING}
+        loaded_count = getattr(self, "_occupied_count", None)
+        if loaded_count is not None:
+            return int(loaded_count)
+        active_statuses = {OperationStatus.PENDING_A5, OperationStatus.DISPATCHED, OperationStatus.WORKING}
         return len([item for item in self.operations if item.status in active_statuses])
 
 
@@ -231,6 +240,9 @@ class WorkoverOperationSheet(TimestampMixin, Base):
     __tablename__ = "workover_operation_sheet"
     __table_args__ = (
         Index("ix_workover_operation_sheet_status", "status"),
+        Index("ix_workover_operation_sheet_project_id", "project_id"),
+        Index("ix_workover_operation_sheet_contractor_capacity_id", "contractor_capacity_id"),
+        UniqueConstraint("project_id", name="uq_workover_operation_sheet_project"),
         CheckConstraint("progress >= 0 AND progress <= 100", name="ck_workover_operation_sheet_progress_range"),
         {"comment": "修井运行表"},
     )
@@ -254,6 +266,7 @@ class WorkoverOperationSheet(TimestampMixin, Base):
     )
     planned_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="计划开始时间")
     planned_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="计划结束时间")
+    dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="派工时间")
     actual_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="实际开始时间")
     actual_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="实际结束时间")
     progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False, comment="施工进度百分比")
@@ -266,6 +279,9 @@ class WorkoverOperationSheet(TimestampMixin, Base):
     a5_status: Mapped[str | None] = mapped_column(String(64), comment="A5工单状态")
     a5_remark: Mapped[str | None] = mapped_column(Text, comment="A5回写备注")
     last_a5_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="最近A5同步时间")
+    last_a5_report_date: Mapped[date | None] = mapped_column(Date, comment="最近A5上修日报日期")
+    a5_sync_result: Mapped[str | None] = mapped_column(String(32), comment="最近A5同步结果")
+    a5_sync_error: Mapped[str | None] = mapped_column(Text, comment="最近A5同步失败原因")
 
     project: Mapped[WorkoverProjectPool] = relationship(back_populates="operations")
     contractor_capacity: Mapped[ContractorCapacity | None] = relationship(back_populates="operations")
@@ -273,3 +289,55 @@ class WorkoverOperationSheet(TimestampMixin, Base):
     @property
     def project_well_no(self) -> str | None:
         return self.project.well_no if self.project is not None else None
+
+
+class A5SyncBatch(TimestampMixin, Base):
+    __tablename__ = "a5_sync_batch"
+    __table_args__ = (
+        Index("ix_a5_sync_batch_started_at", "started_at"),
+        Index("ix_a5_sync_batch_status", "status"),
+        {"comment": "A5数据同步批次表"},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, comment="同步批次ID")
+    sync_type: Mapped[str] = mapped_column(String(32), nullable=False, comment="SCHEDULED/MANUAL/SINGLE")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="RUNNING", comment="同步状态")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, comment="开始时间")
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), comment="结束时间")
+    requested_operation_no: Mapped[str | None] = mapped_column(String(64), comment="单工单同步时的作业编号")
+    sync_cursor: Mapped[str | None] = mapped_column(String(255), comment="A5增量同步游标")
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    unchanged_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    not_found_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, comment="失败原因")
+    raw_summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict, comment="同步摘要")
+
+
+class A5DailyReportRecord(TimestampMixin, Base):
+    __tablename__ = "a5_daily_report_record"
+    __table_args__ = (
+        UniqueConstraint("fingerprint", name="uq_a5_daily_report_fingerprint"),
+        Index("ix_a5_daily_report_operation_no", "operation_no"),
+        Index("ix_a5_daily_report_report_date", "report_date"),
+        Index("ix_a5_daily_report_batch_id", "batch_id"),
+        {"comment": "A5上修日报同步记录表"},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    batch_id: Mapped[int | None] = mapped_column(ForeignKey("a5_sync_batch.id", ondelete="SET NULL"))
+    operation_sheet_id: Mapped[int | None] = mapped_column(ForeignKey("workover_operation_sheet.id", ondelete="SET NULL"))
+    operation_no: Mapped[str] = mapped_column(String(64), nullable=False)
+    report_date: Mapped[date] = mapped_column(Date, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    external_event_id: Mapped[str | None] = mapped_column(String(128))
+    external_version: Mapped[int | None] = mapped_column(Integer)
+    a5_status: Mapped[str | None] = mapped_column(String(64))
+    progress: Mapped[int | None] = mapped_column(Integer)
+    remark: Mapped[str | None] = mapped_column(Text)
+    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    matched: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    failure_reason: Mapped[str | None] = mapped_column(Text)
+    raw_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)

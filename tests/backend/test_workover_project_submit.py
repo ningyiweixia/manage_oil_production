@@ -40,6 +40,7 @@ class WorkoverProjectSubmitTest(unittest.TestCase):
                 measures_jsonb={"measures": []},
                 photo_urls=[],
                 is_deleted=False,
+                created_by_id=1,
             )
             db.add(project)
             db.commit()

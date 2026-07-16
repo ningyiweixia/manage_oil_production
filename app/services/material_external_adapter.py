@@ -14,7 +14,7 @@ from app.crud.material import get_material_requirement, update_material_requirem
 from app.models.integration import IntegrationEvent, IntegrationEventStatus
 from app.models.material import MaterialRequirement, MaterialRequirementStatus
 from app.schemas.material import MaterialRequirementUpdate
-from app.services.data_scope_service import DataScope
+from app.models.rbac import User
 
 
 @dataclass(frozen=True)
@@ -86,7 +86,7 @@ def apply_external_material_event(
     db: Session,
     event: MaterialExternalEvent,
     *,
-    scope: DataScope | None = None,
+    current_user: User | None = None,
 ) -> MaterialExternalProcessResult:
     payload = _event_payload(event)
     payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
@@ -101,7 +101,7 @@ def apply_external_material_event(
     )
     if requirement is None:
         raise BusinessException(CONFLICT, "外部物料记录未匹配")
-    requirement = get_material_requirement(db, requirement.id, scope=scope)
+    requirement = get_material_requirement(db, requirement.id, current_user=current_user)
 
     if existing is not None:
         if existing.payload_hash != payload_hash:
@@ -133,8 +133,9 @@ def apply_external_material_event(
         db,
         requirement.id,
         MaterialRequirementUpdate(status=event.status, source_platform=event.source_platform, **quantities),
-        scope=scope,
+        current_user=current_user,
         commit=False,
+        validate_link=False,
     )
     event_log.status = IntegrationEventStatus.PROCESSED
     event_log.processed_at = datetime.now(timezone.utc)

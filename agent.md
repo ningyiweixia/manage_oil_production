@@ -62,7 +62,7 @@
 |---|---|---|
 | `workover_project_pool` | `models/workover.py` | 业务源头，存储待修井基础信息及修井措施（JSONB），含完整状态机 |
 | `workover_operation_sheet` | `models/workover.py` | 核心执行表，关联项目池主键与承包商运力，记录作业进度（0-100） |
-| `contractor_capacity` | `models/workover.py` | 管理外包队伍资源，记录每日运力报备与队伍状态（AVAILABLE/BUSY/OFFLINE） |
+| `contractor_capacity` | `models/workover.py` | 管理外包队伍资源，记录每日运力报备与队伍状态（AVAILABLE/BUSY/OFFLINE/EXCEPTION） |
 | `approval_log` | `models/approval.py` | 实现全流程审批溯源留痕，记录变更前后 JSONB 数据快照 |
 
 ### RBAC 权限体系表
@@ -136,7 +136,7 @@ VOIDED   REJECTED  ←──────────────  REJECTED      
 * **审批留痕**：每次状态变更在 `approval_log` 表记录 before/after JSONB 数据快照，包含操作人/操作类型/审批意见
 
 ### 承包商/运力状态
-* 队伍状态：`AVAILABLE` → `BUSY` → `OFFLINE`
+* 队伍状态：`AVAILABLE` → `BUSY` → `OFFLINE`，同步异常或人工标记异常时进入 `EXCEPTION`
 * 运力报备必须传入"特定施工能力"标签字段（JSONB `capability_tags`，如大修资质）
 
 ### 作业运行表状态

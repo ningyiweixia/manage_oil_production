@@ -1,7 +1,7 @@
 """create analytics alert table
 
 Revision ID: 20260711_0015_analytics_alerts
-Revises: 20260710_0014_contractor_capacity
+Revises: 20260710_0014
 Create Date: 2026-07-11 00:15:00.000000
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "20260711_0015_analytics_alerts"
-down_revision = "20260710_0014_contractor_capacity"
+down_revision = "20260710_0014"
 branch_labels = None
 depends_on = None
 

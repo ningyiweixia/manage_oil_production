@@ -10,12 +10,14 @@ import A5IntegrationView from '../views/A5IntegrationView.vue'
 import SystemAdminView from '../views/SystemAdminView.vue'
 import MaterialManageView from '../views/MaterialManageView.vue'
 import CompletionLedgerView from '../views/CompletionLedgerView.vue'
+import A5MockMeasureReviewView from '../views/A5MockMeasureReviewView.vue'
 import { clearSessionMenus } from '../utils/menuCache'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/login', component: LoginView },
+    { path: '/a5-simulator/measure-review', component: A5MockMeasureReviewView, meta: { title: 'A5模拟措施审核' } },
     {
       path: '/',
       component: MainLayout,
@@ -25,8 +27,7 @@ const router = createRouter({
         { path: 'dashboard', component: AnalyticsDashboard, meta: { title: '统计分析大屏' } },
         { path: '/workover/project-pools', component: ProjectPoolLedgerView, meta: { title: '上修项目池台账' } },
         { path: '/workover/operation-sheets', component: WorkoverOperationManageView, meta: { title: '修井运行管理' } },
-        { path: '/contractor/capacity', component: ContractorDispatchView, meta: { title: '承包商运力报备' } },
-        { path: '/contractor/dispatch', component: ContractorDispatchView, meta: { title: '承包商运力报备' } },
+        { path: '/contractor/dispatch', component: ContractorDispatchView, meta: { title: '运力同步确认' } },
         { path: '/contractor/operation-sheets', component: WorkoverOperationManageView, meta: { title: '修井运行管理' } },
         { path: '/material/requirements', component: MaterialManageView, meta: { title: '物料需求台账' } },
         { path: '/material/delivery', component: MaterialManageView, meta: { title: '物料配送跟踪' } },

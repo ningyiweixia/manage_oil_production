@@ -164,11 +164,11 @@
         <el-descriptions-item label="资料完整性">{{ completenessLabel(detailTarget.completeness_status) }}</el-descriptions-item>
         <el-descriptions-item label="原因分类">{{ detailTarget.reason_category || '-' }}</el-descriptions-item>
         <el-descriptions-item label="提报批次">{{ detailTarget.report_batch || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="数据来源">{{ detailTarget.data_source || 'manual' }}</el-descriptions-item>
+        <el-descriptions-item label="数据来源">{{ projectSourceLabel(detailTarget.data_source || 'manual') }}</el-descriptions-item>
         <el-descriptions-item label="重复井">{{ detailTarget.is_duplicate_well ? '是' : '否' }}</el-descriptions-item>
       </el-descriptions>
       <h3>措施内容</h3>
-      <el-tag v-for="measure in detailTarget.measures_jsonb.measures || []" :key="measure.measure_type" class="tag-gap">{{ measure.measure_type }}</el-tag>
+      <el-tag v-for="measure in detailTarget.measures_jsonb.measures || []" :key="measure.measure_type" class="tag-gap">{{ measureTypeLabel(measure.measure_type) }}</el-tag>
       <h3>附件资料</h3>
       <el-empty v-if="!attachmentCount(detailTarget)" description="暂无附件" />
       <div v-else class="photo-preview-grid">
@@ -203,6 +203,7 @@ import { createProject, deleteProject, downloadProjectImportTemplate, exportProj
 import { emitProjectDataChanged } from '../composables/useProjectSync'
 import { readPhotoAttachmentAsDataUrl, validatePhotoAttachment } from '../utils/photoAttachments'
 import { statusLabels, statusTagType } from '../utils/status'
+import { measureTypeLabel, projectSourceLabel } from '../utils/businessLabels'
 import type { ProjectPoolStatus, ProjectQuery, WorkoverProject } from '../types/workover'
 
 const statusOptions = (Object.keys(statusLabels) as ProjectPoolStatus[]).map((value) => ({ label: statusLabels[value], value }))

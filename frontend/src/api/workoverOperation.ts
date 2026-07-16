@@ -6,6 +6,7 @@ export interface OperationDashboard {
   total_sheets: number
   status_distribution: {
     waiting_dispatch: number
+    pending_a5: number
     dispatched: number
     working: number
     finished: number
@@ -16,6 +17,7 @@ export interface OperationDashboard {
   anomaly_count: number
   runtime_focus: {
     waiting: number
+    pending_a5?: number
     dispatched?: number
     working: number
     finished: number
@@ -69,6 +71,16 @@ export function createWorkoverOperationSheet(payload: { project_id: number; plan
   return unwrap<ManagedOperationSheet>(http.post('/workover-operations/sheets/', payload))
 }
 
-export function updateWorkoverOperationProgress(id: number, payload: { progress: number; progress_detail: Record<string, unknown> }) {
-  return unwrap<ManagedOperationSheet>(http.patch(`/workover-operations/sheets/${id}/progress`, payload))
+export function createWorkoverA5Link(id: number, redirectPath = '/measure-review') {
+  return unwrap<{ token: string; expire_at: string; redirect_url: string }>(
+    http.post(`/workover-operations/sheets/${id}/a5-link`, null, { params: { redirect_path: redirectPath } })
+  )
+}
+
+export function syncWorkoverA5(id: number) {
+  return unwrap<{ task_id: string; message: string; updated_count: number; failed_count: number }>(http.post(`/workover-operations/sheets/${id}/a5-sync`))
+}
+
+export function syncAllWorkoverA5() {
+  return unwrap<{ task_id: string; message: string; updated_count: number; failed_count: number }>(http.post('/workover-operations/a5-sync'))
 }

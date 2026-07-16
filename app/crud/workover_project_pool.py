@@ -5,10 +5,11 @@ from sqlalchemy import Select, desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BusinessException
-from app.core.status_codes import BAD_REQUEST, CONFLICT
+from app.core.status_codes import BAD_REQUEST, CONFLICT, FORBIDDEN
 from app.crud.contractor import ensure_operation_sheet_for_project
 from app.models.approval import ApprovalAction, ApprovalLog
-from app.models.workover import ProjectPoolStatus, WorkoverProjectPool
+from app.models.rbac import User
+from app.models.workover import OperationStatus, ProjectPoolStatus, WorkoverOperationSheet, WorkoverProjectPool
 from app.schemas.workover_project_pool import (
     WorkoverProjectPoolCreate,
     WorkoverProjectPoolQuery,
@@ -137,8 +138,11 @@ def list_all_project_pools(db: Session) -> list[WorkoverProjectPool]:
     )
 
 
-def get_project_pool(db: Session, project_id: int) -> WorkoverProjectPool:
-    project = db.get(WorkoverProjectPool, project_id)
+def get_project_pool(db: Session, project_id: int, *, current_user: User | None = None) -> WorkoverProjectPool:
+    stmt = select(WorkoverProjectPool).where(WorkoverProjectPool.id == project_id)
+    if current_user is not None:
+        stmt = apply_project_pool_scope(stmt, current_user)
+    project = db.scalar(stmt)
     if project is None or project.is_deleted:
         raise BusinessException(BAD_REQUEST, "上修项目池记录不存在")
     return project
@@ -182,8 +186,9 @@ def update_project_pool(
     *,
     operator_id: int,
     operator_ip: str | None,
+    current_user: User | None = None,
 ) -> WorkoverProjectPool:
-    project = get_project_pool(db, project_id)
+    project = get_project_pool(db, project_id, current_user=current_user)
     before = _project_snapshot(project)
     data = payload.model_dump(mode="json")
     ensure_dictionary_values(db, "measure_type", _measure_types(data["measures_jsonb"]))
@@ -214,17 +219,19 @@ def submit_project_pools(
     operator_id: int,
     operator_ip: str | None,
     comment: str | None,
+    current_user: User | None = None,
 ) -> list[WorkoverProjectPool]:
-    projects = list(
-        db.scalars(
-            select(WorkoverProjectPool)
-            .where(WorkoverProjectPool.id.in_(project_ids), WorkoverProjectPool.is_deleted.is_(False))
-            .with_for_update()
-        ).all()
+    stmt = select(WorkoverProjectPool).where(
+        WorkoverProjectPool.id.in_(project_ids), WorkoverProjectPool.is_deleted.is_(False)
     )
+    if current_user is not None:
+        stmt = apply_project_pool_scope(stmt, current_user)
+    projects = list(db.scalars(stmt.with_for_update()).all())
     found_ids = {project.id for project in projects}
     missing = set(project_ids) - found_ids
     if missing:
+        if current_user is not None:
+            raise BusinessException(FORBIDDEN, "存在无权访问的项目池记录")
         raise BusinessException(BAD_REQUEST, f"项目池记录不存在: {sorted(missing)}")
 
     for project in projects:
@@ -417,8 +424,15 @@ def delete_project_pool(
     *,
     operator_id: int,
     operator_ip: str | None,
+    current_user: User | None = None,
 ) -> None:
-    project = get_project_pool(db, project_id)
+    project = get_project_pool(db, project_id, current_user=current_user)
+    if project.status == ProjectPoolStatus.DISPATCHED or db.scalar(
+        select(func.count()).select_from(WorkoverOperationSheet).where(
+            WorkoverOperationSheet.project_id == project.id,
+        )
+    ):
+        raise BusinessException(CONFLICT, "已生成关联运行工单的项目不能删除或隐藏")
     before = _project_snapshot(project)
     project.is_deleted = True
     db.flush()

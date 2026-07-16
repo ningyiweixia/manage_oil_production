@@ -18,6 +18,7 @@ class WorkoverOperationManagementContractTest(unittest.TestCase):
         self.assertIn('"/sheets/"', source)
         self.assertIn('"/priority-sheets"', source)
         self.assertIn('"/dashboard"', source)
+        self.assertIn('"/a5-sync"', source)
         self.assertIn('"/sheets/{sheet_id}/progress"', source)
         self.assertIn("list_workover_operation_sheets", source)
         self.assertIn("build_workover_operation_dashboard", source)
@@ -60,11 +61,16 @@ class WorkoverOperationManagementContractTest(unittest.TestCase):
         self.assertIn('"workover_operation:read"', source)
         self.assertIn('"workover_operation:update"', source)
         self.assertIn('"workover_operation:dashboard"', source)
+        self.assertIn('"workover_operation:a5_sync"', source)
         self.assertIn('menus_by_key["workover_operation"]', source)
-        self.assertIn('("contractor_capacity", None, "运力报备"', source)
-        self.assertIn('("contractor_dispatch", None, "智能派工"', source)
+        self.assertIn('("contractor_dispatch", None, "运力同步确认"', source)
         self.assertNotIn('("contractor", None, "承包商管理"', source)
         self.assertNotIn('("contractor_sheets"', source)
+        process_role = source.split('"process_reviewer": {', 1)[1].split('},', 1)[0]
+        for permission in ('"operation-sheet:dispatch"', '"contractor:read"', '"a5:sso"', '"workover_operation:a5_sync"'):
+            self.assertIn(permission, process_role)
+        scope_source = (REPO_ROOT / "app/services/data_scope_service.py").read_text(encoding="utf-8")
+        self.assertIn('"process_reviewer"', scope_source)
 
     def test_runtime_menu_normalization_places_dispatch_before_operation(self):
         auth_source = (REPO_ROOT / "app/services/auth_service.py").read_text(encoding="utf-8")
@@ -76,7 +82,6 @@ class WorkoverOperationManagementContractTest(unittest.TestCase):
         self.assertIn('"contractor"', auth_source)
         self.assertIn('"/contractor/operation-sheets"', auth_source)
         self.assertIn("normalizeCoreMenuOrder", layout_source)
-        self.assertIn("sort_order: 22", layout_source)
         self.assertIn("sort_order: 23", layout_source)
         self.assertIn("sort_order: 24", layout_source)
 
@@ -96,11 +101,12 @@ class WorkoverOperationManagementContractTest(unittest.TestCase):
         self.assertIn("2026-07-07-phase3-operation-menu", cache_source)
 
         view_source = view.read_text(encoding="utf-8")
-        for text in ("修井运行表", "总工单", "待派工", "已派工", "施工中", "已完工", "完工率", "井号", "区块", "承包商/队伍", "时间节点", "分配队伍", "更新进度"):
+        for text in ("修井运行表", "总工单", "待派工", "待A5审核", "已下发", "施工中", "已完工", "完工率", "井号", "区块", "承包商/队伍", "时间节点", "分配队伍", "统一同步 A5", "同步 A5 日报"):
             self.assertIn(text, view_source)
         self.assertIn("listWorkoverOperationSheets", view_source)
         self.assertIn("getWorkoverOperationDashboard", view_source)
-        self.assertIn("updateWorkoverOperationProgress", view_source)
+        self.assertNotIn("updateWorkoverOperationProgress", view_source)
+        self.assertNotIn("更新进度", view_source)
         self.assertIn("dispatchOperation", view_source)
         self.assertIn("A5与闭环信息", view_source)
         self.assertIn("closed_loop_status", view_source)
@@ -113,7 +119,8 @@ class WorkoverOperationManagementContractTest(unittest.TestCase):
         self.assertIn("/workover-operations/sheets/", api_source)
         self.assertIn("/workover-operations/priority-sheets", api_source)
         self.assertIn("/workover-operations/dashboard", api_source)
-        self.assertIn("/workover-operations/sheets/${id}/progress", api_source)
+        self.assertIn("/workover-operations/a5-sync", api_source)
+        self.assertNotIn("/workover-operations/sheets/${id}/progress", api_source)
         self.assertIn("closed_loop_status", api_source)
 
     def test_contractor_dispatch_page_no_longer_owns_operation_management(self):

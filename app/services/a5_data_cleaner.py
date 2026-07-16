@@ -4,6 +4,7 @@
 """
 
 import logging
+import json
 from typing import Any
 
 import pandas as pd
@@ -24,10 +25,16 @@ def clean_daily_report(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not raw:
         return []
 
-    df = pd.DataFrame(raw)
-
-    # 去重
-    df = df.drop_duplicates()
+    # Pandas cannot hash nested dict/list values. Deduplicate by a stable JSON
+    # representation while retaining the original nested payload for tracing.
+    unique_rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in raw:
+        key = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
+        if key not in seen:
+            seen.add(key)
+            unique_rows.append(row)
+    df = pd.DataFrame(unique_rows)
 
     # 统一日期字段格式
     date_columns = [col for col in df.columns if "date" in col.lower() or "time" in col.lower()]
@@ -123,4 +130,7 @@ def validate_operation_data(data: dict[str, Any]) -> bool:
         if not data.get(field):
             logger.warning(f"A5 数据缺少必填字段: {field}")
             return False
+    if not (data.get("status") or data.get("operation_status")):
+        logger.warning("A5 数据缺少状态字段")
+        return False
     return True

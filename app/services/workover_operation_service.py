@@ -1,7 +1,7 @@
 from datetime import date, datetime, time, timedelta
 from typing import Any
 
-from sqlalchemy import String, cast, func, select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
@@ -10,20 +10,24 @@ from app.crud.contractor import (
     create_operation_sheet,
     get_operation_analytics,
     get_operation_sheet,
+    get_operation_sheet_for_user,
     list_operation_sheets,
     select_priority_sheets,
     sync_approved_projects_to_operation_sheets,
     update_sheet_progress,
 )
+from app.core.exceptions import BusinessException
+from app.core.status_codes import CONFLICT
 from app.models.completion import WellCompletionRecord
 from app.models.material import MaterialRequirement
+from app.models.rbac import User
 from app.models.workover import ContractorCapacity, OperationStatus, ProjectPoolStatus, WorkoverOperationSheet, WorkoverProjectPool
-from app.services.data_scope_service import DataScope, reporting_unit_scope_predicate
 from app.schemas.contractor import (
     ProgressPatch,
     WorkoverOperationSheetCreate,
     WorkoverOperationSheetQuery,
 )
+from app.services.data_scope_service import DataScope, apply_workover_operation_scope, reporting_unit_scope_predicate
 
 
 class OperationAnalyticsQuery(BaseModel):
@@ -49,10 +53,13 @@ def _material_status(sheet: WorkoverOperationSheet) -> dict[str, Any]:
     return {"status": "NONE", "total": 0, "counts": {}}
 
 
-def _completion_status(db: Session, sheet_id: int) -> dict[str, Any]:
-    count = db.scalar(
-        select(func.count()).select_from(WellCompletionRecord).where(WellCompletionRecord.operation_sheet_id == sheet_id)
-    ) or 0
+def _completion_status(db: Session, sheet_id: int, completion_counts: dict[int, int] | None = None) -> dict[str, Any]:
+    if completion_counts is None:
+        count = db.scalar(
+            select(func.count()).select_from(WellCompletionRecord).where(WellCompletionRecord.operation_sheet_id == sheet_id)
+        ) or 0
+    else:
+        count = completion_counts.get(sheet_id, 0)
     return {"status": "RECORDED" if count else "NONE", "total": count}
 
 
@@ -69,12 +76,17 @@ def build_closed_loop_status(
     operation_status = sheet.status.value if getattr(sheet.status, "value", None) else str(sheet.status)
     material_code = str(material_status.get("status") or "NONE")
     completion_code = str(completion_status.get("status") or "NONE")
-    a5_code = "SYNCED" if sheet.a5_status else "PENDING"
+    a5_synced = bool(
+        sheet.a5_status
+        and sheet.last_a5_sync_at
+        and sheet.a5_sync_result in {None, "SUCCESS"}
+    )
+    a5_code = "SYNCED" if a5_synced else "PENDING"
 
     stages = [
         _stage("project", "项目入库", project_status, project_status in {ProjectPoolStatus.APPROVED.value, ProjectPoolStatus.DISPATCHED.value}),
-        _stage("operation", "运行派工", operation_status, operation_status in {OperationStatus.DISPATCHED.value, OperationStatus.WORKING.value, OperationStatus.FINISHED.value}),
-        _stage("a5", "A5同步", a5_code, bool(sheet.a5_status)),
+        _stage("operation", "运行派工", operation_status, operation_status == OperationStatus.FINISHED.value),
+        _stage("a5", "A5同步", a5_code, a5_synced),
         _stage("material", "物料保障", material_code, material_code in {"NONE", "ARRIVED", "USED"}),
         _stage("completion", "完井登记", completion_code, completion_code == "RECORDED"),
     ]
@@ -94,9 +106,11 @@ def build_closed_loop_status(
     }
 
 
-def enrich_workover_operation_sheet(db: Session, sheet: WorkoverOperationSheet) -> dict[str, Any]:
+def enrich_workover_operation_sheet(
+    db: Session, sheet: WorkoverOperationSheet, *, completion_counts: dict[int, int] | None = None
+) -> dict[str, Any]:
     material_status = _material_status(sheet)
-    completion_status = _completion_status(db, sheet.id)
+    completion_status = _completion_status(db, sheet.id, completion_counts)
     project = sheet.project
     contractor = sheet.contractor_capacity
     return {
@@ -132,6 +146,9 @@ def enrich_workover_operation_sheet(db: Session, sheet: WorkoverOperationSheet) 
         "a5_status": sheet.a5_status,
         "a5_remark": sheet.a5_remark,
         "last_a5_sync_at": sheet.last_a5_sync_at,
+        "last_a5_report_date": sheet.last_a5_report_date,
+        "a5_sync_result": sheet.a5_sync_result,
+        "a5_sync_error": sheet.a5_sync_error,
         "material_status": material_status,
         "completion_status": completion_status,
         "closed_loop_status": build_closed_loop_status(sheet, material_status, completion_status),
@@ -146,10 +163,19 @@ def list_workover_operation_sheets(
     *,
     operator_id: int | None = None,
     operator_ip: str | None = None,
+    current_user: User | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
-    sync_approved_projects_to_operation_sheets(db, operator_id=operator_id, operator_ip=operator_ip)
-    rows, total = list_operation_sheets(db, query)
-    return [enrich_workover_operation_sheet(db, row) for row in rows], total
+    rows, total = list_operation_sheets(db, query, current_user=current_user)
+    sheet_ids = [row.id for row in rows]
+    completion_counts = {
+        sheet_id: count
+        for sheet_id, count in db.execute(
+            select(WellCompletionRecord.operation_sheet_id, func.count())
+            .where(WellCompletionRecord.operation_sheet_id.in_(sheet_ids))
+            .group_by(WellCompletionRecord.operation_sheet_id)
+        )
+    } if sheet_ids else {}
+    return [enrich_workover_operation_sheet(db, row, completion_counts=completion_counts) for row in rows], total
 
 
 def list_priority_operation_sheets(
@@ -157,9 +183,9 @@ def list_priority_operation_sheets(
     *,
     operator_id: int | None = None,
     operator_ip: str | None = None,
+    current_user: User | None = None,
 ) -> list[dict[str, Any]]:
-    sync_approved_projects_to_operation_sheets(db, operator_id=operator_id, operator_ip=operator_ip)
-    return [enrich_workover_operation_sheet(db, row) for row in select_priority_sheets(db)]
+    return [enrich_workover_operation_sheet(db, row) for row in select_priority_sheets(db, current_user=current_user)]
 
 
 def create_workover_operation_sheet(
@@ -168,13 +194,26 @@ def create_workover_operation_sheet(
     *,
     operator_id: int,
     operator_ip: str | None,
+    current_user: User | None = None,
 ) -> dict[str, Any]:
-    sheet = create_operation_sheet(db, payload, operator_id=operator_id, operator_ip=operator_ip)
+    sheet = create_operation_sheet(
+        db, payload, operator_id=operator_id, operator_ip=operator_ip, current_user=current_user
+    )
     return enrich_workover_operation_sheet(db, sheet)
 
 
-def get_workover_operation_sheet(db: Session, sheet_id: int) -> dict[str, Any]:
-    return enrich_workover_operation_sheet(db, get_operation_sheet(db, sheet_id))
+def get_workover_operation_sheet(
+    db: Session,
+    sheet_id: int,
+    *,
+    current_user: User | None = None,
+    scope: DataScope | None = None,
+) -> dict[str, Any]:
+    if current_user is None:
+        sheet = get_operation_sheet(db, sheet_id)
+    else:
+        sheet = get_operation_sheet_for_user(db, sheet_id, current_user)
+    return enrich_workover_operation_sheet(db, sheet)
 
 
 def update_workover_operation_progress(
@@ -184,21 +223,33 @@ def update_workover_operation_progress(
     *,
     operator_id: int,
     operator_ip: str | None,
+    current_user: User | None = None,
 ) -> dict[str, Any]:
-    sheet = update_sheet_progress(db, sheet_id, payload, operator_id=operator_id, operator_ip=operator_ip)
-    return enrich_workover_operation_sheet(db, sheet)
+    # A5 daily reports are the sole authority for construction state and
+    # progress.  Keep this compatibility boundary fail-closed so no caller can
+    # bypass the A5 review/report chain through an old manual-progress API.
+    raise BusinessException(CONFLICT, "施工状态和进度由A5日报同步，本系统不支持手工更新")
 
 
 def build_workover_operation_dashboard(
     db: Session,
     query: OperationAnalyticsQuery | None = None,
     *,
+    current_user: User | None = None,
     scope: DataScope | None = None,
 ) -> dict[str, Any]:
     if query is None:
-        base = get_operation_analytics(db)
+        base = get_operation_analytics(db, current_user=current_user)
+        id_stmt = select(WorkoverOperationSheet.id).join(WorkoverProjectPool)
+        if current_user is not None:
+            id_stmt = apply_workover_operation_scope(id_stmt, current_user)
+        if scope is not None and not scope.is_global:
+            id_stmt = id_stmt.where(reporting_unit_scope_predicate(scope))
+        sheet_ids = list(db.scalars(id_stmt).all())
     else:
         stmt = select(WorkoverOperationSheet).join(WorkoverProjectPool).outerjoin(ContractorCapacity)
+        if current_user is not None:
+            stmt = apply_workover_operation_scope(stmt, current_user)
         if scope is not None and not scope.is_global:
             stmt = stmt.where(reporting_unit_scope_predicate(scope))
         if query.well_no:
@@ -234,11 +285,12 @@ def build_workover_operation_dashboard(
             if str(sheet.a5_status or "").upper() in {"ANOMALY", "ERROR", "EXCEPTION", "FAILED"}:
                 anomaly_count += 1
         total = len(sheets)
-        active = counts[OperationStatus.DISPATCHED.value] + counts[OperationStatus.WORKING.value] + counts[OperationStatus.FINISHED.value]
+        active = counts[OperationStatus.PENDING_A5.value] + counts[OperationStatus.DISPATCHED.value] + counts[OperationStatus.WORKING.value] + counts[OperationStatus.FINISHED.value]
         base = {
             "total_sheets": total,
             "status_distribution": {
                 "waiting_dispatch": counts[OperationStatus.WAITING_DISPATCH.value],
+                "pending_a5": counts[OperationStatus.PENDING_A5.value],
                 "dispatched": counts[OperationStatus.DISPATCHED.value],
                 "working": counts[OperationStatus.WORKING.value],
                 "finished": counts[OperationStatus.FINISHED.value],
@@ -258,12 +310,17 @@ def build_workover_operation_dashboard(
         }
     material_stmt = select(func.count()).select_from(MaterialRequirement)
     completion_stmt = select(func.count()).select_from(WellCompletionRecord)
-    a5_stmt = select(func.count()).select_from(WorkoverOperationSheet).where(WorkoverOperationSheet.a5_status.is_not(None))
     if query is not None:
         sheet_ids = [sheet.id for sheet in sheets]
-        material_stmt = material_stmt.where(MaterialRequirement.operation_sheet_id.in_(sheet_ids))
-        completion_stmt = completion_stmt.where(WellCompletionRecord.operation_sheet_id.in_(sheet_ids))
-        a5_stmt = a5_stmt.where(WorkoverOperationSheet.id.in_(sheet_ids))
+    a5_stmt = select(func.count()).select_from(WorkoverOperationSheet).where(
+        WorkoverOperationSheet.a5_status.is_not(None),
+        WorkoverOperationSheet.last_a5_sync_at.is_not(None),
+        or_(WorkoverOperationSheet.a5_sync_result == "SUCCESS", WorkoverOperationSheet.a5_sync_result.is_(None)),
+        WorkoverOperationSheet.id.in_(sheet_ids),
+    )
+    material_stmt = material_stmt.where(MaterialRequirement.operation_sheet_id.in_(sheet_ids))
+    completion_stmt = completion_stmt.where(WellCompletionRecord.operation_sheet_id.in_(sheet_ids))
+    if query is not None:
         if query.material_status:
             material_stmt = material_stmt.where(MaterialRequirement.status == query.material_status)
         if query.measure_type:
@@ -280,6 +337,7 @@ def build_workover_operation_dashboard(
     total_completions = db.scalar(completion_stmt) or 0
     a5_synced = db.scalar(a5_stmt) or 0
     waiting = base.get("status_distribution", {}).get("waiting_dispatch", 0)
+    pending_a5 = base.get("status_distribution", {}).get("pending_a5", 0)
     working = base.get("status_distribution", {}).get("working", 0)
     finished = base.get("status_distribution", {}).get("finished", 0)
     return {
@@ -287,6 +345,7 @@ def build_workover_operation_dashboard(
         "business_type": BUSINESS_TYPE_OPERATION,
         "runtime_focus": {
             "waiting": waiting,
+            "pending_a5": pending_a5,
             "working": working,
             "finished": finished,
             "material_total": total_materials,

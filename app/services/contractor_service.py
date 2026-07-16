@@ -2,15 +2,8 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import BusinessException
 from app.core.status_codes import CONFLICT
-from app.crud.contractor import get_contractor_capacity, get_operation_sheet
-from app.models.workover import ContractorCapacityStatus, OperationStatus
-
-
-def update_contractor_status_after_dispatch(db: Session, contractor_capacity_id: int) -> None:
-    """派工后自动将承包商状态改为 BUSY。"""
-    contractor = get_contractor_capacity(db, contractor_capacity_id)
-    contractor.status = ContractorCapacityStatus.BUSY
-    db.flush()
+from app.crud.contractor import get_contractor_capacity
+from app.models.workover import ContractorCapacityStatus
 
 
 def check_contractor_availability(db: Session, contractor_capacity_id: int) -> None:

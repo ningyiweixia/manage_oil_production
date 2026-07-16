@@ -1,6 +1,5 @@
 param(
-    [switch]$SkipBuild,
-    [switch]$SkipMigrate
+    [switch]$SkipBuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -69,11 +68,6 @@ if ($SkipBuild) {
     Invoke-Checked -Name "docker compose up" -Command { & docker @composeArgs up -d }
 } else {
     Invoke-Checked -Name "docker compose up --build" -Command { & docker @composeArgs up -d --build }
-}
-
-if (-not $SkipMigrate) {
-    Invoke-Checked -Name "alembic migration" -Command { & docker @composeArgs exec -T backend alembic upgrade head }
-    Invoke-Checked -Name "seed initialization" -Command { & docker @composeArgs exec -T backend python -m app.db.seed }
 }
 
 Invoke-Checked -Name "docker compose ps" -Command { & docker @composeArgs ps }

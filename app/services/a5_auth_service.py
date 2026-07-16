@@ -8,14 +8,38 @@ import hashlib
 import hmac
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Mapping
 from urllib.parse import urlencode
 
 from app.core.config import settings
-from app.core.security import create_token
+from app.core.exceptions import BusinessException
+from app.core.security import create_token, decode_token_payload
+from app.core.status_codes import A5_LINK_FAILED
 from app.schemas.a5_integration import A5TokenResponse
 
 logger = logging.getLogger(__name__)
+
+
+def ensure_a5_integration_configured() -> None:
+    """Fail closed unless a real A5 endpoint or explicit local mock is configured."""
+    if settings.a5_mock_enabled and settings.environment == "local":
+        return
+    if not settings.a5_base_url or not settings.a5_api_key or not settings.a5_api_secret:
+        raise BusinessException(A5_LINK_FAILED, "A5系统未接入，请先配置A5地址及认证信息")
+    if not settings.a5_base_url.lower().startswith("https://"):
+        raise BusinessException(A5_LINK_FAILED, "A5生产联动必须使用HTTPS地址")
+
+
+def ensure_local_a5_mock_enabled() -> None:
+    """Allow the built-in A5 simulator only for an explicit local demo."""
+    if settings.environment != "local" or not settings.a5_mock_enabled:
+        raise BusinessException(A5_LINK_FAILED, "本地A5模拟服务未启用")
+
+
+def verify_a5_sso_token(token: str, *, expected_well_no: str) -> None:
+    """Verify that a short-lived A5 SSO token belongs to the requested well."""
+    payload = decode_token_payload(token)
+    if payload.get("typ") != "a5_sso" or payload.get("sub") != f"sso:{expected_well_no}":
+        raise BusinessException(A5_LINK_FAILED, "A5模拟登录凭据无效")
 
 
 def generate_sso_token(
@@ -38,6 +62,7 @@ def generate_sso_token(
     Returns:
         A5TokenResponse 包含 token, expire_at, redirect_url
     """
+    ensure_a5_integration_configured()
     expire_at = datetime.now(timezone.utc) + timedelta(minutes=5)
 
     # 使用 JWT 签发临时令牌
@@ -47,8 +72,13 @@ def generate_sso_token(
         expires_delta=timedelta(minutes=5),
     )
 
-    # 构建 A5 跳转 URL
-    a5_base = settings.a5_base_url.rstrip("/") if settings.a5_base_url else "http://a5-system"
+    # The built-in page is deliberately local-only.  It gives demonstrations a
+    # real review/issue loop without creating a fake production A5 URL.
+    if settings.a5_mock_enabled and settings.environment == "local":
+        a5_base = settings.a5_mock_frontend_base_url.rstrip("/")
+        redirect_path = "/a5-simulator/measure-review"
+    else:
+        a5_base = settings.a5_base_url.rstrip("/")
     params = {"token": token, "well_no": well_no}
     if operation_no:
         params["operation_no"] = operation_no
@@ -62,7 +92,7 @@ def generate_sso_token(
 
 
 def verify_a5_callback_signature(
-    request_headers: Mapping[str, str],
+    request_headers: dict[str, str],
     request_body: str = "",
     *,
     expected_token: str | None = None,
@@ -83,7 +113,6 @@ def verify_a5_callback_signature(
         True 表示签名验证通过
     """
     headers = {str(key).lower(): value for key, value in request_headers.items()}
-
     # 1. 验证 IP 白名单（如果配置了的话）
     client_ip = headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
     if not client_ip:
@@ -102,18 +131,16 @@ def verify_a5_callback_signature(
     try:
         timestamp_value = int(timestamp)
     except (TypeError, ValueError):
-        logger.warning("A5 回调缺少或包含无效的 X-A5-Timestamp 请求头")
+        logger.warning("A5 callback missing or invalid timestamp")
         return False
-
-    now_timestamp = int(datetime.now(timezone.utc).timestamp())
-    if abs(now_timestamp - timestamp_value) > settings.a5_callback_max_skew_seconds:
-        logger.warning("A5 回调时间戳超出允许时间窗")
+    if abs(int(datetime.now(timezone.utc).timestamp()) - timestamp_value) > settings.a5_callback_max_skew_seconds:
+        logger.warning("A5 callback timestamp outside permitted window")
         return False
 
     # 3. HMAC-SHA256 验证时间戳和请求体签名
     secret = settings.a5_api_secret
     if not secret:
-        logger.error("A5_API_SECRET 未配置，拒绝处理回调")
+        logger.error("A5_API_SECRET 未配置，拒绝 A5 回调")
         return False
 
     expected = hmac.new(
@@ -124,7 +151,7 @@ def verify_a5_callback_signature(
 
     # 4. 常数时间比对，防止时序攻击
     if not hmac.compare_digest(expected, signature):
-        logger.warning("A5 回调签名不匹配")
+        logger.warning(f"A5 回调签名不匹配: expected={expected[:8]}..., got={signature[:8]}...")
         return False
 
     return True

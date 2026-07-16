@@ -57,7 +57,7 @@ chmod +x deploy/scripts/deploy.sh
 ./deploy/scripts/deploy.sh
 ```
 
-脚本会执行：创建目录、生成 TLS 证书、构建镜像、启动服务、执行 `alembic upgrade head`、执行 `python -m app.db.seed`。
+脚本会执行：创建目录、生成 TLS 证书并构建镜像。后端容器会先执行 `alembic upgrade head` 和 `python -m app.db.seed`，成功后才启动 API；Celery 会等待 API 健康检查通过，避免任务抢跑迁移。
 
 ## 企业内网离线镜像
 

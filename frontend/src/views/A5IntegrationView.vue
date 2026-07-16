@@ -35,6 +35,27 @@
   <section class="table-panel">
     <div class="panel-head">
       <div>
+        <h2>A5同步记录</h2>
+        <p>持久化保留定时、手动和单工单日报同步结果。</p>
+      </div>
+    </div>
+    <el-table :data="syncLogs" empty-text="暂无同步记录">
+      <el-table-column prop="started_at" label="开始时间" min-width="170" />
+      <el-table-column prop="sync_type" label="方式" width="100" />
+      <el-table-column prop="requested_operation_no" label="作业编号" min-width="150" />
+      <el-table-column prop="status" label="结果" width="100" />
+      <el-table-column prop="total_count" label="总数" width="72" />
+      <el-table-column prop="updated_count" label="更新" width="72" />
+      <el-table-column prop="unchanged_count" label="未变" width="72" />
+      <el-table-column prop="not_found_count" label="未匹配" width="82" />
+      <el-table-column prop="failed_count" label="失败" width="72" />
+      <el-table-column prop="error_message" label="失败原因" min-width="180" show-overflow-tooltip />
+    </el-table>
+  </section>
+
+  <section class="table-panel">
+    <div class="panel-head">
+      <div>
         <h2>A5 系统集成</h2>
         <p>查看同步状态、手动触发数据拉取，并生成单点登录跳转。</p>
       </div>
@@ -129,10 +150,11 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Download, Link, Refresh, Search } from '@element-plus/icons-vue'
-import { createA5SsoToken, exportA5AnalyticsReport, getA5Analytics, getA5SyncStatus, triggerA5Sync, type A5Analytics, type A5SyncStatus } from '../api/a5'
+import { createA5SsoToken, exportA5AnalyticsReport, getA5Analytics, getA5SyncStatus, listA5SyncLogs, triggerA5Sync, type A5Analytics, type A5SyncBatch, type A5SyncStatus } from '../api/a5'
 
 const syncing = ref(false)
 const ssoUrl = ref('')
+const syncLogs = ref<A5SyncBatch[]>([])
 const status = reactive<A5SyncStatus>({
   last_sync_status: 'unknown',
   last_sync_message: '',
@@ -156,9 +178,10 @@ const analyticsQuery = reactive<{ start_date?: string; end_date?: string; catego
 const ssoForm = reactive({ well_no: '', redirect_path: '/workorder' })
 
 async function loadStatus() {
-  const [syncStatus, summary] = await Promise.all([getA5SyncStatus(), getA5Analytics(compactQuery(analyticsQuery))])
+  const [syncStatus, summary, logs] = await Promise.all([getA5SyncStatus(), getA5Analytics(compactQuery(analyticsQuery)), listA5SyncLogs()])
   Object.assign(status, syncStatus)
   Object.assign(analytics, summary)
+  syncLogs.value = logs
 }
 
 async function triggerSync() {
