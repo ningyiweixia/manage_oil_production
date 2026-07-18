@@ -100,7 +100,7 @@ def apply_external_material_event(
         select(MaterialRequirement).where(MaterialRequirement.external_material_id == event.external_material_id)
     )
     if requirement is None:
-        raise BusinessException(CONFLICT, "外部物料记录未匹配")
+        raise BusinessException(CONFLICT, f"外部物料记录未匹配 (external_material_id={event.external_material_id})")
     requirement = get_material_requirement(db, requirement.id, current_user=current_user)
 
     if existing is not None:

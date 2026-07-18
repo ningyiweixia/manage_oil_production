@@ -19,7 +19,11 @@ from app.crud.material import (
 )
 from app.db.session import get_db
 from app.models.rbac import User
-from app.services.material_external_adapter import apply_external_material_event, get_material_external_adapter
+from app.services.material_external_adapter import (
+    apply_external_material_event,
+    get_material_external_adapter,
+    MaterialExternalProcessResult,
+)
 from app.schemas.material import (
     MaterialRequirementCreate,
     MaterialRequirementOut,
@@ -84,9 +88,21 @@ async def sync_external_material_events(
     current_user: User = Depends(require_permission("material:update")),
 ) -> ApiResponse[dict]:
     events = await get_material_external_adapter().fetch_events()
-    results = [apply_external_material_event(db, event, current_user=current_user) for event in events]
-    duplicates = sum(result.duplicate for result in results)
-    return success({"total": len(results), "processed": len(results) - duplicates, "duplicates": duplicates})
+    results: list[MaterialExternalProcessResult] = []
+    errors: list[dict[str, str]] = []
+    for event in events:
+        try:
+            results.append(apply_external_material_event(db, event, current_user=current_user))
+        except BusinessException as e:
+            errors.append({"external_material_id": event.external_material_id, "error": e.msg})
+    duplicates = sum(r.duplicate for r in results)
+    return success({
+        "total": len(events),
+        "processed": len(results) - duplicates,
+        "duplicates": duplicates,
+        "failed": len(errors),
+        "errors": errors,
+    })
 
 
 @router.get("/{req_id}", response_model=ApiResponse[MaterialRequirementOut])

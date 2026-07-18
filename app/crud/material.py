@@ -123,6 +123,10 @@ def _material_rollup_status(items: list[MaterialRequirement]) -> MaterialRequire
 
 
 def validate_material_quantities(obj: MaterialRequirement) -> None:
+    """校验物料数量约束，收集全部违规项后一次抛出，避免用户多次提交试探。"""
+    errors: list[str] = []
+
+    # 1. 各数量字段不能小于 0
     quantities = {
         "需求数量": obj.quantity,
         "计划数量": obj.planned_quantity,
@@ -132,26 +136,39 @@ def validate_material_quantities(obj: MaterialRequirement) -> None:
     }
     for label, value in quantities.items():
         if value is not None and value < 0:
-            raise BusinessException(BAD_REQUEST, f"{label}不能小于0")
+            errors.append(f"{label}不能小于0")
+
+    # 2. 级联数量上限校验
     if obj.planned_quantity and obj.planned_quantity > obj.quantity:
-        raise BusinessException(BAD_REQUEST, "计划数量不能大于需求数量")
+        errors.append("计划数量不能大于需求数量")
     if obj.delivered_quantity and obj.delivered_quantity > (obj.planned_quantity or obj.quantity):
-        raise BusinessException(BAD_REQUEST, "出库数量不能大于计划数量")
+        errors.append("出库数量不能大于计划数量")
     if obj.arrived_quantity and obj.arrived_quantity > obj.delivered_quantity:
-        raise BusinessException(BAD_REQUEST, "到场数量不能大于出库数量")
+        errors.append("到场数量不能大于出库数量")
     if obj.used_quantity and obj.used_quantity > obj.arrived_quantity:
-        raise BusinessException(BAD_REQUEST, "使用数量不能大于到场数量")
+        errors.append("使用数量不能大于到场数量")
+
+    # 3. 特定状态时对应数量必须 > 0
     status = _normalize_status(obj.status or MaterialRequirementStatus.PENDING)
     required_positive = {
-        MaterialRequirementStatus.PLANNED: ("计划数量", obj.planned_quantity),
-        MaterialRequirementStatus.DELIVERED: ("出库数量", obj.delivered_quantity),
-        MaterialRequirementStatus.ARRIVED: ("到场数量", obj.arrived_quantity),
-        MaterialRequirementStatus.USED: ("使用数量", obj.used_quantity),
+        MaterialRequirementStatus.PLANNED: "计划数量",
+        MaterialRequirementStatus.DELIVERED: "出库数量",
+        MaterialRequirementStatus.ARRIVED: "到场数量",
+        MaterialRequirementStatus.USED: "使用数量",
     }
-    if status in required_positive and required_positive[status][1] <= 0:
-        raise BusinessException(BAD_REQUEST, f"物料状态为{status.value}时，{required_positive[status][0]}必须大于0")
+    for req_status, label in required_positive.items():
+        if status == req_status:
+            value = getattr(obj, {"计划数量": "planned_quantity", "出库数量": "delivered_quantity",
+                                   "到场数量": "arrived_quantity", "使用数量": "used_quantity"}[label], 0)
+            if value <= 0:
+                errors.append(f"物料状态为{status.value}时，{label}必须大于0")
+
+    # 4. USED 状态时使用数量必须等于需求数量
     if status == MaterialRequirementStatus.USED and obj.used_quantity != obj.quantity:
-        raise BusinessException(BAD_REQUEST, "物料标记已使用时，使用数量必须等于需求数量")
+        errors.append("物料标记已使用时，使用数量必须等于需求数量")
+
+    if errors:
+        raise BusinessException(BAD_REQUEST, "物料数量校验失败：" + "；".join(errors))
 
 
 def _validate_sheet_link(db: Session, operation_sheet_id: int | None, well_no: str, current_user: User | None = None) -> None:
